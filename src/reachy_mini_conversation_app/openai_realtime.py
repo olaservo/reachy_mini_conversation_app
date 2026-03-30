@@ -477,11 +477,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
             try:
                 voice = _get_realtime_session_voice()
-                output_config: RealtimeAudioConfigOutputParam = RealtimeAudioConfigOutputParam(
-                    format=AudioPCM(type="audio/pcm", rate=self.output_sample_rate),
-                    voice=voice,
-                )
-
                 session_config = RealtimeSessionCreateRequestParam(
                     type="realtime",
                     instructions=get_session_instructions(),
@@ -491,7 +486,10 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                             transcription=AudioTranscriptionParam(model="gpt-4o-transcribe", language="en"),
                             turn_detection=ServerVad(type="server_vad", interrupt_response=True),
                         ),
-                        output=output_config,
+                        output=RealtimeAudioConfigOutputParam(
+                            format=AudioPCM(type="audio/pcm", rate=self.output_sample_rate),
+                            voice=voice,
+                        ),
                     ),
                     tools=get_tool_specs(), # type: ignore[typeddict-item]
                     tool_choice="auto",
