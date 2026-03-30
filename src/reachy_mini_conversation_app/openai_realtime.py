@@ -57,7 +57,7 @@ _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 
 
 def _should_use_lb_allocated_session() -> bool:
-    return bool(getattr(config, "OPENAI_REALTIME_SESSION_URL", None))
+    return bool(getattr(config, "S2S_REALTIME_SESSION_URL", None))
 
 
 
@@ -861,7 +861,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
     async def _build_realtime_client(self) -> AsyncOpenAI:
         """Build the realtime SDK client, optionally via the s2s session allocator."""
         api_key = self._resolved_api_key or config.OPENAI_API_KEY or "DUMMY"
-        session_url = getattr(config, "OPENAI_REALTIME_SESSION_URL", None)
+        session_url = getattr(config, "S2S_REALTIME_SESSION_URL", None)
         if not session_url:
             return AsyncOpenAI(api_key=api_key)
 

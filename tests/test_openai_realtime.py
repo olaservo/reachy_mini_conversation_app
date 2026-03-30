@@ -336,7 +336,7 @@ async def test_run_realtime_session_omits_voice_for_lb_allocated_sessions(monkey
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
-    monkeypatch.setattr(rt_mod.config, "OPENAI_REALTIME_SESSION_URL", "https://lb.example.test/session")
+    monkeypatch.setattr(rt_mod.config, "S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
 
     captured_update: dict[str, Any] = {}
 
@@ -408,7 +408,7 @@ async def test_apply_personality_omits_voice_for_lb_allocated_sessions(monkeypat
     """Live personality updates should not force an output voice on the s2s backend."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "new instructions")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "cedar")
-    monkeypatch.setattr(rt_mod.config, "OPENAI_REALTIME_SESSION_URL", "https://lb.example.test/session")
+    monkeypatch.setattr(rt_mod.config, "S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
 
     captured_update: dict[str, Any] = {}
 
