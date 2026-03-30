@@ -60,6 +60,10 @@ def _should_use_lb_allocated_session() -> bool:
     return bool(getattr(config, "S2S_REALTIME_SESSION_URL", None))
 
 
+def _get_realtime_session_voice() -> str | None:
+    return None if _should_use_lb_allocated_session() else get_session_voice()
+
+
 
 class InputTranscriptChunksByItem(BaseModel):
     """Current item_id and its accumulated deltas. Only one item at a time."""
@@ -165,7 +169,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
             try:
                 instructions = get_session_instructions()
-                voice = get_session_voice()
+                voice = _get_realtime_session_voice()
             except BaseException as e:  # catch SystemExit from prompt loader without crashing
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
@@ -177,7 +181,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                         type="realtime",
                         instructions=instructions,
                     )
-                    if not _should_use_lb_allocated_session():
+                    if voice is not None:
                         session_update["audio"] = RealtimeAudioConfigParam(
                             output=RealtimeAudioConfigOutputParam(
                                 voice=voice,
@@ -474,11 +478,12 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             self.client = await self._build_realtime_client()
         async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
             try:
+                voice = _get_realtime_session_voice()
                 output_config: RealtimeAudioConfigOutputParam = RealtimeAudioConfigOutputParam(
                     format=AudioPCM(type="audio/pcm", rate=self.output_sample_rate),
                 )
-                if not _should_use_lb_allocated_session():
-                    output_config["voice"] = get_session_voice()
+                if voice is not None:
+                    output_config["voice"] = voice
 
                 session_config = RealtimeSessionCreateRequestParam(
                     type="realtime",
@@ -498,7 +503,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 logger.info(
                     "Realtime session initialized with profile=%r voice=%r",
                     getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None),
-                    None if _should_use_lb_allocated_session() else get_session_voice(),
+                    voice,
                 )
                 # If we reached here, the session update succeeded which implies the API key worked.
                 # Persist the key to a newly created .env (copied from .env.example) if needed.
