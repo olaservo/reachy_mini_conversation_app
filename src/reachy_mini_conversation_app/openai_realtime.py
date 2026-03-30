@@ -7,7 +7,6 @@ import logging
 from typing import Any, Final, Tuple, Literal, Optional
 from pathlib import Path
 from datetime import datetime
-from dataclasses import dataclass
 from urllib.parse import urlsplit, parse_qsl, urlunsplit
 
 import cv2
@@ -55,36 +54,6 @@ TEXT_OUTPUT_COST_PER_1M = 16.0
 IMAGE_INPUT_COST_PER_1M = 5.0
 
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
-
-
-@dataclass(frozen=True)
-class AllocatedRealtimeSession:
-    """Resolved client connection details derived from a load-balancer session allocation."""
-
-    session_id: str | None
-    websocket_base_url: str
-    http_base_url: str
-    default_query: dict[str, str]
-
-
-def _derive_openai_client_urls(connect_url: str) -> AllocatedRealtimeSession:
-    parsed = urlsplit(connect_url)
-    path = parsed.path.rstrip("/")
-    if not path.endswith("/realtime"):
-        raise ValueError(f"Expected realtime connect URL ending with /realtime, got: {connect_url}")
-
-    base_path = path[: -len("/realtime")]
-    websocket_base_url = urlunsplit((parsed.scheme, parsed.netloc, base_path, "", ""))
-    http_scheme = "https" if parsed.scheme == "wss" else "http"
-    http_base_url = urlunsplit((http_scheme, parsed.netloc, base_path, "", ""))
-    default_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-
-    return AllocatedRealtimeSession(
-        session_id=None,
-        websocket_base_url=websocket_base_url,
-        http_base_url=http_base_url,
-        default_query=default_query,
-    )
 
 
 def _should_use_lb_allocated_session() -> bool:
@@ -895,16 +864,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         if not session_url:
             return AsyncOpenAI(api_key=api_key)
 
-        allocated_session = await self._allocate_realtime_session(session_url)
-        logger.info("Allocated realtime session %s", allocated_session.session_id or "<unknown>")
-        return AsyncOpenAI(
-            api_key=api_key,
-            base_url=allocated_session.http_base_url,
-            websocket_base_url=allocated_session.websocket_base_url,
-            default_query=allocated_session.default_query,
-        )
-
-    async def _allocate_realtime_session(self, session_url: str) -> AllocatedRealtimeSession:
         async with httpx.AsyncClient(timeout=10.0) as http_client:
             response = await http_client.post(session_url)
             response.raise_for_status()
@@ -914,12 +873,18 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         if not isinstance(connect_url, str) or not connect_url:
             raise RuntimeError(f"Session allocator response did not contain a valid connect_url: {payload!r}")
 
-        allocated_session = _derive_openai_client_urls(connect_url)
-        return AllocatedRealtimeSession(
-            session_id=str(payload.get("session_id")) if payload.get("session_id") is not None else None,
-            websocket_base_url=allocated_session.websocket_base_url,
-            http_base_url=allocated_session.http_base_url,
-            default_query=allocated_session.default_query,
+        parsed = urlsplit(connect_url)
+        path = parsed.path.rstrip("/")
+        if not path.endswith("/realtime"):
+            raise ValueError(f"Expected realtime connect URL ending with /realtime, got: {connect_url}")
+
+        base_path = path[: -len("/realtime")]
+        logger.info("Allocated realtime session %s", payload.get("session_id") or "<unknown>")
+        return AsyncOpenAI(
+            api_key=api_key,
+            base_url=urlunsplit(("https" if parsed.scheme == "wss" else "http", parsed.netloc, base_path, "", "")),
+            websocket_base_url=urlunsplit((parsed.scheme, parsed.netloc, base_path, "", "")),
+            default_query=dict(parse_qsl(parsed.query, keep_blank_values=True)),
         )
 
     async def send_idle_signal(self, idle_duration: float) -> None:

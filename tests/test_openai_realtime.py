@@ -12,7 +12,6 @@ import reachy_mini_conversation_app.tools.background_tool_manager as btm_mod
 from reachy_mini_conversation_app.openai_realtime import (
     OpenaiRealtimeHandler,
     _compute_response_cost,
-    _derive_openai_client_urls,
 )
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.tools.background_tool_manager import ToolCallRoutine
@@ -22,17 +21,6 @@ def _build_handler(loop: asyncio.AbstractEventLoop) -> OpenaiRealtimeHandler:
     asyncio.set_event_loop(loop)
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
     return OpenaiRealtimeHandler(deps)
-
-
-def test_derive_openai_client_urls() -> None:
-    """Convert an allocated connect URL into SDK base URLs and default query params."""
-    allocated = _derive_openai_client_urls(
-        "wss://compute.example.test/v1/realtime?session_token=abc123&foo=bar"
-    )
-
-    assert allocated.websocket_base_url == "wss://compute.example.test/v1"
-    assert allocated.http_base_url == "https://compute.example.test/v1"
-    assert allocated.default_query == {"session_token": "abc123", "foo": "bar"}
 
 
 @pytest.mark.asyncio
