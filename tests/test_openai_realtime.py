@@ -27,7 +27,7 @@ def _build_handler(loop: asyncio.AbstractEventLoop) -> OpenaiRealtimeHandler:
 async def test_tool_completion_does_not_reset_head_wobbler(monkeypatch: Any) -> None:
     """Tool completion should not interrupt ongoing speech wobble."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
-    monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "alloy")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=rt_mod.DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
     async def _fake_dispatch(
@@ -135,7 +135,7 @@ async def test_tool_completion_does_not_reset_head_wobbler(monkeypatch: Any) -> 
 async def test_non_idle_tool_call_does_not_queue_progress_response(monkeypatch: Any) -> None:
     """Tool-call startup should not enqueue a second speech response."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
-    monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "alloy")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=rt_mod.DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
     class FakeEvent:
@@ -332,10 +332,10 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
 
 
 @pytest.mark.asyncio
-async def test_run_realtime_session_uses_aiden_for_lb_allocated_sessions(monkeypatch: Any) -> None:
-    """Use the deployed backend's default Qwen speaker when connecting through the s2s LB."""
+async def test_run_realtime_session_uses_default_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
+    """Use the backend default speaker when no profile voice is selected for the s2s LB."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
-    monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "alloy")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=rt_mod.DEFAULT_VOICE: default)
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
     monkeypatch.setattr(rt_mod.config, "BACKEND_PROVIDER", "speech-to-speech")
     monkeypatch.setattr(rt_mod.config, "S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
@@ -402,14 +402,14 @@ async def test_run_realtime_session_uses_aiden_for_lb_allocated_sessions(monkeyp
     session = captured_update["session"]
     output = session["audio"]["output"]
     assert output["format"]["rate"] == 24000
-    assert output["voice"] == "Aiden"
+    assert output["voice"] == rt_mod.DEFAULT_VOICE
 
 
 @pytest.mark.asyncio
-async def test_apply_personality_uses_aiden_for_lb_allocated_sessions(monkeypatch: Any) -> None:
-    """Live personality updates should use the deployed backend's default Qwen speaker."""
+async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
+    """Live personality updates should honor the selected Qwen CustomVoice speaker."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "new instructions")
-    monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "cedar")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=rt_mod.DEFAULT_VOICE: "Serena")
     monkeypatch.setattr(rt_mod.config, "BACKEND_PROVIDER", "speech-to-speech")
     monkeypatch.setattr(rt_mod.config, "S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
 
@@ -431,7 +431,7 @@ async def test_apply_personality_uses_aiden_for_lb_allocated_sessions(monkeypatc
     assert "restarted realtime session" in result.lower()
     session = captured_update["session"]
     assert session["instructions"] == "new instructions"
-    assert session["audio"]["output"]["voice"] == "Aiden"
+    assert session["audio"]["output"]["voice"] == "Serena"
 
 # ---- Cost calculation tests ----
 
@@ -510,7 +510,7 @@ async def test_response_sender_retries_on_active_response_rejection(monkeypatch:
     FakeCCE = type("FakeCCE", (Exception,), {})
     monkeypatch.setattr(rt_mod, "ConnectionClosedError", FakeCCE)
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
-    monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "alloy")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=rt_mod.DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
     N_TOOL_RESULTS = 400

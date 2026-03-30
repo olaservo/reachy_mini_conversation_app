@@ -3,7 +3,7 @@ import sys
 import logging
 from pathlib import Path
 
-from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, config
+from reachy_mini_conversation_app.config import DEFAULT_VOICE, DEFAULT_PROFILES_DIRECTORY, config
 
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ def get_session_instructions() -> str:
         sys.exit(1)
 
 
-def get_session_voice(default: str = "cedar") -> str:
+def get_session_voice(default: str = DEFAULT_VOICE) -> str:
     """Resolve the voice to use for the session.
 
     If a custom profile is selected and contains a voice.txt, return its

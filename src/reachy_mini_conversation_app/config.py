@@ -44,7 +44,7 @@ DEFAULT_PROFILES_DIRECTORY = _resolve_default_profiles_directory()
 # Full list of voices supported by the OpenAI Realtime / TTS API.
 # Source: https://developers.openai.com/api/docs/guides/text-to-speech/#voice-options
 # "marin" and "cedar" are recommended for gpt-realtime.
-AVAILABLE_VOICES: list[str] = [
+OPENAI_AVAILABLE_VOICES: list[str] = [
     "alloy",
     "ash",
     "ballad",
@@ -56,6 +56,20 @@ AVAILABLE_VOICES: list[str] = [
     "shimmer",
     "verse",
 ]
+OPENAI_DEFAULT_VOICE = "cedar"
+# Qwen3-TTS CustomVoice speaker catalog from faster-qwen3-tts demo/index.html.
+S2S_AVAILABLE_VOICES: list[str] = [
+    "Aiden",
+    "Ryan",
+    "Dylan",
+    "Eric",
+    "Ono_Anna",
+    "Serena",
+    "Sohee",
+    "Uncle_Fu",
+    "Vivian",
+]
+S2S_DEFAULT_VOICE = "Aiden"
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +251,10 @@ class Config:
 
 
 config = Config()
+AVAILABLE_VOICES: list[str] = list(
+    S2S_AVAILABLE_VOICES if config.BACKEND_PROVIDER == "speech-to-speech" else OPENAI_AVAILABLE_VOICES,
+)
+DEFAULT_VOICE = S2S_DEFAULT_VOICE if config.BACKEND_PROVIDER == "speech-to-speech" else OPENAI_DEFAULT_VOICE
 
 
 def set_custom_profile(profile: str | None) -> None:

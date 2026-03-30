@@ -31,7 +31,7 @@ from openai.resources.realtime.realtime import AsyncRealtimeConnection
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection_param import ServerVad
 
-from reachy_mini_conversation_app.config import AVAILABLE_VOICES, config
+from reachy_mini_conversation_app.config import DEFAULT_VOICE, AVAILABLE_VOICES, config
 from reachy_mini_conversation_app.prompts import get_session_voice, get_session_instructions
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, get_tool_specs
 from reachy_mini_conversation_app.tools.background_tool_manager import (
@@ -65,7 +65,7 @@ def _uses_s2s_backend() -> bool:
 
 
 def _get_realtime_session_voice() -> str:
-    return "Aiden" if _uses_s2s_backend() else get_session_voice()
+    return get_session_voice(default=DEFAULT_VOICE)
 
 
 
@@ -841,8 +841,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 _collect(raw)
             # Ensure default present and stable order
             voices = sorted(candidates) if candidates else fallback
-            if "cedar" not in voices:
-                voices = ["cedar", *[v for v in voices if v != "cedar"]]
+            if DEFAULT_VOICE not in voices:
+                voices = [DEFAULT_VOICE, *[v for v in voices if v != DEFAULT_VOICE]]
             return voices
         except Exception:
             return fallback
