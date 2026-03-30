@@ -312,6 +312,7 @@ class LocalStream:
         Reachy Mini settings server to collect it before starting streams.
         """
         self._stop_event.clear()
+        needs_openai_key = str(getattr(config, "BACKEND_PROVIDER", "speech-to-speech")).strip().lower() == "openai"
 
         # Try to load an existing instance .env first (covers subsequent runs)
         if self._instance_path:
@@ -341,7 +342,7 @@ class LocalStream:
                 pass  # Instance .env loading is optional; continue with defaults
 
         # If key is still missing, try to download one from HuggingFace
-        if not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
+        if needs_openai_key and not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
             logger.info("OPENAI_API_KEY not set, attempting to download from HuggingFace...")
             try:
                 from gradio_client import Client
@@ -359,7 +360,7 @@ class LocalStream:
         self._init_settings_ui_if_needed()
 
         # If key is still missing -> wait until provided via the settings UI
-        if not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
+        if needs_openai_key and not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
             logger.warning("OPENAI_API_KEY not found. Open the app settings page to enter it.")
             # Poll until the key becomes available (set via the settings UI)
             try:

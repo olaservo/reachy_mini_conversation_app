@@ -332,6 +332,30 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
 
 
 @pytest.mark.asyncio
+async def test_start_up_s2s_gradio_does_not_wait_for_api_key(monkeypatch: Any) -> None:
+    """Speech-to-speech backend should not wait for gradio key input."""
+    monkeypatch.setattr(rt_mod.config, "BACKEND_PROVIDER", "speech-to-speech")
+    monkeypatch.setattr(rt_mod.config, "OPENAI_API_KEY", None)
+
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    handler = rt_mod.OpenaiRealtimeHandler(deps, gradio_mode=True)
+
+    build_client = AsyncMock(return_value=MagicMock())
+    run_realtime_session = AsyncMock(return_value=None)
+    wait_for_args = AsyncMock(side_effect=AssertionError("wait_for_args should not be called"))
+
+    object.__setattr__(handler, "_build_realtime_client", build_client)
+    object.__setattr__(handler, "_run_realtime_session", run_realtime_session)
+    object.__setattr__(handler, "wait_for_args", wait_for_args)
+
+    await handler.start_up()
+
+    wait_for_args.assert_not_awaited()
+    build_client.assert_awaited_once_with(api_key=None)
+    run_realtime_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_run_realtime_session_uses_default_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
     """Use the backend default speaker when no profile voice is selected for the s2s LB."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
