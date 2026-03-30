@@ -4,11 +4,14 @@ import base64
 import random
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any, Final, Tuple, Literal, Optional
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 import cv2
+import httpx
 import numpy as np
 import gradio as gr
 from openai import AsyncOpenAI
@@ -57,6 +60,38 @@ IMAGE_INPUT_COST_PER_1M = 5.0
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 
 
+@dataclass(frozen=True)
+class AllocatedRealtimeSession:
+    session_id: str | None
+    websocket_base_url: str
+    http_base_url: str
+    default_query: dict[str, str]
+
+
+def _derive_openai_client_urls(connect_url: str) -> AllocatedRealtimeSession:
+    parsed = urlsplit(connect_url)
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/realtime"):
+        raise ValueError(f"Expected realtime connect URL ending with /realtime, got: {connect_url}")
+
+    base_path = path[: -len("/realtime")]
+    websocket_base_url = urlunsplit((parsed.scheme, parsed.netloc, base_path, "", ""))
+    http_scheme = "https" if parsed.scheme == "wss" else "http"
+    http_base_url = urlunsplit((http_scheme, parsed.netloc, base_path, "", ""))
+    default_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+
+    return AllocatedRealtimeSession(
+        session_id=None,
+        websocket_base_url=websocket_base_url,
+        http_base_url=http_base_url,
+        default_query=default_query,
+    )
+
+
+def _should_use_lb_allocated_session() -> bool:
+    return bool(getattr(config, "OPENAI_REALTIME_SESSION_URL", None))
+
+
 
 class InputTranscriptChunksByItem(BaseModel):
     """Current item_id and its accumulated deltas. Only one item at a time."""
@@ -101,6 +136,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self.output_sample_rate = OPEN_AI_OUTPUT_SAMPLE_RATE
         self.input_sample_rate = OPEN_AI_INPUT_SAMPLE_RATE
 
+        self.client: AsyncOpenAI | None = None
         self.connection: AsyncRealtimeConnection | None = None
         self.output_queue: "asyncio.Queue[Tuple[int, NDArray[np.int16]] | AdditionalOutputs]" = asyncio.Queue()
 
@@ -134,6 +170,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self._response_done_event: asyncio.Event = asyncio.Event()
         self._response_done_event.set()
         self._last_response_rejected: bool = False
+        self._resolved_api_key: str | None = None
 
     def copy(self) -> "OpenaiRealtimeHandler":
         """Create a copy of the handler."""
@@ -168,16 +205,18 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             # Attempt a live update first, then force a full restart to ensure it sticks
             if self.connection is not None:
                 try:
-                    await self.connection.session.update(
-                        session=RealtimeSessionCreateRequestParam(
-                            type="realtime",
-                            instructions=instructions,
-                            audio=RealtimeAudioConfigParam(
-                                output=RealtimeAudioConfigOutputParam(
-                                    voice=voice,
-                                ),
+                    session_update = RealtimeSessionCreateRequestParam(
+                        type="realtime",
+                        instructions=instructions,
+                    )
+                    if not _should_use_lb_allocated_session():
+                        session_update["audio"] = RealtimeAudioConfigParam(
+                            output=RealtimeAudioConfigOutputParam(
+                                voice=voice,
                             ),
-                        ),
+                        )
+                    await self.connection.session.update(
+                        session=session_update,
                     )
                     logger.info("Applied personality via live update: %s", profile or "built-in default")
                 except Exception as e:
@@ -232,14 +271,13 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 # In headless console mode, LocalStream now blocks startup until the key is provided.
                 # However, unit tests may invoke this handler directly with a stubbed client.
                 # To keep tests hermetic without requiring a real key, fall back to a placeholder.
-                logger.warning("OPENAI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
+                if _should_use_lb_allocated_session():
+                    logger.info("OPENAI_API_KEY missing. Using placeholder because realtime session allocation is configured.")
+                else:
+                    logger.warning("OPENAI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
                 openai_api_key = "DUMMY"
 
-        self.client = AsyncOpenAI(
-            api_key=openai_api_key,
-            base_url="http://127.0.0.1:8765/v1",
-            websocket_base_url="ws://127.0.0.1:8765/v1"
-        )
+        self._resolved_api_key = openai_api_key
 
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
@@ -282,7 +320,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     self.connection = None
 
             # Ensure we have a client (start_up must have run once)
-            if getattr(self, "client", None) is None:
+            if self._resolved_api_key is None and getattr(self, "client", None) is None:
                 logger.warning("Cannot restart: OpenAI client not initialized yet.")
                 return
 
@@ -464,8 +502,16 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
+        if self.client is None or self._resolved_api_key is not None:
+            self.client = await self._build_openai_client()
         async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
             try:
+                output_config: RealtimeAudioConfigOutputParam = RealtimeAudioConfigOutputParam(
+                    format=AudioPCM(type="audio/pcm", rate=self.output_sample_rate),
+                )
+                if not _should_use_lb_allocated_session():
+                    output_config["voice"] = get_session_voice()
+
                 session_config = RealtimeSessionCreateRequestParam(
                     type="realtime",
                     instructions=get_session_instructions(),
@@ -475,10 +521,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                             transcription=AudioTranscriptionParam(model="gpt-4o-transcribe", language="en"),
                             turn_detection=ServerVad(type="server_vad", interrupt_response=True),
                         ),
-                        output=RealtimeAudioConfigOutputParam(
-                            format=AudioPCM(type="audio/pcm", rate=self.output_sample_rate),
-                            voice="af_heart", # get_session_voice(),
-                        ),
+                        output=output_config,
                     ),
                     tools=get_tool_specs(), # type: ignore[typeddict-item]
                     tool_choice="auto",
@@ -487,7 +530,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 logger.info(
                     "Realtime session initialized with profile=%r voice=%r",
                     getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None),
-                    get_session_voice(),
+                    None if _should_use_lb_allocated_session() else get_session_voice(),
                 )
                 # If we reached here, the session update succeeded which implies the API key worked.
                 # Persist the key to a newly created .env (copied from .env.example) if needed.
@@ -846,6 +889,44 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             return voices
         except Exception:
             return fallback
+
+    async def _build_openai_client(self) -> AsyncOpenAI:
+        api_key = self._resolved_api_key or config.OPENAI_API_KEY or "DUMMY"
+        session_url = getattr(config, "OPENAI_REALTIME_SESSION_URL", None)
+        if not session_url:
+            return AsyncOpenAI(api_key=api_key)
+
+        allocated_session = await self._allocate_realtime_session(session_url)
+        logger.info("Allocated realtime session %s", allocated_session.session_id or "<unknown>")
+        return AsyncOpenAI(
+            api_key=api_key,
+            base_url=allocated_session.http_base_url,
+            websocket_base_url=allocated_session.websocket_base_url,
+            default_query=allocated_session.default_query,
+        )
+
+    async def _allocate_realtime_session(self, session_url: str) -> AllocatedRealtimeSession:
+        headers: dict[str, str] = {}
+        authorization = getattr(config, "OPENAI_REALTIME_SESSION_AUTHORIZATION", None)
+        if authorization:
+            headers["Authorization"] = authorization
+
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            response = await http_client.post(session_url, headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+
+        connect_url = payload.get("connect_url")
+        if not isinstance(connect_url, str) or not connect_url:
+            raise RuntimeError(f"Session allocator response did not contain a valid connect_url: {payload!r}")
+
+        allocated_session = _derive_openai_client_urls(connect_url)
+        return AllocatedRealtimeSession(
+            session_id=str(payload.get("session_id")) if payload.get("session_id") is not None else None,
+            websocket_base_url=allocated_session.websocket_base_url,
+            http_base_url=allocated_session.http_base_url,
+            default_query=allocated_session.default_query,
+        )
 
     async def send_idle_signal(self, idle_duration: float) -> None:
         """Send an idle signal to the openai server."""

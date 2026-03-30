@@ -9,7 +9,11 @@ import pytest
 
 import reachy_mini_conversation_app.openai_realtime as rt_mod
 import reachy_mini_conversation_app.tools.background_tool_manager as btm_mod
-from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler, _compute_response_cost
+from reachy_mini_conversation_app.openai_realtime import (
+    OpenaiRealtimeHandler,
+    _compute_response_cost,
+    _derive_openai_client_urls,
+)
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.tools.background_tool_manager import ToolCallRoutine
 
@@ -18,6 +22,16 @@ def _build_handler(loop: asyncio.AbstractEventLoop) -> OpenaiRealtimeHandler:
     asyncio.set_event_loop(loop)
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
     return OpenaiRealtimeHandler(deps)
+
+
+def test_derive_openai_client_urls() -> None:
+    allocated = _derive_openai_client_urls(
+        "wss://compute.example.test/v1/realtime?session_token=abc123&foo=bar"
+    )
+
+    assert allocated.websocket_base_url == "wss://compute.example.test/v1"
+    assert allocated.http_base_url == "https://compute.example.test/v1"
+    assert allocated.default_query == {"session_token": "abc123", "foo": "bar"}
 
 
 @pytest.mark.asyncio
@@ -325,6 +339,105 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
     # Optional: confirm we logged the unexpected close once
     warnings = [r for r in caplog.records if r.levelname == "WARNING" and "closed unexpectedly" in r.msg]
     assert len(warnings) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_realtime_session_omits_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "alloy")
+    monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
+    monkeypatch.setattr(rt_mod.config, "OPENAI_REALTIME_SESSION_URL", "https://lb.example.test/session")
+
+    captured_update: dict[str, Any] = {}
+
+    class FakeSession:
+        async def update(self, **kwargs: Any) -> None:
+            captured_update.update(kwargs)
+
+    class FakeInputAudioBuffer:
+        async def append(self, **_kw: Any) -> None:
+            pass
+
+    class FakeItem:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConversation:
+        item = FakeItem()
+
+    class FakeResponse:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+        async def cancel(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConn:
+        session = FakeSession()
+        input_audio_buffer = FakeInputAudioBuffer()
+        conversation = FakeConversation()
+        response = FakeResponse()
+
+        async def __aenter__(self) -> "FakeConn":
+            return self
+
+        async def __aexit__(self, *_args: Any) -> bool:
+            return False
+
+        async def close(self) -> None:
+            pass
+
+        def __aiter__(self) -> "FakeConn":
+            return self
+
+        async def __anext__(self) -> Any:
+            raise StopAsyncIteration
+
+    class FakeRealtime:
+        def connect(self, **_kw: Any) -> FakeConn:
+            return FakeConn()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.realtime = FakeRealtime()
+
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    handler = OpenaiRealtimeHandler(deps)
+    monkeypatch.setattr(handler, "_build_openai_client", AsyncMock(return_value=FakeClient()))
+
+    await handler._run_realtime_session()
+
+    session = captured_update["session"]
+    output = session["audio"]["output"]
+    assert output["format"]["rate"] == 24000
+    assert "voice" not in output
+
+
+@pytest.mark.asyncio
+async def test_apply_personality_omits_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "new instructions")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "cedar")
+    monkeypatch.setattr(rt_mod.config, "OPENAI_REALTIME_SESSION_URL", "https://lb.example.test/session")
+
+    captured_update: dict[str, Any] = {}
+
+    class FakeSession:
+        async def update(self, **kwargs: Any) -> None:
+            captured_update.update(kwargs)
+
+    class FakeConnection:
+        session = FakeSession()
+
+    handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler.connection = FakeConnection()  # type: ignore[assignment]
+    monkeypatch.setattr(handler, "_restart_session", AsyncMock(return_value=None))
+
+    result = await handler.apply_personality("example")
+
+    assert "restarted realtime session" in result.lower()
+    session = captured_update["session"]
+    assert session["instructions"] == "new instructions"
+    assert "audio" not in session
 
 # ---- Cost calculation tests ----
 

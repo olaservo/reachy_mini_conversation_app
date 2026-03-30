@@ -119,12 +119,14 @@ Some wheels (like PyTorch) are large and require compatible CUDA or CPU buildsâ€
 ## Configuration
 
 1. Copy `.env.example` to `.env`
-2. Fill in required values, notably the OpenAI API key
+2. Fill in required values for your realtime backend
 
 | Variable | Description |
 |----------|-------------|
-| `OPENAI_API_KEY` | Required. Grants access to the OpenAI realtime endpoint. |
+| `OPENAI_API_KEY` | Optional when using a public deployed speech-to-speech endpoint. Still used for direct OpenAI access. |
 | `MODEL_NAME` | Override the realtime model (defaults to `gpt-realtime`). Used for both conversation and vision (unless `--local-vision` flag is used). |
+| `OPENAI_REALTIME_SESSION_URL` | Session allocation URL for the deployed speech-to-speech load balancer. Defaults to the current Hugging Face deployment used by this branch. |
+| `OPENAI_REALTIME_SESSION_AUTHORIZATION` | Optional `Authorization` header for the session allocator request when the load balancer is protected. |
 | `HF_HOME` | Cache directory for local Hugging Face downloads (only used with `--local-vision` flag, defaults to `./cache`). |
 | `HF_TOKEN` | Optional token for Hugging Face access (for gated/private assets). |
 | `LOCAL_VISION_MODEL` | Hugging Face model path for local vision processing (only used with `--local-vision` flag, defaults to `HuggingFaceTB/SmolVLM2-2.2B-Instruct`). |
