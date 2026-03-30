@@ -4,11 +4,11 @@ import base64
 import random
 import asyncio
 import logging
-from dataclasses import dataclass
 from typing import Any, Final, Tuple, Literal, Optional
 from pathlib import Path
 from datetime import datetime
-from urllib.parse import parse_qsl, urlsplit, urlunsplit
+from dataclasses import dataclass
+from urllib.parse import urlsplit, parse_qsl, urlunsplit
 
 import cv2
 import httpx
@@ -34,10 +34,7 @@ from openai.types.realtime.realtime_audio_input_turn_detection_param import Serv
 
 from reachy_mini_conversation_app.config import AVAILABLE_VOICES, config
 from reachy_mini_conversation_app.prompts import get_session_voice, get_session_instructions
-from reachy_mini_conversation_app.tools.core_tools import (
-    ToolDependencies,
-    get_tool_specs,
-)
+from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, get_tool_specs
 from reachy_mini_conversation_app.tools.background_tool_manager import (
     ToolCallRoutine,
     ToolNotification,
@@ -62,6 +59,8 @@ _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 
 @dataclass(frozen=True)
 class AllocatedRealtimeSession:
+    """Resolved client connection details derived from a load-balancer session allocation."""
+
     session_id: str | None
     websocket_base_url: str
     http_base_url: str

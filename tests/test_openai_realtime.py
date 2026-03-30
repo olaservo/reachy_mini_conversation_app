@@ -25,6 +25,7 @@ def _build_handler(loop: asyncio.AbstractEventLoop) -> OpenaiRealtimeHandler:
 
 
 def test_derive_openai_client_urls() -> None:
+    """Convert an allocated connect URL into SDK base URLs and default query params."""
     allocated = _derive_openai_client_urls(
         "wss://compute.example.test/v1/realtime?session_token=abc123&foo=bar"
     )
@@ -343,6 +344,7 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
 
 @pytest.mark.asyncio
 async def test_run_realtime_session_omits_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
+    """Do not send output.voice when connecting through the deployed s2s backend."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
@@ -415,6 +417,7 @@ async def test_run_realtime_session_omits_voice_for_lb_allocated_sessions(monkey
 
 @pytest.mark.asyncio
 async def test_apply_personality_omits_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
+    """Live personality updates should not force an output voice on the s2s backend."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "new instructions")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "cedar")
     monkeypatch.setattr(rt_mod.config, "OPENAI_REALTIME_SESSION_URL", "https://lb.example.test/session")
