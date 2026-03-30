@@ -313,6 +313,7 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
 
     # Patch the OpenAI client used by the handler
     monkeypatch.setattr(rt_mod, "AsyncOpenAI", FakeClient)
+    monkeypatch.setattr(rt_mod.config, "BACKEND_PROVIDER", "openai")
 
     # Build handler with minimal deps
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
@@ -336,6 +337,7 @@ async def test_run_realtime_session_uses_aiden_for_lb_allocated_sessions(monkeyp
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
+    monkeypatch.setattr(rt_mod.config, "BACKEND_PROVIDER", "speech-to-speech")
     monkeypatch.setattr(rt_mod.config, "S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
 
     captured_update: dict[str, Any] = {}
@@ -408,6 +410,7 @@ async def test_apply_personality_uses_aiden_for_lb_allocated_sessions(monkeypatc
     """Live personality updates should use the deployed backend's default Qwen speaker."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "new instructions")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "cedar")
+    monkeypatch.setattr(rt_mod.config, "BACKEND_PROVIDER", "speech-to-speech")
     monkeypatch.setattr(rt_mod.config, "S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
 
     captured_update: dict[str, Any] = {}
@@ -661,6 +664,7 @@ async def test_response_sender_retries_on_active_response_rejection(monkeypatch:
             self.realtime = FakeRealtime()
 
     monkeypatch.setattr(rt_mod, "AsyncOpenAI", FakeClient)
+    monkeypatch.setattr(rt_mod.config, "BACKEND_PROVIDER", "openai")
 
     # Patch dispatch_tool_call so tools complete with a result.
     async def _fake_dispatch(

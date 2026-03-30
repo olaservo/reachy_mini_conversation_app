@@ -125,7 +125,8 @@ Some wheels (like PyTorch) are large and require compatible CUDA or CPU buildsâ€
 |----------|-------------|
 | `OPENAI_API_KEY` | Optional when using a public deployed speech-to-speech endpoint. Still used for direct OpenAI access. |
 | `MODEL_NAME` | Override the realtime model (defaults to `gpt-realtime`). Used for both conversation and vision (unless `--local-vision` flag is used). |
-| `S2S_REALTIME_SESSION_URL` | Optional session allocation URL for the deployed speech-to-speech load balancer. Set it to use the deployed backend; leave it unset to use native OpenAI Realtime directly. |
+| `BACKEND_PROVIDER` | Realtime backend to use: `speech-to-speech` or `openai`. |
+| `S2S_REALTIME_SESSION_URL` | Session allocation URL for the deployed speech-to-speech load balancer. Required when `BACKEND_PROVIDER=speech-to-speech`. |
 | `HF_HOME` | Cache directory for local Hugging Face downloads (only used with `--local-vision` flag, defaults to `./cache`). |
 | `HF_TOKEN` | Optional token for Hugging Face access (for gated/private assets). |
 | `LOCAL_VISION_MODEL` | Hugging Face model path for local vision processing (only used with `--local-vision` flag, defaults to `HuggingFaceTB/SmolVLM2-2.2B-Instruct`). |

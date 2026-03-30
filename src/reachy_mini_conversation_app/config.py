@@ -155,6 +155,7 @@ class Config:
 
     # Optional
     MODEL_NAME = os.getenv("MODEL_NAME", "gpt-realtime")
+    BACKEND_PROVIDER = os.getenv("BACKEND_PROVIDER", "speech-to-speech").strip().lower()
     S2S_REALTIME_SESSION_URL = os.getenv("S2S_REALTIME_SESSION_URL")
     HF_HOME = os.getenv("HF_HOME", "./cache")
     LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")

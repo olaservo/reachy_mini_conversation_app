@@ -56,12 +56,21 @@ IMAGE_INPUT_COST_PER_1M = 5.0
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 
 
-def _should_use_lb_allocated_session() -> bool:
-    return bool(getattr(config, "S2S_REALTIME_SESSION_URL", None))
+def _get_backend_provider() -> str:
+    provider = str(getattr(config, "BACKEND_PROVIDER", "speech-to-speech") or "speech-to-speech").strip().lower()
+    if provider in {"speech-to-speech", "s2s"}:
+        return "speech-to-speech"
+    if provider == "openai":
+        return "openai"
+    raise ValueError(f"Unsupported BACKEND_PROVIDER: {provider!r}. Expected 'speech-to-speech' or 'openai'.")
+
+
+def _uses_s2s_backend() -> bool:
+    return _get_backend_provider() == "speech-to-speech"
 
 
 def _get_realtime_session_voice() -> str:
-    return "Aiden" if _should_use_lb_allocated_session() else get_session_voice()
+    return "Aiden" if _uses_s2s_backend() else get_session_voice()
 
 
 
@@ -142,8 +151,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self._response_done_event: asyncio.Event = asyncio.Event()
         self._response_done_event.set()
         self._last_response_rejected: bool = False
-        self._resolved_api_key: str | None = None
-        self._missing_api_key_for_openai: bool = False
 
     def copy(self) -> "OpenaiRealtimeHandler":
         """Create a copy of the handler."""
@@ -237,16 +244,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 self._provided_api_key = textbox_api_key
             else:
                 openai_api_key = config.OPENAI_API_KEY
-        else:
-            self._missing_api_key_for_openai = not openai_api_key or not openai_api_key.strip()
-            if self._missing_api_key_for_openai:
-                # In headless console mode, LocalStream now blocks startup until the key is provided.
-                # However, unit tests may invoke this handler directly with a stubbed client.
-                # To keep tests hermetic without requiring a real key, fall back to a placeholder.
-                openai_api_key = "DUMMY"
-
-        self._resolved_api_key = openai_api_key
-        self.client = await self._build_realtime_client()
+        self.client = await self._build_realtime_client(api_key=openai_api_key)
 
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
@@ -269,7 +267,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             finally:
                 # never keep a stale reference
                 self.connection = None
-                if _should_use_lb_allocated_session():
+                if _uses_s2s_backend():
                     self.client = None
                 try:
                     self._connected_event.clear()
@@ -289,11 +287,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     pass
                 finally:
                     self.connection = None
-
-            # Ensure we have a client (start_up must have run once)
-            if self._resolved_api_key is None and getattr(self, "client", None) is None:
-                logger.warning("Cannot restart: OpenAI client not initialized yet.")
-                return
 
             # Fire-and-forget new session and wait briefly for connection
             try:
@@ -859,14 +852,18 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         except Exception:
             return fallback
 
-    async def _build_realtime_client(self) -> AsyncOpenAI:
+    async def _build_realtime_client(self, api_key: str | None = None) -> AsyncOpenAI:
         """Build the realtime SDK client, optionally via the s2s session allocator."""
-        api_key = self._resolved_api_key or config.OPENAI_API_KEY or "DUMMY"
+        resolved_api_key = (api_key or self._provided_api_key or config.OPENAI_API_KEY or "").strip()
+        if _get_backend_provider() == "openai":
+            if not resolved_api_key:
+                logger.warning("OPENAI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
+                resolved_api_key = "DUMMY"
+            return AsyncOpenAI(api_key=resolved_api_key)
+
         session_url = getattr(config, "S2S_REALTIME_SESSION_URL", None)
         if not session_url:
-            if self._missing_api_key_for_openai:
-                logger.warning("OPENAI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
-            return AsyncOpenAI(api_key=api_key)
+            raise RuntimeError("S2S_REALTIME_SESSION_URL must be set when BACKEND_PROVIDER=speech-to-speech")
 
         async with httpx.AsyncClient(timeout=10.0) as http_client:
             response = await http_client.post(session_url)
@@ -885,7 +882,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         base_path = path[: -len("/realtime")]
         logger.info("Allocated realtime session %s", payload.get("session_id") or "<unknown>")
         return AsyncOpenAI(
-            api_key=api_key,
+            api_key=resolved_api_key or "DUMMY",
             base_url=urlunsplit(("https" if parsed.scheme == "wss" else "http", parsed.netloc, base_path, "", "")),
             websocket_base_url=urlunsplit((parsed.scheme, parsed.netloc, base_path, "", "")),
             default_query=dict(parse_qsl(parsed.query, keep_blank_values=True)),
