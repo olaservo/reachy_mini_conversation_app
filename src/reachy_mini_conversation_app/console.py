@@ -312,7 +312,7 @@ class LocalStream:
         Reachy Mini settings server to collect it before starting streams.
         """
         self._stop_event.clear()
-        needs_openai_key = str(getattr(config, "BACKEND_PROVIDER", "speech-to-speech")).strip().lower() == "openai"
+        needs_openai_key = config.BACKEND_PROVIDER == "openai"
 
         # Try to load an existing instance .env first (covers subsequent runs)
         if self._instance_path:

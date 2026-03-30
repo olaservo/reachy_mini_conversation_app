@@ -56,19 +56,6 @@ IMAGE_INPUT_COST_PER_1M = 5.0
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 
 
-def _get_backend_provider() -> str:
-    return str(getattr(config, "BACKEND_PROVIDER", "speech-to-speech")).strip().lower()
-
-
-def _uses_s2s_backend() -> bool:
-    return _get_backend_provider() == "speech-to-speech"
-
-
-def _get_realtime_session_voice() -> str:
-    return get_session_voice(default=DEFAULT_VOICE)
-
-
-
 class InputTranscriptChunksByItem(BaseModel):
     """Current item_id and its accumulated deltas. Only one item at a time."""
 
@@ -172,7 +159,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
             try:
                 instructions = get_session_instructions()
-                voice = _get_realtime_session_voice()
+                voice = get_session_voice(default=DEFAULT_VOICE)
             except BaseException as e:  # catch SystemExit from prompt loader without crashing
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
@@ -228,7 +215,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
     async def start_up(self) -> None:
         """Start the handler with minimal retries on unexpected websocket closure."""
         openai_api_key = config.OPENAI_API_KEY
-        if self.gradio_mode and _get_backend_provider() == "openai" and not openai_api_key:
+        if self.gradio_mode and config.BACKEND_PROVIDER == "openai" and not openai_api_key:
             # api key was not found in .env or in the environment variables
             await self.wait_for_args()  # type: ignore[no-untyped-call]
             args = list(self.latest_args)
@@ -251,7 +238,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 # Abrupt close (e.g., "no close frame received or sent") → retry
                 logger.warning("Realtime websocket closed unexpectedly (attempt %d/%d): %s", attempt, max_attempts, e)
                 if attempt < max_attempts:
-                    if _uses_s2s_backend():
+                    if config.BACKEND_PROVIDER == "speech-to-speech":
                         self.client = await self._build_realtime_client()
                     # exponential backoff with jitter
                     base_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s, 8s, etc.
@@ -293,7 +280,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 self._connected_event.clear()
             except Exception:
                 pass
-            if _uses_s2s_backend():
+            if config.BACKEND_PROVIDER == "speech-to-speech":
                 self.client = await self._build_realtime_client()
             asyncio.create_task(self._run_realtime_session(), name="openai-realtime-restart")
             try:
@@ -481,7 +468,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                         ),
                         output=RealtimeAudioConfigOutputParam(
                             format=AudioPCM(type="audio/pcm", rate=self.output_sample_rate),
-                            voice=_get_realtime_session_voice(),
+                            voice=get_session_voice(default=DEFAULT_VOICE),
                         ),
                     ),
                     tools=get_tool_specs(), # type: ignore[typeddict-item]
@@ -491,7 +478,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 logger.info(
                     "Realtime session initialized with profile=%r voice=%r",
                     getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None),
-                    _get_realtime_session_voice(),
+                    get_session_voice(default=DEFAULT_VOICE),
                 )
                 # If we reached here, the session update succeeded which implies the API key worked.
                 # Persist the key to a newly created .env (copied from .env.example) if needed.
@@ -854,7 +841,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
     async def _build_realtime_client(self, api_key: str | None = None) -> AsyncOpenAI:
         """Build the realtime SDK client, optionally via the s2s session allocator."""
         resolved_api_key = (api_key or self._provided_api_key or config.OPENAI_API_KEY or "").strip()
-        if _get_backend_provider() == "openai":
+        if config.BACKEND_PROVIDER == "openai":
             if not resolved_api_key:
                 # In headless console mode, LocalStream now blocks startup until the key is provided.
                 # However, unit tests may invoke this handler directly with a stubbed client.
