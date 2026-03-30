@@ -180,13 +180,12 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     session_update = RealtimeSessionCreateRequestParam(
                         type="realtime",
                         instructions=instructions,
-                    )
-                    if voice is not None:
-                        session_update["audio"] = RealtimeAudioConfigParam(
+                        audio=RealtimeAudioConfigParam(
                             output=RealtimeAudioConfigOutputParam(
                                 voice=voice,
                             ),
-                        )
+                        ),
+                    )
                     await self.connection.session.update(
                         session=session_update,
                     )
