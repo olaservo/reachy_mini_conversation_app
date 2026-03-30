@@ -60,8 +60,8 @@ def _should_use_lb_allocated_session() -> bool:
     return bool(getattr(config, "S2S_REALTIME_SESSION_URL", None))
 
 
-def _get_realtime_session_voice() -> str | None:
-    return None if _should_use_lb_allocated_session() else get_session_voice()
+def _get_realtime_session_voice() -> str:
+    return "Aiden" if _should_use_lb_allocated_session() else get_session_voice()
 
 
 
