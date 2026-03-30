@@ -395,7 +395,7 @@ async def test_run_realtime_session_uses_aiden_for_lb_allocated_sessions(monkeyp
 
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
     handler = OpenaiRealtimeHandler(deps)
-    monkeypatch.setattr(handler, "_build_realtime_client", AsyncMock(return_value=FakeClient()))
+    handler.client = FakeClient()
 
     await handler._run_realtime_session()
 

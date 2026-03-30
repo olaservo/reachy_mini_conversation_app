@@ -117,7 +117,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self.output_sample_rate = OPEN_AI_OUTPUT_SAMPLE_RATE
         self.input_sample_rate = OPEN_AI_INPUT_SAMPLE_RATE
 
-        self.client: AsyncOpenAI | None = None
+        self.client = AsyncOpenAI(api_key="DUMMY")
         self.connection: AsyncRealtimeConnection | None = None
         self.output_queue: "asyncio.Queue[Tuple[int, NDArray[np.int16]] | AdditionalOutputs]" = asyncio.Queue()
 
@@ -256,6 +256,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 # Abrupt close (e.g., "no close frame received or sent") → retry
                 logger.warning("Realtime websocket closed unexpectedly (attempt %d/%d): %s", attempt, max_attempts, e)
                 if attempt < max_attempts:
+                    if _uses_s2s_backend():
+                        self.client = await self._build_realtime_client()
                     # exponential backoff with jitter
                     base_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s, 8s, etc.
                     jitter = random.uniform(0, 0.5)
@@ -267,8 +269,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             finally:
                 # never keep a stale reference
                 self.connection = None
-                if _uses_s2s_backend():
-                    self.client = None
                 try:
                     self._connected_event.clear()
                 except Exception:
@@ -293,6 +293,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 self._connected_event.clear()
             except Exception:
                 pass
+            if _uses_s2s_backend():
+                self.client = await self._build_realtime_client()
             asyncio.create_task(self._run_realtime_session(), name="openai-realtime-restart")
             try:
                 await asyncio.wait_for(self._connected_event.wait(), timeout=5.0)
@@ -466,8 +468,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
-        if self.client is None:
-            self.client = await self._build_realtime_client()
         async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
             try:
                 voice = _get_realtime_session_voice()
