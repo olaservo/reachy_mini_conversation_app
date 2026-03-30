@@ -57,12 +57,7 @@ _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 
 
 def _get_backend_provider() -> str:
-    provider = str(getattr(config, "BACKEND_PROVIDER", "speech-to-speech")).strip().lower()
-    if provider == "speech-to-speech":
-        return "speech-to-speech"
-    if provider == "openai":
-        return "openai"
-    raise ValueError(f"Unsupported BACKEND_PROVIDER: {provider!r}. Expected 'speech-to-speech' or 'openai'.")
+    return str(getattr(config, "BACKEND_PROVIDER", "speech-to-speech")).strip().lower()
 
 
 def _uses_s2s_backend() -> bool:
@@ -117,7 +112,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self.output_sample_rate = OPEN_AI_OUTPUT_SAMPLE_RATE
         self.input_sample_rate = OPEN_AI_INPUT_SAMPLE_RATE
 
-        self.client = AsyncOpenAI(api_key="DUMMY")
+        self.client: AsyncOpenAI
         self.connection: AsyncRealtimeConnection | None = None
         self.output_queue: "asyncio.Queue[Tuple[int, NDArray[np.int16]] | AdditionalOutputs]" = asyncio.Queue()
 
@@ -857,6 +852,9 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         resolved_api_key = (api_key or self._provided_api_key or config.OPENAI_API_KEY or "").strip()
         if _get_backend_provider() == "openai":
             if not resolved_api_key:
+                # In headless console mode, LocalStream now blocks startup until the key is provided.
+                # However, unit tests may invoke this handler directly with a stubbed client.
+                # To keep tests hermetic without requiring a real key, fall back to a placeholder.
                 logger.warning("OPENAI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
                 resolved_api_key = "DUMMY"
             return AsyncOpenAI(api_key=resolved_api_key)
