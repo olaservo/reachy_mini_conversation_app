@@ -393,7 +393,7 @@ async def test_run_realtime_session_omits_voice_for_lb_allocated_sessions(monkey
 
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
     handler = OpenaiRealtimeHandler(deps)
-    monkeypatch.setattr(handler, "_build_openai_client", AsyncMock(return_value=FakeClient()))
+    monkeypatch.setattr(handler, "_build_realtime_client", AsyncMock(return_value=FakeClient()))
 
     await handler._run_realtime_session()
 

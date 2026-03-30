@@ -471,7 +471,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
         if self.client is None or self._resolved_api_key is not None:
-            self.client = await self._build_openai_client()
+            self.client = await self._build_realtime_client()
         async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
             try:
                 output_config: RealtimeAudioConfigOutputParam = RealtimeAudioConfigOutputParam(
@@ -858,7 +858,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         except Exception:
             return fallback
 
-    async def _build_openai_client(self) -> AsyncOpenAI:
+    async def _build_realtime_client(self) -> AsyncOpenAI:
+        """Build the realtime SDK client, optionally via the s2s session allocator."""
         api_key = self._resolved_api_key or config.OPENAI_API_KEY or "DUMMY"
         session_url = getattr(config, "OPENAI_REALTIME_SESSION_URL", None)
         if not session_url:
