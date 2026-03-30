@@ -248,6 +248,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 openai_api_key = "DUMMY"
 
         self._resolved_api_key = openai_api_key
+        self.client = await self._build_realtime_client()
 
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
@@ -270,6 +271,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             finally:
                 # never keep a stale reference
                 self.connection = None
+                if _should_use_lb_allocated_session():
+                    self.client = None
                 try:
                     self._connected_event.clear()
                 except Exception:
@@ -472,7 +475,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
-        if self.client is None or _should_use_lb_allocated_session():
+        if self.client is None:
             self.client = await self._build_realtime_client()
         async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
             try:
