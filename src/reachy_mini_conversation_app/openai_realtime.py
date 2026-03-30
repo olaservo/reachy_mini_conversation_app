@@ -177,17 +177,16 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             # Attempt a live update first, then force a full restart to ensure it sticks
             if self.connection is not None:
                 try:
-                    session_update = RealtimeSessionCreateRequestParam(
-                        type="realtime",
-                        instructions=instructions,
-                        audio=RealtimeAudioConfigParam(
-                            output=RealtimeAudioConfigOutputParam(
-                                voice=voice,
+                    await self.connection.session.update(
+                        session=RealtimeSessionCreateRequestParam(
+                            type="realtime",
+                            instructions=instructions,
+                            audio=RealtimeAudioConfigParam(
+                                output=RealtimeAudioConfigOutputParam(
+                                    voice=voice,
+                                ),
                             ),
                         ),
-                    )
-                    await self.connection.session.update(
-                        session=session_update,
                     )
                     logger.info("Applied personality via live update: %s", profile or "built-in default")
                 except Exception as e:
