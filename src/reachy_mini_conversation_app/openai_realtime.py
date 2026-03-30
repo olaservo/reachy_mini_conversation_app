@@ -470,7 +470,6 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         """Establish and manage a single realtime session."""
         async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
             try:
-                voice = _get_realtime_session_voice()
                 session_config = RealtimeSessionCreateRequestParam(
                     type="realtime",
                     instructions=get_session_instructions(),
@@ -482,7 +481,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                         ),
                         output=RealtimeAudioConfigOutputParam(
                             format=AudioPCM(type="audio/pcm", rate=self.output_sample_rate),
-                            voice=voice,
+                            voice=_get_realtime_session_voice(),
                         ),
                     ),
                     tools=get_tool_specs(), # type: ignore[typeddict-item]
@@ -492,7 +491,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 logger.info(
                     "Realtime session initialized with profile=%r voice=%r",
                     getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None),
-                    voice,
+                    _get_realtime_session_voice(),
                 )
                 # If we reached here, the session update succeeded which implies the API key worked.
                 # Persist the key to a newly created .env (copied from .env.example) if needed.
