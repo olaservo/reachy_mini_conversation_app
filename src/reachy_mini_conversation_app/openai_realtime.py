@@ -905,13 +905,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         )
 
     async def _allocate_realtime_session(self, session_url: str) -> AllocatedRealtimeSession:
-        headers: dict[str, str] = {}
-        authorization = getattr(config, "OPENAI_REALTIME_SESSION_AUTHORIZATION", None)
-        if authorization:
-            headers["Authorization"] = authorization
-
         async with httpx.AsyncClient(timeout=10.0) as http_client:
-            response = await http_client.post(session_url, headers=headers)
+            response = await http_client.post(session_url)
             response.raise_for_status()
             payload = response.json()
 

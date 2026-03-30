@@ -156,7 +156,6 @@ class Config:
     # Optional
     MODEL_NAME = os.getenv("MODEL_NAME", "gpt-realtime")
     OPENAI_REALTIME_SESSION_URL = os.getenv("OPENAI_REALTIME_SESSION_URL")
-    OPENAI_REALTIME_SESSION_AUTHORIZATION = os.getenv("OPENAI_REALTIME_SESSION_AUTHORIZATION")
     HF_HOME = os.getenv("HF_HOME", "./cache")
     LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     HF_TOKEN = os.getenv("HF_TOKEN")  # Optional, falls back to hf auth login if not set
