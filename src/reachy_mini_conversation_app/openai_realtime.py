@@ -283,6 +283,11 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 finally:
                     self.connection = None
 
+            # Ensure we have a client (start_up must have run once)
+            if getattr(self, "client", None) is None:
+                logger.warning("Cannot restart: OpenAI client not initialized yet.")
+                return
+
             # Fire-and-forget new session and wait briefly for connection
             try:
                 self._connected_event.clear()
