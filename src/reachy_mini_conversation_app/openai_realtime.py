@@ -472,7 +472,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
-        if self.client is None or self._resolved_api_key is not None:
+        if self.client is None or _should_use_lb_allocated_session():
             self.client = await self._build_realtime_client()
         async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
             try:
