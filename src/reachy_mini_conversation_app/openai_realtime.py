@@ -143,6 +143,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self._response_done_event.set()
         self._last_response_rejected: bool = False
         self._resolved_api_key: str | None = None
+        self._missing_api_key_for_openai: bool = False
 
     def copy(self) -> "OpenaiRealtimeHandler":
         """Create a copy of the handler."""
@@ -237,14 +238,11 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             else:
                 openai_api_key = config.OPENAI_API_KEY
         else:
-            if not openai_api_key or not openai_api_key.strip():
+            self._missing_api_key_for_openai = not openai_api_key or not openai_api_key.strip()
+            if self._missing_api_key_for_openai:
                 # In headless console mode, LocalStream now blocks startup until the key is provided.
                 # However, unit tests may invoke this handler directly with a stubbed client.
                 # To keep tests hermetic without requiring a real key, fall back to a placeholder.
-                if _should_use_lb_allocated_session():
-                    logger.info("OPENAI_API_KEY missing. Using placeholder because realtime session allocation is configured.")
-                else:
-                    logger.warning("OPENAI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
                 openai_api_key = "DUMMY"
 
         self._resolved_api_key = openai_api_key
@@ -866,6 +864,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         api_key = self._resolved_api_key or config.OPENAI_API_KEY or "DUMMY"
         session_url = getattr(config, "S2S_REALTIME_SESSION_URL", None)
         if not session_url:
+            if self._missing_api_key_for_openai:
+                logger.warning("OPENAI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
             return AsyncOpenAI(api_key=api_key)
 
         async with httpx.AsyncClient(timeout=10.0) as http_client:
