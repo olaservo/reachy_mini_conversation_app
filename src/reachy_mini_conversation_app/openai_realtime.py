@@ -479,9 +479,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 voice = _get_realtime_session_voice()
                 output_config: RealtimeAudioConfigOutputParam = RealtimeAudioConfigOutputParam(
                     format=AudioPCM(type="audio/pcm", rate=self.output_sample_rate),
+                    voice=voice,
                 )
-                if voice is not None:
-                    output_config["voice"] = voice
 
                 session_config = RealtimeSessionCreateRequestParam(
                     type="realtime",
