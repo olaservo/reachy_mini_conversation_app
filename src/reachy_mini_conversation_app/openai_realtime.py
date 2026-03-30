@@ -57,7 +57,7 @@ _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 
 
 def _get_backend_provider() -> str:
-    provider = str(getattr(config, "BACKEND_PROVIDER", "speech-to-speech") or "speech-to-speech").strip().lower()
+    provider = str(getattr(config, "BACKEND_PROVIDER", "speech-to-speech")).strip().lower()
     if provider in {"speech-to-speech", "s2s"}:
         return "speech-to-speech"
     if provider == "openai":
