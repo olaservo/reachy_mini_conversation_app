@@ -175,6 +175,28 @@ def run(
 
         personality_ui.wire_events(handler, stream_manager)
 
+        # Sleep / Wake buttons — bypass the LLM, act directly on the robot
+        with stream.ui:
+            with gr.Row():
+                sleep_btn = gr.Button("Sleep")
+                wake_btn = gr.Button("Wake Up")
+            sleep_status = gr.Textbox(label="Status", interactive=False)
+
+            def _do_sleep() -> str:
+                deps.is_sleeping = True
+                deps.movement_manager.set_sleeping(True)
+                robot.goto_sleep()
+                return "Sleeping"
+
+            def _do_wake() -> str:
+                robot.wake_up()
+                deps.movement_manager.set_sleeping(False)
+                deps.is_sleeping = False
+                return "Awake"
+
+            sleep_btn.click(fn=_do_sleep, outputs=[sleep_status])
+            wake_btn.click(fn=_do_wake, outputs=[sleep_status])
+
         app = gr.mount_gradio_app(app, stream.ui, path="/")
     else:
         # In headless mode, wire settings_app + instance_path to console LocalStream
