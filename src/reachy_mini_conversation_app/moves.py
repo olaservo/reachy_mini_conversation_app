@@ -276,6 +276,7 @@ class MovementManager:
         self._antenna_blend_duration = 0.4  # seconds to blend back after listening
         self._last_listening_blend_time = self._now()
         self._breathing_active = False  # true when breathing move is running or queued
+        self._is_sleeping = False  # when True, set_target is not sent
         self._listening_debounce_s = 0.15
         self._last_listening_toggle_time = self._now()
         self._last_set_target_err = 0.0
@@ -358,6 +359,17 @@ class MovementManager:
             return False
 
         return self._now() - last_activity >= self.idle_inactivity_delay
+
+    def set_sleeping(self, sleeping: bool) -> None:
+        """Enable or disable sleeping mode.
+
+        While sleeping, set_target commands are not sent to the robot.
+        On wake (sleeping→False), a BreathingMove is queued to smoothly
+        interpolate from the current sensor pose to neutral.
+
+        Thread-safe: posted via the worker command queue.
+        """
+        self._command_queue.put(("set_sleeping", sleeping))
 
     def set_listening(self, listening: bool) -> None:
         """Enable or disable listening mode without touching shared state directly.
@@ -466,6 +478,35 @@ class MovementManager:
                 # Unfreeze: restart blending from frozen pose
                 self._antenna_unfreeze_blend = 0.0
             self.state.update_activity()
+        elif command == "set_sleeping":
+            new_sleeping = bool(payload)
+            if new_sleeping == self._is_sleeping:
+                return
+            self._is_sleeping = new_sleeping
+            # Clear all move state on any transition
+            self.move_queue.clear()
+            self.state.current_move = None
+            self.state.move_start_time = None
+            self._breathing_active = False
+            if not new_sleeping:
+                # Waking up: queue a BreathingMove from current sensor pose
+                # so the robot smoothly interpolates to neutral.
+                try:
+                    _, current_antennas = self.current_robot.get_current_joint_positions()
+                    current_head_pose = self.current_robot.get_current_head_pose()
+                    breathing_move = BreathingMove(
+                        interpolation_start_pose=current_head_pose,
+                        interpolation_start_antennas=current_antennas,
+                        interpolation_duration=1.0,
+                    )
+                    self.move_queue.append(breathing_move)
+                    self._breathing_active = True
+                    self.state.update_activity()
+                    logger.info("Wake-up: queued breathing from current pose")
+                except Exception as e:
+                    logger.error("Failed to start wake-up breathing: %s", e)
+            else:
+                logger.info("Sleeping: set_target gated")
         else:
             logger.warning("Unknown command received by MovementManager: %s", command)
 
@@ -841,7 +882,8 @@ class MovementManager:
             antennas_cmd = self._calculate_blended_antennas(antennas)
 
             # 6) Single set_target call - the only control point
-            self._issue_control_command(head, antennas_cmd, body_yaw)
+            if not self._is_sleeping:
+                self._issue_control_command(head, antennas_cmd, body_yaw)
 
             # 7) Adaptive sleep to align to next tick, then publish shared state
             sleep_time, freq_stats = self._schedule_next_tick(loop_start, freq_stats)

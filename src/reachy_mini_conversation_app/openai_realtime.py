@@ -599,16 +599,17 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
                     # Handle audio delta
                     if event.type == "response.output_audio.delta":
-                        if self.deps.head_wobbler is not None:
-                            self.deps.head_wobbler.feed(event.delta)
+                        if not self.deps.is_sleeping:
+                            if self.deps.head_wobbler is not None:
+                                self.deps.head_wobbler.feed(event.delta)
+                            await self.output_queue.put(
+                                (
+                                    self.output_sample_rate,
+                                    np.frombuffer(base64.b64decode(event.delta), dtype=np.int16).reshape(1, -1),
+                                ),
+                            )
                         self.last_activity_time = asyncio.get_event_loop().time()
                         logger.debug("last activity time updated to %s", self.last_activity_time)
-                        await self.output_queue.put(
-                            (
-                                self.output_sample_rate,
-                                np.frombuffer(base64.b64decode(event.delta), dtype=np.int16).reshape(1, -1),
-                            ),
-                        )
 
                     # ---- tool-calling plumbing ----
                     if event.type == "response.function_call_arguments.done":
