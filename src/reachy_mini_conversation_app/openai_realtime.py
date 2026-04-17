@@ -1049,9 +1049,24 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 resolved_api_key = "DUMMY"
             return AsyncOpenAI(api_key=resolved_api_key)
 
+        direct_ws_url = getattr(config, "S2S_REALTIME_WS_URL", None)
+        if direct_ws_url:
+            parsed = urlsplit(direct_ws_url)
+            path = parsed.path.rstrip("/")
+            if not path.endswith("/realtime"):
+                raise ValueError(f"S2S_REALTIME_WS_URL must end with /realtime, got: {direct_ws_url}")
+            base_path = path[: -len("/realtime")]
+            logger.info("Using direct s2s realtime endpoint %s (no session allocator)", direct_ws_url)
+            self._realtime_connect_query = {}
+            return AsyncOpenAI(
+                api_key=resolved_api_key or "DUMMY",
+                base_url=urlunsplit(("https" if parsed.scheme == "wss" else "http", parsed.netloc, base_path, "", "")),
+                websocket_base_url=urlunsplit((parsed.scheme, parsed.netloc, base_path, "", "")),
+            )
+
         session_url = getattr(config, "S2S_REALTIME_SESSION_URL", None)
         if not session_url:
-            raise RuntimeError("S2S_REALTIME_SESSION_URL must be set when BACKEND_PROVIDER=speech-to-speech")
+            raise RuntimeError("S2S_REALTIME_SESSION_URL or S2S_REALTIME_WS_URL must be set when BACKEND_PROVIDER=speech-to-speech")
 
         async with httpx.AsyncClient(timeout=10.0) as http_client:
             response = await http_client.post(session_url)
