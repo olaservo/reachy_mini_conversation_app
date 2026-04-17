@@ -66,6 +66,9 @@ class ToolNotification(BaseModel):
     """the name of the tool"""
     tool_name: str
 
+    """the original JSON arguments string (for conversation logging)"""
+    args_json_str: Optional[str] = None
+
     """whether the tool call was triggered by an idle signal"""
     is_idle_tool_call: bool
 
@@ -104,6 +107,7 @@ class BackgroundTool(ToolNotification):
         return ToolNotification(
             id=self.id,
             tool_name=self.tool_name,
+            args_json_str=self.args_json_str,
             is_idle_tool_call=self.is_idle_tool_call,
             status=self.status,
             result=self.result,
@@ -183,6 +187,7 @@ class BackgroundToolManager(BaseModel):
         bg_tool = BackgroundTool(
             id=id,
             tool_name=tool_name,
+            args_json_str=tool_call_routine.args_json_str,
             is_idle_tool_call=is_idle_tool_call,
             progress=ToolProgress(progress=0.0) if with_progress else None,
             status=ToolState.RUNNING,
