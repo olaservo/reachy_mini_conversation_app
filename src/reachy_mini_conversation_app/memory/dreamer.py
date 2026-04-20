@@ -103,9 +103,13 @@ Each memory file has the following frontmatter:
 2. Check for overlap with `find_related_memories(query=...)` — one call is
    usually enough; fall back to `list_existing_memories(tag=...)` only if
    you need a strictly tag-filtered view.
-3. For each distinct (kind, primary topic) you extract, either
+3. **Every `find_related_memories` result carries a `body_preview` field
+   (~300 characters of the body) by default. Read it.** Only call
+   `read_memory(id)` when the preview is truly inconclusive — the preview
+   is specifically there to let you skip that round-trip.
+4. For each distinct (kind, primary topic) you extract, either
    `write_memory(...)` or `update_memory(...)`.
-4. When you're finished with this log, respond with a plain-text summary of
+5. When you're finished with this log, respond with a plain-text summary of
    what you did. Do NOT call `mark_log_processed` — the runner marks the log
    processed automatically once you stop making tool calls. Do NOT call
    `rebuild_index` — the runner rebuilds it at the end of the run.
