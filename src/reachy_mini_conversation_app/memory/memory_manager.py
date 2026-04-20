@@ -34,7 +34,10 @@ from reachy_mini_conversation_app.memory.frontmatter import (
 logger = logging.getLogger(__name__)
 
 ALLOWED_KINDS = {"fact", "preference", "event", "skill", "relationship", "goal", "other"}
-_MEMORY_ID_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9-]+_[0-9a-f]{3}$")
+# date_<slug>_<3-hex>. Slug may contain a–z, 0–9, hyphens, underscores; must
+# start with an alphanumeric character. The 3-hex suffix makes the split
+# unambiguous since ``[0-9a-f]{3}`` is always the last token.
+_MEMORY_ID_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9][a-z0-9_-]*_[0-9a-f]{3}$")
 
 
 def _now_utc() -> datetime:

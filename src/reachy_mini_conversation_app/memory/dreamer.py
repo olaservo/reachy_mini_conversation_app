@@ -45,6 +45,11 @@ next time it talks with this user. You never talk to the user directly.
 
 Each memory file has the following frontmatter:
 - id: YYYY-MM-DD_<slug>_<3-hex>  (date is the creation date)
+  The slug is lowercase ASCII using letters, digits, hyphens or underscores
+  and MUST start with a letter or digit. The 3-hex suffix is exactly three
+  characters from [0-9a-f]. Good: 2026-04-20_chess-openings_a3f,
+  2026-04-20_user_name_01d. Bad: 2026-04-20_chess_xyz (xyz not hex),
+  2026-04-20_-chess_a3f (slug starts with '-').
 - created: ISO8601 UTC
 - sources: [log filenames the memory is drawn from]
 - kind: one of fact | preference | event | skill | relationship | goal | other
