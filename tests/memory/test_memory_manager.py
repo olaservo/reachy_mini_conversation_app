@@ -1,12 +1,14 @@
-"""Tests for MemoryManager."""
+"""Tests for MemoryManager (new dreaming-based storage layout)."""
 
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 
 import pytest
 
-from reachy_mini_conversation_app.memory.memory_manager import (
-    MemoryManager,
-    _estimate_tokens,
+from reachy_mini_conversation_app.memory.memory_manager import MemoryManager
+from reachy_mini_conversation_app.memory.index_renderer import (
+    render_index,
+    rebuild_index,
 )
 
 
@@ -22,206 +24,351 @@ def manager(data_dir: Path) -> MemoryManager:
     return MemoryManager(data_dir)
 
 
-# ------------------------------------------------------------------
-# Initialization
-# ------------------------------------------------------------------
-
-
-class TestInit:
-    """Verify directory creation and initial state."""
-
-    def test_creates_directories(self, manager: MemoryManager, data_dir: Path) -> None:
-        """Create memory and logs directories on init."""
-        assert (data_dir / "memory").is_dir()
-        assert (data_dir / "memory" / "logs").is_dir()
-
-    def test_active_memory_empty_on_fresh_start(self, manager: MemoryManager) -> None:
-        """Return empty memory block when no facts saved."""
-        assert manager.get_memory_block() == ""
-
-    def test_initial_session_log_created(self, manager: MemoryManager, data_dir: Path) -> None:
-        """Create one session log file on init."""
-        log_files = list((data_dir / "memory" / "logs").glob("*.log"))
-        assert len(log_files) == 1
-        content = log_files[0].read_text()
-        assert content.startswith("--- session")
-
-    def test_new_session_creates_new_log(self, manager: MemoryManager, data_dir: Path) -> None:
-        """Create a second log file on new_session()."""
-        manager.new_session()
-        log_files = list((data_dir / "memory" / "logs").glob("*.log"))
-        assert len(log_files) == 2
+def _memory_id(slug: str = "demo", date: str = "2026-04-17", hex3: str = "abc") -> str:
+    return f"{date}_{slug}_{hex3}"
 
 
 # ------------------------------------------------------------------
-# Tier 1: Conversation logging (per-session plain text)
+# Storage layout
 # ------------------------------------------------------------------
 
 
-class TestConversationLogging:
-    """Verify per-session plain-text conversation logging."""
+class TestLayout:
+    """Verify directory structure on init."""
 
-    def test_log_turn_creates_entry(self, manager: MemoryManager) -> None:
-        """Append a turn to the session log."""
+    def test_creates_all_directories(self, manager: MemoryManager, data_dir: Path) -> None:
+        """Ensure every expected subdir exists after init."""
+        mem = data_dir / "memory"
+        assert mem.is_dir()
+        assert (mem / "memories").is_dir()
+        assert (mem / "logs" / "pending").is_dir()
+        assert (mem / "logs" / "processed").is_dir()
+
+    def test_session_log_written_under_pending(self, manager: MemoryManager, data_dir: Path) -> None:
+        """The live session log must land in logs/pending/ from the start."""
+        pending = data_dir / "memory" / "logs" / "pending"
+        logs = list(pending.glob("*.log"))
+        assert len(logs) == 1
+        assert manager.session_log_path == logs[0]
+
+
+# ------------------------------------------------------------------
+# Migration
+# ------------------------------------------------------------------
+
+
+class TestMigration:
+    """Verify legacy -> new layout migration."""
+
+    def test_moves_top_level_logs_into_pending(self, data_dir: Path) -> None:
+        """Old top-level logs/*.log must be moved to logs/pending/."""
+        old_logs = data_dir / "memory" / "logs"
+        old_logs.mkdir(parents=True)
+        (old_logs / "2026-01-01_10-00.log").write_text("legacy session", encoding="utf-8")
+        (old_logs / "2026-01-02_12-00.log").write_text("another session", encoding="utf-8")
+
+        MemoryManager(data_dir)
+
+        pending = old_logs / "pending"
+        assert (pending / "2026-01-01_10-00.log").is_file()
+        assert (pending / "2026-01-02_12-00.log").is_file()
+        assert not (old_logs / "2026-01-01_10-00.log").exists()
+
+    def test_wipes_legacy_active_memory(self, data_dir: Path) -> None:
+        """Any pre-existing active_memory.md must be removed."""
+        mem_dir = data_dir / "memory"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "active_memory.md").write_text("old fact (log.log)", encoding="utf-8")
+
+        MemoryManager(data_dir)
+
+        assert not (mem_dir / "active_memory.md").exists()
+
+    def test_removes_legacy_archive(self, data_dir: Path) -> None:
+        """A legacy archive/ directory must be removed."""
+        archive = data_dir / "memory" / "archive"
+        archive.mkdir(parents=True)
+        (archive / "something.txt").write_text("junk", encoding="utf-8")
+
+        MemoryManager(data_dir)
+
+        assert not archive.exists()
+
+
+# ------------------------------------------------------------------
+# Session log
+# ------------------------------------------------------------------
+
+
+class TestSessionLog:
+    """Verify live log write behaviour."""
+
+    def test_log_turn(self, manager: MemoryManager) -> None:
+        """Round-trip a user turn through the session log."""
         manager.log_turn("user", "Hello there!")
-        content = manager._session_log_path.read_text()
+        content = manager.session_log_path.read_text()  # type: ignore[union-attr]
         assert "user: Hello there!" in content
 
-    def test_log_turn_appends(self, manager: MemoryManager) -> None:
-        """Append multiple turns sequentially."""
-        manager.log_turn("user", "First")
-        manager.log_turn("assistant", "Second")
-        content = manager._session_log_path.read_text()
-        assert "user: First" in content
-        assert "assistant: Second" in content
-
-    def test_log_turn_has_timestamp(self, manager: MemoryManager) -> None:
-        """Prefix each log line with HH:MM:SS."""
-        manager.log_turn("user", "Hello")
-        lines = manager._session_log_path.read_text().splitlines()
-        # Find the line with the log entry (skip header)
-        log_lines = [ln for ln in lines if "user:" in ln]
-        assert len(log_lines) == 1
-        # Should start with HH:MM:SS
-        assert log_lines[0][2] == ":" and log_lines[0][5] == ":"
-
-    def test_log_turn_ignores_empty(self, manager: MemoryManager) -> None:
-        """Skip empty or whitespace-only turns."""
-        manager.log_turn("user", "")
-        manager.log_turn("user", "   ")
-        content = manager._session_log_path.read_text()
-        assert "user:" not in content
-
     def test_log_tool_call(self, manager: MemoryManager) -> None:
-        """Log a tool call with args and result."""
-        manager.log_tool_call("dance", args={"name": "happy"}, result={"status": "queued"})
-        content = manager._session_log_path.read_text()
-        assert 'tool: dance({"name": "happy"})' in content
-        assert '{"status": "queued"}' in content
+        """Round-trip a tool invocation through the session log."""
+        manager.log_tool_call("dance", args={"move": "spin"}, result={"status": "queued"})
+        content = manager.session_log_path.read_text()  # type: ignore[union-attr]
+        assert 'tool: dance({"move": "spin"})' in content
 
-    def test_new_session_writes_to_new_file(self, manager: MemoryManager) -> None:
-        """Rotate to a new log file on new_session()."""
-        manager.log_turn("user", "Before")
-        old_path = manager._session_log_path
+    def test_read_current_session_log(self, manager: MemoryManager) -> None:
+        """Return the full session log as a string."""
+        manager.log_turn("user", "Hi")
+        text = manager.read_current_session_log()
+        assert "user: Hi" in text
+
+    def test_new_session_rotates(self, manager: MemoryManager) -> None:
+        """Rotating the session creates a fresh pending log."""
+        first = manager.session_log_path
         manager.new_session()
-        manager.log_turn("user", "After")
-        new_path = manager._session_log_path
+        second = manager.session_log_path
+        assert first != second
+        assert first.exists() and second.exists()  # type: ignore[union-attr]
 
-        assert old_path != new_path
-        assert "Before" in old_path.read_text()
-        assert "After" in new_path.read_text()
-        assert "After" not in old_path.read_text()
+    def test_list_pending_excludes_active(self, manager: MemoryManager) -> None:
+        """The live log must be filtered out of pending listings by default."""
+        # create an older pending log
+        old = manager.pending_logs_dir / "2025-01-01_00-00.log"
+        old.write_text("legacy", encoding="utf-8")
 
-    def test_filename_collision_handling(self, manager: MemoryManager, data_dir: Path) -> None:
-        """Generate unique filenames for rapid session creation."""
-        # Create multiple sessions rapidly — should get _2, _3 suffixes
-        paths = [manager._session_log_path]
-        for _ in range(3):
-            manager.new_session()
-            paths.append(manager._session_log_path)
-        # All paths should be unique
-        assert len(set(paths)) == len(paths)
+        pending = manager.list_pending_logs()
+        assert "2025-01-01_00-00.log" in pending
+        assert manager.session_log_path.name not in pending  # type: ignore[union-attr]
 
 
 # ------------------------------------------------------------------
-# Tier 2: Active memory
+# Memory CRUD
 # ------------------------------------------------------------------
 
 
-class TestActiveMemory:
-    """Verify active memory save and retrieval."""
+class TestMemoryFiles:
+    """Verify memory file creation, update, and listing."""
 
-    def test_save_memory(self, manager: MemoryManager) -> None:
-        """Save a fact and return status."""
-        result = manager.save_memory("User's name is Alice")
-        assert result["status"] == "saved"
-        assert "Alice" in result["fact"]
+    def test_write_and_read(self, manager: MemoryManager) -> None:
+        """Round-trip a memory through write + read."""
+        mid = _memory_id("chess-openings", "2026-04-17", "a3f")
+        manager.write_memory(
+            mid,
+            "User prefers Queen's Gambit.",
+            kind="preference",
+            tags=["chess", "openings"],
+            sources=["2026-04-14_09-15.log"],
+        )
+        mem = manager.read_memory(mid)
+        assert mem["id"] == mid
+        assert mem["frontmatter"]["kind"] == "preference"
+        assert mem["frontmatter"]["tags"] == ["chess", "openings"]
+        assert "Queen's Gambit" in mem["body"]
 
-    def test_save_memory_appears_in_block(self, manager: MemoryManager) -> None:
-        """Include saved facts in the memory block."""
-        manager.save_memory("User's name is Alice")
-        block = manager.get_memory_block()
-        assert "Alice" in block
-        assert "## MEMORY" in block
+    def test_invalid_id_format_rejected(self, manager: MemoryManager) -> None:
+        """Memory IDs must match the expected format."""
+        with pytest.raises(ValueError):
+            manager.write_memory(
+                "bad id",
+                "body",
+                kind="fact",
+                tags=["foo"],
+            )
 
-    def test_save_memory_has_log_ref(self, manager: MemoryManager) -> None:
-        """Attach session log filename reference to saved facts."""
-        manager.save_memory("User's name is Alice")
-        block = manager.get_memory_block()
-        assert ".log)" in block
+    def test_invalid_kind_rejected(self, manager: MemoryManager) -> None:
+        """Kind must be a member of the closed taxonomy."""
+        with pytest.raises(ValueError):
+            manager.write_memory(
+                _memory_id(),
+                "body",
+                kind="misc",  # not in ALLOWED_KINDS
+                tags=["foo"],
+            )
 
-    def test_save_memory_format(self, manager: MemoryManager) -> None:
-        """Store facts as 'text (filename.log)' entries."""
-        manager.save_memory("User's name is Alice")
-        lines = manager._read_active_lines()
-        # Format: "fact text (YYYY-MM-DD_HH-MM.log)"
-        assert len(lines) == 1
-        assert lines[0].startswith("User's name is Alice (")
-        assert lines[0].endswith(".log)")
+    def test_overwrite_refused(self, manager: MemoryManager) -> None:
+        """write_memory must refuse to overwrite an existing file."""
+        mid = _memory_id()
+        manager.write_memory(mid, "first", kind="fact", tags=["foo"])
+        with pytest.raises(FileExistsError):
+            manager.write_memory(mid, "second", kind="fact", tags=["foo"])
 
-    def test_save_memory_rejects_empty(self, manager: MemoryManager) -> None:
-        """Reject empty fact strings."""
-        result = manager.save_memory("")
-        assert "error" in result
+    def test_update_changes_body(self, manager: MemoryManager) -> None:
+        """update_memory can rewrite the body while preserving frontmatter."""
+        mid = _memory_id()
+        manager.write_memory(mid, "first body", kind="fact", tags=["foo"])
+        manager.update_memory(mid, body="second body")
+        mem = manager.read_memory(mid)
+        assert mem["body"].strip() == "second body"
 
-    def test_save_memory_rejects_whitespace(self, manager: MemoryManager) -> None:
-        """Reject whitespace-only fact strings."""
-        result = manager.save_memory("   ")
-        assert "error" in result
+    def test_update_merges_frontmatter(self, manager: MemoryManager) -> None:
+        """update_memory merges frontmatter updates."""
+        mid = _memory_id()
+        manager.write_memory(mid, "body", kind="fact", tags=["foo"])
+        manager.update_memory(mid, frontmatter_updates={"pinned": True, "tags": ["foo", "bar"]})
+        mem = manager.read_memory(mid)
+        assert mem["frontmatter"]["pinned"] is True
+        assert mem["frontmatter"]["tags"] == ["foo", "bar"]
+        assert mem["frontmatter"]["kind"] == "fact"  # untouched
 
-    def test_multiple_saves(self, manager: MemoryManager) -> None:
-        """Accumulate multiple facts in the memory block."""
-        manager.save_memory("Fact one")
-        manager.save_memory("Fact two")
-        block = manager.get_memory_block()
-        assert "Fact one" in block
-        assert "Fact two" in block
+    def test_list_filters_by_tag(self, manager: MemoryManager) -> None:
+        """list_memories filters by tag."""
+        manager.write_memory(_memory_id("chess", hex3="111"), "A", kind="fact", tags=["chess"])
+        manager.write_memory(_memory_id("cook", hex3="222"), "B", kind="fact", tags=["cooking"])
+        results = manager.list_memories(tag="chess")
+        assert [m["id"] for m in results] == [_memory_id("chess", hex3="111")]
+
+    def test_list_filters_by_kind(self, manager: MemoryManager) -> None:
+        """list_memories filters by kind."""
+        manager.write_memory(_memory_id("p", hex3="111"), "A", kind="preference", tags=["t"])
+        manager.write_memory(_memory_id("e", hex3="222"), "B", kind="event", tags=["t"])
+        results = manager.list_memories(kind="event")
+        assert [m["id"] for m in results] == [_memory_id("e", hex3="222")]
+
+    def test_list_hides_superseded_by_default(self, manager: MemoryManager) -> None:
+        """Superseded memories drop out of the default listing but not the full one."""
+        old = _memory_id("old", hex3="111")
+        new = _memory_id("new", hex3="222")
+        manager.write_memory(old, "old", kind="fact", tags=["t"])
+        manager.write_memory(new, "new", kind="fact", tags=["t"], supersedes=old)
+        manager.update_memory(old, frontmatter_updates={"superseded_by": new})
+
+        visible = {m["id"] for m in manager.list_memories()}
+        full = {m["id"] for m in manager.list_memories(include_superseded=True)}
+        assert old not in visible and new in visible
+        assert {old, new}.issubset(full)
+
+    def test_summary_extracted_from_body(self, manager: MemoryManager) -> None:
+        """First non-title body line becomes the summary."""
+        mid = _memory_id()
+        body = "# Chess\n\nUser prefers Queen's Gambit."
+        manager.write_memory(mid, body, kind="preference", tags=["chess"])
+        [entry] = manager.list_memories()
+        assert entry["summary"] == "User prefers Queen's Gambit."
 
 
 # ------------------------------------------------------------------
-# Recall (read session logs)
+# Log processed move
 # ------------------------------------------------------------------
 
 
-class TestRecall:
-    """Verify session log recall."""
+class TestMarkLogProcessed:
+    """Verify move pending -> processed."""
 
-    def test_recall_returns_session_log(self, manager: MemoryManager) -> None:
-        """Read back a session log by filename."""
-        manager.log_turn("user", "Hello, my name is Rémi")
-        manager.log_turn("assistant", "Nice to meet you!")
-        log_name = manager._session_log_path.name
-        result = manager.recall_memory(log_name)
-        assert "content" in result
-        assert "Rémi" in result["content"]
-        assert "Nice to meet you" in result["content"]
+    def test_moves_log(self, manager: MemoryManager) -> None:
+        """Successful move from pending/ to processed/."""
+        old = manager.pending_logs_dir / "2025-06-01_12-00.log"
+        old.write_text("contents", encoding="utf-8")
+        manager.mark_log_processed("2025-06-01_12-00.log")
+        assert not old.exists()
+        assert (manager.pending_logs_dir.parent / "processed" / "2025-06-01_12-00.log").is_file()
 
-    def test_recall_file_not_found(self, manager: MemoryManager) -> None:
-        """Return error and available files for missing log."""
-        result = manager.recall_memory("nonexistent.log")
-        assert "error" in result
-        assert "available_logs" in result
+    def test_refuses_active_session(self, manager: MemoryManager) -> None:
+        """Refuse to move the active session log."""
+        active = manager.session_log_path.name  # type: ignore[union-attr]
+        with pytest.raises(RuntimeError):
+            manager.mark_log_processed(active)
 
-    def test_recall_empty_lists_files(self, manager: MemoryManager) -> None:
-        """List available log files when called with empty string."""
-        result = manager.recall_memory("")
-        assert "available_logs" in result
-        assert len(result["available_logs"]) >= 1  # at least the init session log
 
-    def test_recall_via_save_memory_ref(self, manager: MemoryManager) -> None:
-        """End-to-end: save a memory, extract its ref, recall the session log."""
-        manager.log_turn("user", "I love playing chess")
-        manager.save_memory("User loves chess")
+# ------------------------------------------------------------------
+# Index rendering
+# ------------------------------------------------------------------
 
-        # Extract the log ref from the active memory entry
-        lines = manager._read_active_lines()
-        entry = [ln for ln in lines if "chess" in ln][0]
-        # Format: "User loves chess (2026-03-26_16-28.log)"
-        log_ref = entry.split("(")[-1].rstrip(")")
 
-        result = manager.recall_memory(log_ref)
-        assert "content" in result
-        assert "chess" in result["content"]
+class TestIndexRenderer:
+    """Verify tiered index rendering."""
+
+    def test_empty_index(self) -> None:
+        """Empty input renders with (none) placeholders."""
+        out = render_index([])
+        assert "## Core (pinned)" in out
+        assert "## Recent (last 30 days)" in out
+        assert "## Older" in out
+        assert out.count("(none)") == 3
+
+    def test_core_renders_pinned(self) -> None:
+        """Pinned memories land in the Core section."""
+        now = datetime(2026, 4, 17, tzinfo=timezone.utc)
+        mems = [
+            {
+                "id": "2025-01-01_user-name_abc",
+                "summary": "User's name is Rémi.",
+                "tags": ["identity"],
+                "kind": "fact",
+                "pinned": True,
+                "created": "2025-01-01T00:00:00Z",
+                "superseded_by": None,
+            }
+        ]
+        out = render_index(mems, now=now)
+        core_block = out.split("## Recent")[0]
+        assert "[2025-01-01_user-name_abc] User's name is Rémi." in core_block
+
+    def test_recent_grouped_by_primary_tag(self) -> None:
+        """Recent memories get a ### subheading per first tag."""
+        now = datetime(2026, 4, 17, tzinfo=timezone.utc)
+        mems = [
+            {
+                "id": "2026-04-10_chess_aaa",
+                "summary": "Chess summary.",
+                "tags": ["chess", "openings"],
+                "kind": "preference",
+                "pinned": False,
+                "created": "2026-04-10T00:00:00Z",
+                "superseded_by": None,
+            },
+            {
+                "id": "2026-04-11_board_bbb",
+                "summary": "Board game night.",
+                "tags": ["board-games"],
+                "kind": "event",
+                "pinned": False,
+                "created": "2026-04-11T00:00:00Z",
+                "superseded_by": None,
+            },
+        ]
+        out = render_index(mems, now=now)
+        assert "### Chess" in out
+        assert "### Board-games" in out
+
+    def test_older_section_shows_counts(self) -> None:
+        """Older memories collapse to ranked tag counts."""
+        now = datetime(2026, 4, 17, tzinfo=timezone.utc)
+        old = now - timedelta(days=200)
+        mems = [
+            {
+                "id": f"2025-09-29_work_{i:03x}"[:-1] + "a",
+                "summary": f"w{i}",
+                "tags": ["work"],
+                "kind": "event",
+                "pinned": False,
+                "created": old.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "superseded_by": None,
+            }
+            for i in range(3)
+        ]
+        mems.append(
+            {
+                "id": "2025-09-29_music_zzz",
+                "summary": "m",
+                "tags": ["music"],
+                "kind": "preference",
+                "pinned": False,
+                "created": old.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "superseded_by": None,
+            }
+        )
+        out = render_index(mems, now=now)
+        older = out.split("## Older")[1]
+        assert "work (3)" in older
+        assert "music (1)" in older
+        # work appears before music because of higher count
+        assert older.index("work (3)") < older.index("music (1)")
+
+    def test_rebuild_index_writes_file(self, manager: MemoryManager) -> None:
+        """rebuild_index persists a non-empty file."""
+        manager.write_memory(_memory_id("chess", hex3="aaa"), "Loves chess.", kind="preference", tags=["chess"])
+        rendered = rebuild_index(manager)
+        assert manager.active_memory_path.read_text(encoding="utf-8") == rendered
+        assert "chess" in rendered.lower()
 
 
 # ------------------------------------------------------------------
@@ -229,41 +376,24 @@ class TestRecall:
 # ------------------------------------------------------------------
 
 
-class TestPromptInjection:
-    """Verify memory block formatting for prompt injection."""
+class TestMemoryBlock:
+    """Verify system prompt injection."""
 
-    def test_empty_memory_returns_empty_string(self, manager: MemoryManager) -> None:
-        """Return empty string when no facts are saved."""
+    def test_empty_when_no_index(self, manager: MemoryManager) -> None:
+        """No index file returns empty string."""
         assert manager.get_memory_block() == ""
 
-    def test_memory_block_format(self, manager: MemoryManager) -> None:
-        """Format memory block with header and tool references."""
-        manager.save_memory("User's name is Alice")
+    def test_includes_rendered_index(self, manager: MemoryManager) -> None:
+        """Built index shows up inside the MEMORY block."""
+        manager.write_memory(
+            _memory_id("chess", hex3="aaa"),
+            "Loves chess.",
+            kind="preference",
+            tags=["chess"],
+        )
+        rebuild_index(manager)
         block = manager.get_memory_block()
-        assert block.startswith("\n\n## MEMORY\n")
-        assert "save_memory" in block
+        assert "## MEMORY" in block
+        assert "chess" in block.lower()
         assert "recall_memory" in block
-        assert "Alice" in block
-
-
-# ------------------------------------------------------------------
-# Token estimation
-# ------------------------------------------------------------------
-
-
-class TestTokenEstimation:
-    """Verify character-based token estimation."""
-
-    def test_estimate_tokens_short(self) -> None:
-        """Estimate at least 1 token for short text."""
-        assert _estimate_tokens("hello") >= 1
-
-    def test_estimate_tokens_long(self) -> None:
-        """Estimate ~1000 tokens for 3500 characters."""
-        text = "a" * 3500  # 3500 chars ≈ 1000 tokens
-        tokens = _estimate_tokens(text)
-        assert 900 <= tokens <= 1100
-
-    def test_estimate_tokens_empty(self) -> None:
-        """Return minimum 1 for empty string."""
-        assert _estimate_tokens("") == 1  # minimum 1
+        assert "recall_topic" in block

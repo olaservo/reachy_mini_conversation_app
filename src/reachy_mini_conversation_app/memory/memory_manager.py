@@ -1,71 +1,174 @@
 """Memory manager for Reachy Mini conversation app.
 
-Two tiers:
-  1. Conversation logs  — plain-text, one file per session
-  2. Active memory       — facts injected into the system prompt
+Storage layout::
+
+    $DATA_DIRECTORY/memory/
+    ├── active_memory.md              # Rendered index, injected into system prompt
+    ├── memories/                     # One atomic memory per file
+    │   └── YYYY-MM-DD_<slug>_<hex3>.md
+    └── logs/
+        ├── pending/                  # Live log + logs waiting to be dreamed
+        └── processed/                # Logs already dreamed
+
+See ``docs/memory-rework-dreaming-spec.md``.
 """
 
 from __future__ import annotations
+import os
+import re
 import json
+import shutil
 import logging
+import tempfile
 import threading
 from typing import Any
 from pathlib import Path
 from datetime import datetime, timezone
 
+from reachy_mini_conversation_app.memory.frontmatter import (
+    dump_frontmatter,
+    parse_frontmatter,
+)
+
 
 logger = logging.getLogger(__name__)
 
-# Token estimation: GPT-4 family averages ~4 chars/token for English.
-# We use 3.5 to be conservative.
-_CHARS_PER_TOKEN = 3.5
-ACTIVE_MEMORY_TOKEN_WARN = 1500
+ALLOWED_KINDS = {"fact", "preference", "event", "skill", "relationship", "goal", "other"}
+_MEMORY_ID_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9-]+_[0-9a-f]{3}$")
 
 
-def _estimate_tokens(text: str) -> int:
-    return max(1, int(len(text) / _CHARS_PER_TOKEN))
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(ts: datetime) -> str:
+    return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` atomically (temp file + os.replace)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp:
+        tmp.write(content)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp_name = tmp.name
+    os.replace(tmp_name, path)
+
+
+def _one_line_summary(body: str) -> str:
+    """Extract a short, single-line summary from a memory body for the index."""
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("---"):
+            continue
+        return stripped
+    return ""
 
 
 class MemoryManager:
-    """Manages conversation logs and active memory.
+    """Owns on-disk memory storage for the conversation app.
 
-    Thread-safe: all public methods that touch active memory acquire self._lock.
-    Conversation log appends are atomic on Linux for small writes.
+    Responsibilities:
+      - Append conversation transcripts to the live session log (``logs/pending/``).
+      - Provide CRUD-style primitives the dreamer uses on ``memories/*.md``.
+      - Rebuild ``active_memory.md`` from frontmatters.
+      - Expose a session-scoped invariant: the dreamer must never read or move
+        the file at ``_session_log_path`` while it is being written to.
     """
 
     def __init__(self, data_dir: Path) -> None:
-        """Initialize the memory manager with the given data directory."""
+        """Initialize memory under ``data_dir`` and run fresh-start migration."""
         self._lock = threading.Lock()
         self._data_dir = data_dir
         self._memory_dir = data_dir / "memory"
         self._active_path = self._memory_dir / "active_memory.md"
+        self._memories_dir = self._memory_dir / "memories"
         self._logs_dir = self._memory_dir / "logs"
+        self._pending_logs_dir = self._logs_dir / "pending"
+        self._processed_logs_dir = self._logs_dir / "processed"
         self._session_log_path: Path | None = None
         self._ensure_dirs()
+        self._migrate_legacy_layout()
         self._start_session_log()
         logger.info("MemoryManager initialized: data_dir=%s", data_dir)
 
+    # ------------------------------------------------------------------
+    # Paths and filesystem bring-up
+    # ------------------------------------------------------------------
+
     def _ensure_dirs(self) -> None:
-        for d in (self._memory_dir, self._logs_dir):
+        for d in (
+            self._memory_dir,
+            self._memories_dir,
+            self._logs_dir,
+            self._pending_logs_dir,
+            self._processed_logs_dir,
+        ):
             d.mkdir(parents=True, exist_ok=True)
+
+    def _migrate_legacy_layout(self) -> None:
+        """One-shot fresh-start migration from the old two-tier layout.
+
+        - Move any ``logs/*.log`` (old top-level logs) into ``logs/pending/``.
+        - Wipe the old ``active_memory.md`` so the first dream pass rebuilds it.
+        - Remove any legacy ``archive/`` directory.
+        """
+        moved = 0
+        for entry in self._logs_dir.iterdir():
+            if entry.is_file() and entry.suffix == ".log":
+                target = self._pending_logs_dir / entry.name
+                if target.exists():
+                    logger.warning("Legacy log already in pending/: %s", entry.name)
+                    continue
+                shutil.move(str(entry), str(target))
+                moved += 1
+        if moved:
+            logger.info("Migrated %d legacy log(s) to logs/pending/", moved)
+
+        if self._active_path.exists():
+            try:
+                # The index is always derived; wiping is safe.
+                self._active_path.unlink()
+                logger.info("Wiped legacy active_memory.md; will be rebuilt after next dream pass")
+            except OSError as e:
+                logger.warning("Failed to wipe legacy active_memory.md: %s", e)
+
+        archive_dir = self._memory_dir / "archive"
+        if archive_dir.exists():
+            try:
+                shutil.rmtree(archive_dir)
+                logger.info("Removed legacy archive/ directory")
+            except OSError as e:
+                logger.warning("Failed to remove legacy archive/: %s", e)
 
     # ------------------------------------------------------------------
     # Session lifecycle
     # ------------------------------------------------------------------
 
     def new_session(self) -> None:
-        """Rotate session log file when a new realtime session starts."""
+        """Rotate the live session log file."""
         self._start_session_log()
-        logger.info("MemoryManager new session: %s", self._session_log_path.name if self._session_log_path else "?")
+        logger.info(
+            "MemoryManager new session: %s",
+            self._session_log_path.name if self._session_log_path else "?",
+        )
 
     def _start_session_log(self) -> None:
-        """Create a new session log file with a header."""
-        now = datetime.now(timezone.utc)
+        """Create a new session log under logs/pending/ with a header."""
+        now = _now_utc()
         base = now.strftime("%Y-%m-%d_%H-%M")
-        path = self._logs_dir / f"{base}.log"
+        path = self._pending_logs_dir / f"{base}.log"
         suffix = 2
         while path.exists():
-            path = self._logs_dir / f"{base}_{suffix}.log"
+            path = self._pending_logs_dir / f"{base}_{suffix}.log"
             suffix += 1
         try:
             path.write_text(
@@ -77,7 +180,7 @@ class MemoryManager:
         self._session_log_path = path
 
     # ------------------------------------------------------------------
-    # Tier 1: Conversation logging
+    # Live log append (same as before, just targeted at pending/)
     # ------------------------------------------------------------------
 
     def _append_log(self, line: str) -> None:
@@ -94,123 +197,246 @@ class MemoryManager:
         """Log a user or assistant transcript turn."""
         if not content or not content.strip():
             return
-        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        ts = _now_utc().strftime("%H:%M:%S")
         self._append_log(f"{ts} {role}: {content.strip()}")
 
     def log_tool_call(
-        self, tool_name: str, args: dict[str, Any] | None = None, result: dict[str, Any] | None = None
+        self,
+        tool_name: str,
+        args: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
     ) -> None:
         """Log a completed tool call."""
-        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        ts = _now_utc().strftime("%H:%M:%S")
         args_str = json.dumps(args or {}, ensure_ascii=False)
         result_str = json.dumps(result or {}, ensure_ascii=False)
         self._append_log(f"{ts} tool: {tool_name}({args_str}) -> {result_str}")
 
     # ------------------------------------------------------------------
-    # Tier 2: Active memory (read / write / prompt injection)
+    # Log inspection (used by dreamer and short_term_memory tool)
     # ------------------------------------------------------------------
 
-    def _read_active_lines(self) -> list[str]:
-        """Return non-empty lines from active_memory.md. Lock must be held."""
-        if not self._active_path.exists():
-            return []
+    def read_current_session_log(self) -> str:
+        """Return the whole current session log, or empty string if none."""
+        if self._session_log_path is None or not self._session_log_path.exists():
+            return ""
         try:
-            return [ln for ln in self._active_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            return self._session_log_path.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.warning("Failed to read current session log: %s", e)
+            return ""
+
+    def list_pending_logs(self, exclude_session: bool = True) -> list[str]:
+        """Return pending log filenames in chronological order (oldest first).
+
+        If ``exclude_session`` is True (the default), the currently-open
+        live log file is skipped — this is the invariant the dreamer relies
+        on.
+        """
+        try:
+            names = sorted(p.name for p in self._pending_logs_dir.glob("*.log"))
         except OSError:
             return []
+        if exclude_session and self._session_log_path is not None:
+            active = self._session_log_path.name
+            names = [n for n in names if n != active]
+        return names
 
-    def _write_active_lines(self, lines: list[str]) -> None:
-        """Write lines to active_memory.md. Lock must be held."""
-        try:
-            self._active_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-        except OSError as e:
-            logger.warning("Failed to write active memory: %s", e)
+    def read_pending_log(self, filename: str) -> str:
+        """Read a pending log file. Raises FileNotFoundError if missing."""
+        path = self._pending_logs_dir / filename
+        if not path.is_file():
+            raise FileNotFoundError(f"pending log not found: {filename}")
+        return path.read_text(encoding="utf-8")
 
-    def save_memory(self, fact: str) -> dict[str, Any]:
-        """Add a fact to active memory.
+    def mark_log_processed(self, filename: str) -> None:
+        """Move ``logs/pending/<filename>`` to ``logs/processed/<filename>``.
 
-        Returns a result dict suitable for tool return values.
+        Refuses to move the currently-open live session log.
         """
-        fact = fact.strip()
-        if not fact:
-            return {"error": "fact must be a non-empty string"}
-
-        log_name = self._session_log_path.name if self._session_log_path else "unknown"
-        entry = f"{fact} ({log_name})"
-
-        with self._lock:
-            lines = self._read_active_lines()
-            lines.append(entry)
-            self._write_active_lines(lines)
-
-            tokens = _estimate_tokens("\n".join(lines))
-            if tokens > ACTIVE_MEMORY_TOKEN_WARN:
-                logger.warning(
-                    "Active memory is large: ~%d tokens (%d entries). "
-                    "Consider pruning old entries.",
-                    tokens, len(lines),
-                )
-
-        logger.info("Memory saved: %s", fact[:80])
-        return {"status": "saved", "fact": fact}
+        if self._session_log_path is not None and filename == self._session_log_path.name:
+            raise RuntimeError(f"cannot mark active session log as processed: {filename}")
+        src = self._pending_logs_dir / filename
+        dst = self._processed_logs_dir / filename
+        if not src.is_file():
+            raise FileNotFoundError(f"pending log not found: {filename}")
+        shutil.move(str(src), str(dst))
 
     # ------------------------------------------------------------------
-    # Tier 3: Recall (read session logs)
+    # Atomic memory files (CRUD)
     # ------------------------------------------------------------------
 
-    def _list_log_files(self) -> list[str]:
-        """Return available log filenames, newest first."""
-        try:
-            return sorted(
-                (f.name for f in self._logs_dir.glob("*.log")),
-                reverse=True,
+    def _memory_path(self, memory_id: str) -> Path:
+        if not _MEMORY_ID_PATTERN.match(memory_id):
+            raise ValueError(
+                f"invalid memory id: {memory_id!r}. "
+                "Expected format: YYYY-MM-DD_<slug>_<3-hex>, ASCII lowercase."
             )
-        except OSError:
-            return []
+        return self._memories_dir / f"{memory_id}.md"
 
-    def recall_memory(self, log_ref: str) -> dict[str, Any]:
-        """Read a session log file and return its content.
+    def _load_memory(self, memory_id: str) -> tuple[dict[str, Any], str]:
+        path = self._memory_path(memory_id)
+        if not path.is_file():
+            raise FileNotFoundError(f"memory not found: {memory_id}")
+        text = path.read_text(encoding="utf-8")
+        meta, body = parse_frontmatter(text)
+        if not meta or meta.get("id") != memory_id:
+            logger.warning("Memory %s has missing/mismatched id in frontmatter", memory_id)
+        return meta, body
 
-        If log_ref is empty, returns the list of available log files.
-        If the file doesn't exist, returns an error with the list of available files.
-        """
-        available = self._list_log_files()
+    def read_memory(self, memory_id: str) -> dict[str, Any]:
+        """Return ``{id, frontmatter, body}`` for an existing memory file."""
+        meta, body = self._load_memory(memory_id)
+        return {"id": memory_id, "frontmatter": meta, "body": body}
 
-        if not log_ref or not log_ref.strip():
-            return {"available_logs": available}
-
-        path = self._logs_dir / log_ref.strip()
-        if not path.exists() or not path.is_file():
-            return {
-                "error": f"Log file '{log_ref}' not found.",
-                "available_logs": available,
-            }
-
+    def memory_exists(self, memory_id: str) -> bool:
+        """Return True if a memory file exists on disk."""
         try:
-            content = path.read_text(encoding="utf-8")
-            return {"log_ref": log_ref, "content": content}
-        except OSError as e:
-            return {"error": f"Failed to read '{log_ref}': {e}"}
+            return self._memory_path(memory_id).is_file()
+        except ValueError:
+            return False
+
+    def write_memory(
+        self,
+        memory_id: str,
+        body: str,
+        *,
+        kind: str,
+        tags: list[str],
+        sources: list[str] | None = None,
+        related_to: list[str] | None = None,
+        pinned: bool = False,
+        supersedes: str | None = None,
+        superseded_by: str | None = None,
+        created: datetime | None = None,
+    ) -> Path:
+        """Create a new memory file. Raises ``FileExistsError`` if it exists."""
+        path = self._memory_path(memory_id)
+        if path.exists():
+            raise FileExistsError(f"memory already exists: {memory_id}")
+        if kind not in ALLOWED_KINDS:
+            raise ValueError(f"invalid kind: {kind!r}. One of {sorted(ALLOWED_KINDS)}")
+        meta: dict[str, Any] = {
+            "id": memory_id,
+            "created": _iso(created or _now_utc()),
+            "sources": list(sources or []),
+            "kind": kind,
+            "tags": list(tags),
+            "related_to": list(related_to or []),
+            "pinned": bool(pinned),
+            "supersedes": supersedes,
+            "superseded_by": superseded_by,
+        }
+        _atomic_write(path, dump_frontmatter(meta, body.strip() + "\n"))
+        return path
+
+    def update_memory(
+        self,
+        memory_id: str,
+        *,
+        body: str | None = None,
+        frontmatter_updates: dict[str, Any] | None = None,
+    ) -> Path:
+        """Overwrite an existing memory. Merges ``frontmatter_updates`` over the existing frontmatter."""
+        meta, existing_body = self._load_memory(memory_id)
+        if frontmatter_updates:
+            new_kind = frontmatter_updates.get("kind", meta.get("kind"))
+            if new_kind is not None and new_kind not in ALLOWED_KINDS:
+                raise ValueError(f"invalid kind: {new_kind!r}")
+            meta.update(frontmatter_updates)
+        meta["id"] = memory_id  # never let callers rename via update
+        new_body = (body if body is not None else existing_body).strip() + "\n"
+        path = self._memory_path(memory_id)
+        _atomic_write(path, dump_frontmatter(meta, new_body))
+        return path
+
+    def list_memories(
+        self,
+        *,
+        tag: str | None = None,
+        kind: str | None = None,
+        include_superseded: bool = False,
+    ) -> list[dict[str, Any]]:
+        """List memory summaries, optionally filtered by tag and/or kind.
+
+        Each entry is ``{id, summary, tags, kind, pinned, created, superseded_by}``.
+        Dropped from default output: any memory with a non-null ``superseded_by`` —
+        the replacement is what the dreamer (and live LLM) care about.
+        """
+        out: list[dict[str, Any]] = []
+        for path in sorted(self._memories_dir.glob("*.md")):
+            try:
+                text = path.read_text(encoding="utf-8")
+                meta, body = parse_frontmatter(text)
+            except (OSError, ValueError) as e:
+                logger.warning("Skipping unreadable memory %s: %s", path.name, e)
+                continue
+            mem_id = meta.get("id") or path.stem
+            if not include_superseded and meta.get("superseded_by"):
+                continue
+            tags_val = meta.get("tags") or []
+            if tag is not None and tag not in tags_val:
+                continue
+            if kind is not None and meta.get("kind") != kind:
+                continue
+            out.append({
+                "id": mem_id,
+                "summary": _one_line_summary(body),
+                "tags": list(tags_val),
+                "kind": meta.get("kind"),
+                "pinned": bool(meta.get("pinned", False)),
+                "created": meta.get("created"),
+                "superseded_by": meta.get("superseded_by"),
+            })
+        return out
 
     # ------------------------------------------------------------------
     # Prompt injection
     # ------------------------------------------------------------------
 
     def get_memory_block(self) -> str:
-        """Return the formatted memory block for system prompt injection.
-
-        Returns an empty string if active memory is empty.
-        """
-        with self._lock:
-            lines = self._read_active_lines()
-
-        if not lines:
+        """Return the formatted memory block for system prompt injection."""
+        if not self._active_path.exists():
             return ""
-
+        try:
+            content = self._active_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+        if not content:
+            return ""
         return (
             "\n\n## MEMORY\n"
-            "The following facts were saved from previous conversations. "
-            "Use them to personalize responses. You can save new memories with "
-            "save_memory and search older context with recall_memory.\n\n"
-            + "\n".join(lines)
+            "The index below is automatically curated between sessions. "
+            "Use `recall_memory(id)` to read a specific memory (and its related neighbours), "
+            "`recall_topic(tag)` to load a cluster, or `short_term_memory()` to re-read the "
+            "current session.\n\n"
+            + content
         )
+
+    # ------------------------------------------------------------------
+    # Path accessors (used by dreamer and tests)
+    # ------------------------------------------------------------------
+
+    @property
+    def memories_dir(self) -> Path:
+        """Return the on-disk directory containing atomic memory files."""
+        return self._memories_dir
+
+    @property
+    def active_memory_path(self) -> Path:
+        """Return the on-disk path to the rendered index file."""
+        return self._active_path
+
+    @property
+    def pending_logs_dir(self) -> Path:
+        """Return the on-disk directory containing pending (not-yet-dreamed) logs."""
+        return self._pending_logs_dir
+
+    @property
+    def session_log_path(self) -> Path | None:
+        """Return the path of the currently-open live log, or None."""
+        return self._session_log_path
+
+    def _atomic_write_active(self, content: str) -> None:
+        """Write ``content`` atomically to active_memory.md. Used by index rendering."""
+        _atomic_write(self._active_path, content)
