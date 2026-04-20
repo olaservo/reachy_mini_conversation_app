@@ -16,6 +16,7 @@ behaviour.
 from __future__ import annotations
 import os
 import json
+import re
 import time
 import logging
 from typing import Any, Callable
@@ -448,6 +449,18 @@ class Dreamer:
             log_content = self.manager.read_pending_log(filename)
         except OSError as e:
             stats.errors.append(f"read_pending_log: {e}")
+            stats.duration_s = time.monotonic() - t0
+            return stats
+
+        # Skip logs with no conversational content (header-only stubs or
+        # truly empty files left over from aborted sessions). A real turn is
+        # logged as "HH:MM:SS role: ..." so the absence of any timestamped
+        # line means nothing worth consolidating is in the file.
+        if not re.search(r"^\d{2}:\d{2}:\d{2}\s+(user|assistant):", log_content, re.MULTILINE):
+            logger.info(
+                "[DREAM] %s has no conversation turns; skipping LLM and marking processed.",
+                filename,
+            )
             stats.duration_s = time.monotonic() - t0
             return stats
 
