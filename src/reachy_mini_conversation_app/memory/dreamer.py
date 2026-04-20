@@ -282,30 +282,71 @@ DREAMER_TOOL_SPECS: list[dict[str, Any]] = [
 
 @dataclass
 class DreamLogStats:
-    """Per-log runtime statistics printed after every log."""
+    """Per-log runtime statistics printed after every log.
+
+    Timing is split across three buckets:
+      - ``llm_durations_s`` — wall-clock of every ``responses.create()`` call.
+      - ``tool_durations_s[name]`` — list of wall-clock durations per tool.
+      - ``duration_s`` — total wall-clock for the log (LLM + tools + overhead).
+
+    ``overhead_s`` is whatever wall-clock isn't accounted for by the LLM or
+    tool buckets (prompt building, bookkeeping). Expected to be small.
+    """
 
     filename: str
     duration_s: float = 0.0
-    tool_calls: dict[str, int] = field(default_factory=dict)
+    tool_durations_s: dict[str, list[float]] = field(default_factory=dict)
+    llm_durations_s: list[float] = field(default_factory=list)
     created: int = 0
     updated: int = 0
     errors: list[str] = field(default_factory=list)
 
-    def inc_tool(self, name: str) -> None:
-        """Increment the call count for a given dreamer tool."""
-        self.tool_calls[name] = self.tool_calls.get(name, 0) + 1
+    def record_tool(self, name: str, elapsed: float) -> None:
+        """Record one invocation of a dreamer tool with its wall-clock."""
+        self.tool_durations_s.setdefault(name, []).append(elapsed)
+
+    def record_llm(self, elapsed: float) -> None:
+        """Record one responses.create() call with its wall-clock."""
+        self.llm_durations_s.append(elapsed)
+
+    @property
+    def tool_calls_count(self) -> dict[str, int]:
+        """Backwards-compatible tool-call count, derived from the duration dict."""
+        return {name: len(durations) for name, durations in self.tool_durations_s.items()}
+
+    @property
+    def llm_total_s(self) -> float:
+        """Sum of wall-clock spent inside ``responses.create()``."""
+        return sum(self.llm_durations_s)
+
+    @property
+    def tool_total_s(self) -> float:
+        """Sum of wall-clock spent inside dreamer tool handlers."""
+        return sum(elapsed for durations in self.tool_durations_s.values() for elapsed in durations)
+
+    @property
+    def overhead_s(self) -> float:
+        """Wall-clock not captured by ``llm_total_s`` or ``tool_total_s``."""
+        return max(0.0, self.duration_s - self.llm_total_s - self.tool_total_s)
 
     def one_line(self) -> str:
         """Render a single-line summary for the terminal logger."""
-        total = sum(self.tool_calls.values())
-        parts = [f"{k}×{v}" for k, v in sorted(self.tool_calls.items())]
+        counts = self.tool_calls_count
+        total_tool_calls = sum(counts.values())
+        parts = [
+            f"{name}×{count} ({sum(self.tool_durations_s[name]):.2f}s)"
+            for name, count in sorted(counts.items())
+        ]
         tools_str = ", ".join(parts) if parts else "(no tool calls)"
         outcome = f"created {self.created}, updated {self.updated}"
         if self.errors:
             outcome += f", errors {len(self.errors)}"
         return (
-            f"[DREAM] {self.filename} — {self.duration_s:.1f}s, "
-            f"{total} tool calls ({tools_str}), {outcome}"
+            f"[DREAM] {self.filename} — wall {self.duration_s:.1f}s "
+            f"(LLM {self.llm_total_s:.1f}s/{len(self.llm_durations_s)} calls, "
+            f"tools {self.tool_total_s:.2f}s/{total_tool_calls} calls, "
+            f"overhead {self.overhead_s:.2f}s) "
+            f"[{tools_str}] {outcome}"
         )
 
 
@@ -433,6 +474,7 @@ class Dreamer:
         ]
 
         for iteration in range(self.max_tool_calls_per_log + 1):
+            t_llm = time.monotonic()
             try:
                 response = self.client.responses.create(
                     model=self.model,
@@ -440,9 +482,18 @@ class Dreamer:
                     tools=DREAMER_TOOL_SPECS,  # type: ignore[arg-type]
                 )
             except Exception as e:
+                stats.record_llm(time.monotonic() - t_llm)
                 logger.exception("[DREAM] LLM call failed on %s: %s", filename, e)
                 stats.errors.append(f"llm_call: {e}")
                 break
+            llm_elapsed = time.monotonic() - t_llm
+            stats.record_llm(llm_elapsed)
+            logger.info(
+                "[DREAM] %s: LLM call #%d took %.2fs",
+                filename,
+                len(stats.llm_durations_s),
+                llm_elapsed,
+            )
 
             did_call_tool = False
             for item in response.output:
@@ -500,19 +551,23 @@ class Dreamer:
         except Exception as e:
             return {"error": f"invalid JSON arguments: {e}"}, False
 
-        stats.inc_tool(name)
         logger.info("[DREAM] tool call: %s(%s)", name, json.dumps(args, ensure_ascii=False))
         handler: Callable[[dict[str, Any], DreamLogStats], dict[str, Any]] | None = getattr(
             self, f"_tool_{name}", None
         )
         if handler is None:
+            stats.record_tool(name, 0.0)
             return {"error": f"unknown tool: {name}"}, False
+        t0 = time.monotonic()
         try:
             result = handler(args, stats)
         except Exception as e:
+            stats.record_tool(name, time.monotonic() - t0)
             logger.exception("[DREAM] tool %s raised: %s", name, e)
             return {"error": f"{type(e).__name__}: {e}"}, False
-        logger.debug("[DREAM] tool result: %s", result)
+        elapsed = time.monotonic() - t0
+        stats.record_tool(name, elapsed)
+        logger.debug("[DREAM] tool %s → %.3fs %s", name, elapsed, result)
         return result, "error" not in result
 
     # Individual handlers ------------------------------------------------

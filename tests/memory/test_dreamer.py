@@ -123,7 +123,9 @@ class TestDreamerSingleLog:
 
         [stats] = stats_list
         assert stats.created == 1
-        assert stats.tool_calls.get("write_memory") == 1
+        assert stats.tool_calls_count.get("write_memory") == 1
+        assert len(stats.llm_durations_s) >= 1
+        assert stats.tool_total_s >= 0.0
         assert stats.errors == []
         # File moved out of pending
         assert not (manager.pending_logs_dir / "2026-04-14_09-15.log").exists()
