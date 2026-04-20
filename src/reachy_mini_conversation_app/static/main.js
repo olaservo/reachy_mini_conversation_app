@@ -1,5 +1,6 @@
 const OPENAI_BACKEND = "openai";
 const GEMINI_BACKEND = "gemini";
+const SPEECH_TO_SPEECH_BACKEND = "speech-to-speech";
 const BACKEND_META = {
   [OPENAI_BACKEND]: {
     label: "OpenAI Realtime",
@@ -13,6 +14,19 @@ const BACKEND_META = {
     formCopy: "OpenAI Realtime uses the distributed key when available. Paste your own key if you want an override or need a fallback.",
     requiredCredentialsCopy: "OpenAI Realtime usually uses the distributed key. If it is unavailable here, paste your own OpenAI key to continue.",
     note: "OpenAI Realtime uses the distributed OpenAI key. You can still paste your own key if you want to override it.",
+  },
+  [SPEECH_TO_SPEECH_BACKEND]: {
+    label: "Speech-to-speech",
+    formTitle: "Speech-to-speech",
+    inputLabel: "S2S session allocator",
+    placeholder: "",
+    saveButton: "Unavailable here",
+    changeButton: "",
+    readyTitle: "Speech-to-speech ready",
+    readyCopy: "Speech-to-speech is configured. The deployed session allocator is ready to use after restart.",
+    formCopy: "Speech-to-speech uses the configured session allocator URL and does not need an API key in this UI.",
+    requiredCredentialsCopy: "Speech-to-speech needs S2S_REALTIME_SESSION_URL in the instance environment. It cannot be entered from this screen.",
+    note: "Speech-to-speech uses the configured S2S_REALTIME_SESSION_URL. OpenAI Realtime can use the distributed OpenAI key, and Gemini Live needs your own GEMINI_API_KEY.",
   },
   [GEMINI_BACKEND]: {
     label: "Gemini Live",
@@ -30,13 +44,20 @@ const BACKEND_META = {
 };
 
 function backendHasCredentials(status, backend) {
-  return backend === GEMINI_BACKEND ? !!status.has_gemini_key : !!status.has_openai_key;
+  if (backend === GEMINI_BACKEND) return !!status.has_gemini_key;
+  if (backend === SPEECH_TO_SPEECH_BACKEND) return !!status.has_s2s_session_url;
+  return !!status.has_openai_key;
 }
 
 function backendCanProceed(status, backend) {
   if (backend === GEMINI_BACKEND) {
     return status.can_proceed_with_gemini !== undefined
       ? !!status.can_proceed_with_gemini
+      : backendHasCredentials(status, backend);
+  }
+  if (backend === SPEECH_TO_SPEECH_BACKEND) {
+    return status.can_proceed_with_speech_to_speech !== undefined
+      ? !!status.can_proceed_with_speech_to_speech
       : backendHasCredentials(status, backend);
   }
   return status.can_proceed_with_openai !== undefined
@@ -49,7 +70,9 @@ function backendMeta(backend) {
 }
 
 function formatBackendNote(text) {
-  return text.replace("GEMINI_API_KEY", "<code>GEMINI_API_KEY</code>");
+  return text
+    .replace("GEMINI_API_KEY", "<code>GEMINI_API_KEY</code>")
+    .replace("S2S_REALTIME_SESSION_URL", "<code>S2S_REALTIME_SESSION_URL</code>");
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -291,7 +314,13 @@ async function init() {
   let editingCredentials = false;
 
   function setSelectedBackend(backend) {
-    selectedBackend = backend === GEMINI_BACKEND ? GEMINI_BACKEND : OPENAI_BACKEND;
+    if (backend === GEMINI_BACKEND) {
+      selectedBackend = GEMINI_BACKEND;
+    } else if (backend === SPEECH_TO_SPEECH_BACKEND) {
+      selectedBackend = SPEECH_TO_SPEECH_BACKEND;
+    } else {
+      selectedBackend = OPENAI_BACKEND;
+    }
     backendInputs.forEach((radio) => {
       radio.checked = radio.value === selectedBackend;
     });
@@ -308,6 +337,7 @@ async function init() {
     const canProceedWithSelectedBackend = backendCanProceed(status, selectedBackend);
     const selectedMatchesPersisted = selectedBackend === persistedBackend;
     const selectedMatchesActive = selectedBackend === activeBackend;
+    const needsCredentialInput = selectedBackend !== SPEECH_TO_SPEECH_BACKEND;
 
     backendChip.textContent = selectedBackend === persistedBackend ? "Saved" : "Selected";
     backendNote.innerHTML = formatBackendNote(meta.note);
@@ -323,6 +353,10 @@ async function init() {
 
     show(configuredPanel, canProceedWithSelectedBackend && !editingCredentials);
     show(formPanel, editingCredentials || !canProceedWithSelectedBackend);
+    show(apiKeyLabel, needsCredentialInput);
+    show(input, needsCredentialInput);
+    show(saveBtn, needsCredentialInput);
+    show(changeKeyBtn, needsCredentialInput && canProceedWithSelectedBackend && !editingCredentials);
     show(
       backendSaveBtn,
       canProceedWithSelectedBackend && !selectedMatchesPersisted,
@@ -361,9 +395,11 @@ async function init() {
     has_key: false,
     has_openai_key: false,
     has_gemini_key: false,
+    has_s2s_session_url: false,
     can_proceed: false,
     can_proceed_with_openai: false,
     can_proceed_with_gemini: false,
+    can_proceed_with_speech_to_speech: false,
     requires_restart: false,
   };
   setSelectedBackend(st.backend_provider || OPENAI_BACKEND);
@@ -404,6 +440,10 @@ async function init() {
   });
 
   saveBtn.addEventListener("click", async () => {
+    if (selectedBackend === SPEECH_TO_SPEECH_BACKEND) {
+      setStatusMessage(statusEl, "Speech-to-speech does not take credentials on this screen.", "warn");
+      return;
+    }
     const key = input.value.trim();
     if (!key) {
       setStatusMessage(statusEl, "Please enter a valid key.", "warn");

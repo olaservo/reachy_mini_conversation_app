@@ -46,7 +46,14 @@ def run(
     """Run the Reachy Mini conversation app."""
     # Putting these dependencies here makes the dashboard faster to load when the conversation app is installed
     from reachy_mini_conversation_app.moves import MovementManager
-    from reachy_mini_conversation_app.config import config, is_gemini_model, refresh_runtime_config_from_env
+    from reachy_mini_conversation_app.config import (
+        GEMINI_BACKEND,
+        OPENAI_BACKEND,
+        SPEECH_TO_SPEECH_BACKEND,
+        config,
+        get_backend_choice,
+        refresh_runtime_config_from_env,
+    )
 
     logger = setup_logger(args.debug)
     logger.info("Starting Reachy Mini Conversation App")
@@ -120,7 +127,12 @@ def run(
         camera_worker=camera_worker,
     )
 
-    head_wobbler = HeadWobbler(set_speech_offsets=movement_manager.set_speech_offsets)
+    from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
+
+    head_wobbler = HeadWobbler(
+        set_speech_offsets=movement_manager.set_speech_offsets,
+        default_sample_rate=OpenaiRealtimeHandler._get_realtime_sample_rate(),
+    )
 
     deps = ToolDependencies(
         reachy_mini=robot,
@@ -141,43 +153,40 @@ def run(
     )
     logger.debug(f"Chatbot avatar images: {chatbot.avatar_images}")
 
-    if is_gemini_model():
+    active_backend = get_backend_choice()
+    if active_backend == GEMINI_BACKEND:
         from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
 
         logger.info("Using Gemini Live handler for model: %s", config.MODEL_NAME)
         handler = GeminiLiveHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)
     else:
-        from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
-
-        logger.info("Using OpenAI Realtime handler for model: %s", config.MODEL_NAME)
+        backend_label = "speech-to-speech" if active_backend == SPEECH_TO_SPEECH_BACKEND else "OpenAI Realtime"
+        logger.info("Using %s handler for model: %s", backend_label, config.MODEL_NAME)
         handler = OpenaiRealtimeHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)  # type: ignore[assignment]
 
     stream_manager: gr.Blocks | LocalStream | None = None
 
     if args.gradio:
-        uses_gemini_backend = is_gemini_model()
-        api_key_textbox = gr.Textbox(
-            label="GEMINI_API_KEY" if uses_gemini_backend else "OPENAI API Key",
-            type="password",
-            value=(os.getenv("GEMINI_API_KEY") if uses_gemini_backend else os.getenv("OPENAI_API_KEY"))
-            if not get_space()
-            else "",
-        )
-
         from reachy_mini_conversation_app.gradio_personality import PersonalityUI
 
         personality_ui = PersonalityUI()
         personality_ui.create_components()
+        additional_inputs = [chatbot, *personality_ui.additional_inputs_ordered()]
+        if active_backend in {GEMINI_BACKEND, OPENAI_BACKEND}:
+            api_key_textbox = gr.Textbox(
+                label="GEMINI_API_KEY" if active_backend == GEMINI_BACKEND else "OPENAI API Key",
+                type="password",
+                value=(os.getenv("GEMINI_API_KEY") if active_backend == GEMINI_BACKEND else os.getenv("OPENAI_API_KEY"))
+                if not get_space()
+                else "",
+            )
+            additional_inputs.insert(1, api_key_textbox)
 
         stream = Stream(
             handler=handler,
             mode="send-receive",
             modality="audio",
-            additional_inputs=[
-                chatbot,
-                api_key_textbox,
-                *personality_ui.additional_inputs_ordered(),
-            ],
+            additional_inputs=additional_inputs,
             additional_outputs=[chatbot],
             additional_outputs_handler=update_chatbot,
             ui_args={"title": "Talk with Reachy Mini"},

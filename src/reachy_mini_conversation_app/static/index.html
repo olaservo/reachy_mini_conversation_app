@@ -16,7 +16,7 @@
       <header class="hero">
         <div class="pill">Headless control</div>
         <h1>Reachy Mini Conversation</h1>
-        <p class="subtitle">Choose a realtime backend, add a Gemini token if needed, and tweak personalities without the full UI.</p>
+        <p class="subtitle">Choose a realtime backend, add credentials when needed, and tweak personalities without the full UI.</p>
       </header>
 
       <aside class="privacy-notice" role="note" aria-label="Privacy notice">
@@ -55,7 +55,7 @@
           <span id="backend-chip" class="chip">Required</span>
         </div>
         <p id="backend-note" class="muted backend-note">
-          OpenAI Realtime uses the distributed OpenAI key. Gemini Live needs your own <code>GEMINI_API_KEY</code>.
+          OpenAI Realtime can use the distributed OpenAI key. Gemini Live needs your own <code>GEMINI_API_KEY</code>. Speech-to-speech uses the configured <code>S2S_REALTIME_SESSION_URL</code>.
         </p>
         <p class="muted backend-note">
           Backend changes are saved here, then applied after you restart Reachy Mini Conversation from the dashboard or desktop app.
@@ -66,6 +66,13 @@
             <span class="backend-choice-body">
               <span class="backend-choice-title">OpenAI Realtime</span>
               <span class="backend-choice-copy">Start quickly with the bundled OpenAI access.</span>
+            </span>
+          </label>
+          <label class="backend-choice" data-backend-card="speech-to-speech">
+            <input type="radio" name="backend" value="speech-to-speech" />
+            <span class="backend-choice-body">
+              <span class="backend-choice-title">Speech-to-speech</span>
+              <span class="backend-choice-copy">Use the deployed OpenAI-compatible session allocator when it is configured.</span>
             </span>
           </label>
           <label class="backend-choice" data-backend-card="gemini">

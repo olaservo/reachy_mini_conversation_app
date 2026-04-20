@@ -4,10 +4,12 @@ import base64
 import random
 import asyncio
 import logging
-from typing import Any, Final, Tuple, Literal, Optional
+from typing import Any, Final, Tuple, Optional
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
+import httpx
 import numpy as np
 import gradio as gr
 from openai import AsyncOpenAI
@@ -28,7 +30,14 @@ from openai.resources.realtime.realtime import AsyncRealtimeConnection
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection_param import ServerVad
 
-from reachy_mini_conversation_app.config import AVAILABLE_VOICES, config
+from reachy_mini_conversation_app.config import (
+    OPENAI_BACKEND,
+    SPEECH_TO_SPEECH_BACKEND,
+    config,
+    get_available_voices_for_backend,
+    get_backend_choice,
+    get_default_voice_for_backend,
+)
 from reachy_mini_conversation_app.prompts import get_session_voice, get_session_instructions
 from reachy_mini_conversation_app.tools.core_tools import (
     ToolDependencies,
@@ -43,8 +52,8 @@ from reachy_mini_conversation_app.tools.background_tool_manager import (
 
 logger = logging.getLogger(__name__)
 
-OPEN_AI_INPUT_SAMPLE_RATE: Final[Literal[24000]] = 24000
-OPEN_AI_OUTPUT_SAMPLE_RATE: Final[Literal[24000]] = 24000
+OPENAI_REALTIME_SAMPLE_RATE: Final[int] = 24000
+S2S_REALTIME_SAMPLE_RATE: Final[int] = 16000
 
 # Cost tracking from usage data (pricing as of Feb 2026 https://openai.com/api/pricing/)
 AUDIO_INPUT_COST_PER_1M = 32.0
@@ -84,22 +93,20 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
     def __init__(self, deps: ToolDependencies, gradio_mode: bool = False, instance_path: Optional[str] = None):
         """Initialize the handler."""
+        sample_rate = self._get_realtime_sample_rate()
         super().__init__(
             expected_layout="mono",
-            output_sample_rate=OPEN_AI_OUTPUT_SAMPLE_RATE,
-            input_sample_rate=OPEN_AI_INPUT_SAMPLE_RATE,
+            output_sample_rate=sample_rate,
+            input_sample_rate=sample_rate,
         )
-
-        # Override typing of the sample rates to match OpenAI's requirements
-        self.output_sample_rate: Literal[24000] = self.output_sample_rate
-        self.input_sample_rate: Literal[24000] = self.input_sample_rate
 
         self.deps = deps
 
-        # Override type annotations for OpenAI strict typing (only for values used in API)
-        self.output_sample_rate = OPEN_AI_OUTPUT_SAMPLE_RATE
-        self.input_sample_rate = OPEN_AI_INPUT_SAMPLE_RATE
+        self.output_sample_rate = sample_rate
+        self.input_sample_rate = sample_rate
+        self._backend = get_backend_choice()
 
+        self.client: AsyncOpenAI
         self.connection: AsyncRealtimeConnection | None = None
         self.output_queue: "asyncio.Queue[Tuple[int, NDArray[np.int16]] | AdditionalOutputs]" = asyncio.Queue()
 
@@ -112,6 +119,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         # Track how the API key was provided (env vs textbox) and its value
         self._key_source: Literal["env", "textbox"] = "env"
         self._provided_api_key: str | None = None
+        self._realtime_connect_query: dict[str, str] = {}
 
         # Debouncing for partial transcripts
         self.partial_transcript_task: asyncio.Task[None] | None = None
@@ -134,6 +142,39 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self._response_done_event: asyncio.Event = asyncio.Event()
         self._response_done_event.set()
         self._last_response_rejected: bool = False
+
+    @staticmethod
+    def _get_realtime_sample_rate() -> int:
+        """Use the backend-native audio rate for OpenAI-compatible sessions."""
+        if get_backend_choice() == SPEECH_TO_SPEECH_BACKEND:
+            return S2S_REALTIME_SAMPLE_RATE
+        return OPENAI_REALTIME_SAMPLE_RATE
+
+    def _get_session_voice(self) -> str | None:
+        """Resolve the voice to use for the active backend."""
+        if self._voice_override is not None:
+            return self._voice_override
+        if self._backend == SPEECH_TO_SPEECH_BACKEND:
+            return get_session_voice(None)
+        if get_backend_choice() == self._backend:
+            return get_session_voice()
+        return get_session_voice(get_default_voice_for_backend(self._backend))
+
+    def _get_openai_session_audio_rates(self) -> tuple[int | None, int | None]:
+        """Return the audio rates to send in ``session.update``.
+
+        The deployed speech-to-speech backend runs best at 16 kHz. Passing
+        ``None`` to the OpenAI-compatible session config lets that backend keep
+        its preferred default while we still stream 16 kHz audio locally.
+        """
+        input_rate: int | None = self.input_sample_rate
+        output_rate: int | None = self.output_sample_rate
+        if self._backend == SPEECH_TO_SPEECH_BACKEND:
+            if input_rate == S2S_REALTIME_SAMPLE_RATE:
+                input_rate = None
+            if output_rate == S2S_REALTIME_SAMPLE_RATE:
+                output_rate = None
+        return input_rate, output_rate
 
     def copy(self) -> "OpenaiRealtimeHandler":
         """Create a copy of the handler."""
@@ -161,7 +202,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
             try:
                 instructions = get_session_instructions()
-                voice = get_session_voice()
+                voice = self._get_session_voice()
             except BaseException as e:  # catch SystemExit from prompt loader without crashing
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
@@ -169,16 +210,18 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             # Attempt a live update first, then force a full restart to ensure it sticks
             if self.connection is not None:
                 try:
-                    await self.connection.session.update(
-                        session=RealtimeSessionCreateRequestParam(
-                            type="realtime",
-                            instructions=instructions,
-                            audio=RealtimeAudioConfigParam(
-                                output=RealtimeAudioConfigOutputParam(
-                                    voice=voice,
-                                ),
+                    session_kwargs: dict[str, Any] = {
+                        "type": "realtime",
+                        "instructions": instructions,
+                    }
+                    if voice:
+                        session_kwargs["audio"] = RealtimeAudioConfigParam(
+                            output=RealtimeAudioConfigOutputParam(
+                                voice=voice,
                             ),
-                        ),
+                        )
+                    await self.connection.session.update(
+                        session=RealtimeSessionCreateRequestParam(**session_kwargs),
                     )
                     logger.info("Applied personality via live update: %s", profile or "built-in default")
                 except Exception as e:
@@ -215,7 +258,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
     def get_current_voice(self) -> str:
         """Return the voice currently selected for this handler."""
-        return self._voice_override or get_session_voice()
+        return self._voice_override or (self._get_session_voice() or get_default_voice_for_backend(self._backend))
 
     async def _emit_debounced_partial(self, transcript: str, item_id: str, sequence_counter: int) -> None:
         """Emit partial transcript after debounce delay."""
@@ -233,7 +276,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
     async def start_up(self) -> None:
         """Start the handler with minimal retries on unexpected websocket closure."""
         openai_api_key = config.OPENAI_API_KEY
-        if self.gradio_mode and not openai_api_key:
+        if self.gradio_mode and self._backend == OPENAI_BACKEND and not openai_api_key:
             # api key was not found in .env or in the environment variables
             await self.wait_for_args()  # type: ignore[no-untyped-call]
             args = list(self.latest_args)
@@ -244,7 +287,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 self._provided_api_key = textbox_api_key
             else:
                 openai_api_key = config.OPENAI_API_KEY
-        else:
+        elif self._backend == OPENAI_BACKEND:
             if not openai_api_key or not openai_api_key.strip():
                 # In headless console mode, LocalStream now blocks startup until the key is provided.
                 # However, unit tests may invoke this handler directly with a stubbed client.
@@ -252,7 +295,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 logger.warning("OPENAI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
                 openai_api_key = "DUMMY"
 
-        self.client = AsyncOpenAI(api_key=openai_api_key)
+        self.client = await self._build_realtime_client(api_key=openai_api_key)
 
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
@@ -264,6 +307,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 # Abrupt close (e.g., "no close frame received or sent") → retry
                 logger.warning("Realtime websocket closed unexpectedly (attempt %d/%d): %s", attempt, max_attempts, e)
                 if attempt < max_attempts:
+                    if self._backend == SPEECH_TO_SPEECH_BACKEND:
+                        self.client = await self._build_realtime_client()
                     # exponential backoff with jitter
                     base_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s, 8s, etc.
                     jitter = random.uniform(0, 0.5)
@@ -304,6 +349,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 self._connected_event.clear()
             except Exception:
                 pass
+            if self._backend == SPEECH_TO_SPEECH_BACKEND:
+                self.client = await self._build_realtime_client()
             asyncio.create_task(self._run_realtime_session(), name="openai-realtime-restart")
             try:
                 await asyncio.wait_for(self._connected_event.wait(), timeout=5.0)
@@ -476,21 +523,28 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
-        async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
+        input_rate, output_rate = self._get_openai_session_audio_rates()
+        async with self.client.realtime.connect(
+            model=config.MODEL_NAME,
+            extra_query=self._realtime_connect_query,
+        ) as conn:
             try:
+                voice = self._get_session_voice()
+                output_audio_kwargs: dict[str, Any] = {
+                    "format": AudioPCM(type="audio/pcm", rate=output_rate),  # type: ignore[typeddict-item]
+                }
+                if voice:
+                    output_audio_kwargs["voice"] = voice
                 session_config = RealtimeSessionCreateRequestParam(
                     type="realtime",
                     instructions=get_session_instructions(),
                     audio=RealtimeAudioConfigParam(
                         input=RealtimeAudioConfigInputParam(
-                            format=AudioPCM(type="audio/pcm", rate=self.input_sample_rate),
+                            format=AudioPCM(type="audio/pcm", rate=input_rate),  # type: ignore[typeddict-item]
                             transcription=AudioTranscriptionParam(model="gpt-4o-transcribe", language="en"),
                             turn_detection=ServerVad(type="server_vad", interrupt_response=True),
                         ),
-                        output=RealtimeAudioConfigOutputParam(
-                            format=AudioPCM(type="audio/pcm", rate=self.output_sample_rate),
-                            voice=self._voice_override or get_session_voice(),
-                        ),
+                        output=RealtimeAudioConfigOutputParam(**output_audio_kwargs),
                     ),
                     tools=get_tool_specs(), # type: ignore[typeddict-item]
                     tool_choice="auto",
@@ -499,7 +553,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 logger.info(
                     "Realtime session initialized with profile=%r voice=%r",
                     getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None),
-                    self._voice_override or get_session_voice(),
+                    voice,
                 )
                 # If we reached here, the session update succeeded which implies the API key worked.
                 # Persist the key to a newly created .env (copied from .env.example) if needed.
@@ -618,7 +672,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     # Handle audio delta
                     if event.type == "response.output_audio.delta":
                         if self.gradio_mode and self.deps.head_wobbler is not None:
-                            self.deps.head_wobbler.feed(event.delta)
+                            self.deps.head_wobbler.feed(event.delta, sample_rate=self.output_sample_rate)
                         self.last_activity_time = asyncio.get_event_loop().time()
                         logger.debug("last activity time updated to %s", self.last_activity_time)
                         await self.output_queue.put(
@@ -810,7 +864,9 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         for any keys that might contain voice names. Falls back to a curated
         list known to work with realtime if discovery fails.
         """
-        fallback = list(AVAILABLE_VOICES)
+        fallback = get_available_voices_for_backend(self._backend)
+        if self._backend == SPEECH_TO_SPEECH_BACKEND:
+            return fallback
         try:
             # Best effort discovery; safe-guarded for unexpected shapes
             model = await self.client.models.retrieve(config.MODEL_NAME)
@@ -855,11 +911,51 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 _collect(raw)
             # Ensure default present and stable order
             voices = sorted(candidates) if candidates else fallback
-            if "cedar" not in voices:
-                voices = ["cedar", *[v for v in voices if v != "cedar"]]
+            default_voice = get_default_voice_for_backend(self._backend)
+            if default_voice not in voices:
+                voices = [default_voice, *[v for v in voices if v != default_voice]]
             return voices
         except Exception:
             return fallback
+
+    async def _build_realtime_client(self, api_key: str | None = None) -> AsyncOpenAI:
+        """Build the OpenAI-compatible realtime client for the selected backend."""
+        resolved_api_key = (api_key or self._provided_api_key or config.OPENAI_API_KEY or "").strip()
+        if self._backend != SPEECH_TO_SPEECH_BACKEND:
+            self._realtime_connect_query = {}
+            if not resolved_api_key:
+                logger.warning("OPENAI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
+                resolved_api_key = "DUMMY"
+            return AsyncOpenAI(api_key=resolved_api_key)
+
+        session_url = getattr(config, "S2S_REALTIME_SESSION_URL", None)
+        if not session_url:
+            raise RuntimeError(
+                "S2S_REALTIME_SESSION_URL must be set when BACKEND_PROVIDER=speech-to-speech"
+            )
+
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            response = await http_client.post(session_url)
+            response.raise_for_status()
+            payload = response.json()
+
+        connect_url = payload.get("connect_url")
+        if not isinstance(connect_url, str) or not connect_url:
+            raise RuntimeError(f"Session allocator response did not contain a valid connect_url: {payload!r}")
+
+        parsed = urlsplit(connect_url)
+        path = parsed.path.rstrip("/")
+        if not path.endswith("/realtime"):
+            raise ValueError(f"Expected realtime connect URL ending with /realtime, got: {connect_url}")
+
+        base_path = path[: -len("/realtime")]
+        logger.info("Allocated realtime session %s", payload.get("session_id") or "<unknown>")
+        self._realtime_connect_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        return AsyncOpenAI(
+            api_key=resolved_api_key or "DUMMY",
+            base_url=urlunsplit(("https" if parsed.scheme == "wss" else "http", parsed.netloc, base_path, "", "")),
+            websocket_base_url=urlunsplit((parsed.scheme, parsed.netloc, base_path, "", "")),
+        )
 
     async def send_idle_signal(self, idle_duration: float) -> None:
         """Send an idle signal to the openai server."""

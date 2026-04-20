@@ -1,6 +1,7 @@
 import shutil
 import zipfile
 import subprocess
+import os
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -87,6 +88,15 @@ def test_session_voice_defaults_follow_selected_backend(monkeypatch: pytest.Monk
     assert prompts_mod.get_session_voice() == "Kore"
 
 
+def test_session_voice_defaults_follow_s2s_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S2S should fall back to its curated backend default voice."""
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
+    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime")
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
+
+    assert prompts_mod.get_session_voice() == "Aiden"
+
+
 def test_packaged_profiles_win_outside_source_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -132,12 +142,15 @@ def test_wheel_file_paths_stay_within_windows_budget(tmp_path: Path) -> None:
         shutil.copy2(source_file, target_file)
 
     try:
+        env = os.environ.copy()
+        env["UV_CACHE_DIR"] = str(tmp_path / "uv-cache")
         subprocess.run(
-            ["uv", "build", "--wheel", "--out-dir", str(dist_dir)],
+            ["uv", "build", "--wheel", "--out-dir", str(dist_dir), "--no-build-isolation", "--offline"],
             cwd=source_checkout,
             check=True,
             capture_output=True,
             text=True,
+            env=env,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         details = exc.stderr if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)

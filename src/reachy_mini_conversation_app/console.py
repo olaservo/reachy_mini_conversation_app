@@ -27,6 +27,7 @@ from reachy_mini_conversation_app.config import (
     GEMINI_BACKEND,
     LOCKED_PROFILE,
     OPENAI_BACKEND,
+    SPEECH_TO_SPEECH_BACKEND,
     config,
     get_backend_choice,
     get_model_name_for_backend,
@@ -57,6 +58,11 @@ except Exception:  # pragma: no cover - only loaded when settings_app is used
 
 
 logger = logging.getLogger(__name__)
+LOCAL_MEDIA_BACKENDS = tuple(
+    getattr(MediaBackend, name)
+    for name in ("LOCAL", "GSTREAMER", "GSTREAMER_NO_VIDEO", "DEFAULT", "DEFAULT_NO_VIDEO")
+    if hasattr(MediaBackend, name)
+)
 
 
 def _estimate_pending_playback_seconds(robot: ReachyMini) -> float:
@@ -105,6 +111,7 @@ class LocalStream:
         self._instance_path: Optional[str] = instance_path
         self._settings_initialized = False
         self._asyncio_loop = None
+        self._runtime_backend = get_backend_choice()
 
     # ---- Settings UI ----
     def _read_env_lines(self, env_path: Path) -> list[str]:
@@ -144,7 +151,9 @@ class LocalStream:
     def _active_backend(self) -> str:
         """Return the backend family of the currently running handler."""
         handler_name = type(self.handler).__name__.lower()
-        return GEMINI_BACKEND if "gemini" in handler_name else OPENAI_BACKEND
+        if "gemini" in handler_name:
+            return GEMINI_BACKEND
+        return self._runtime_backend
 
     @staticmethod
     def _has_key(value: Optional[str]) -> bool:
@@ -152,9 +161,11 @@ class LocalStream:
         return bool(value and str(value).strip())
 
     def _has_required_key(self, backend: str) -> bool:
-        """Return whether the requested backend has its required credential."""
+        """Return whether the requested backend has the minimum required config."""
         if backend == GEMINI_BACKEND:
             return self._has_key(config.GEMINI_API_KEY)
+        if backend == SPEECH_TO_SPEECH_BACKEND:
+            return self._has_key(config.S2S_REALTIME_SESSION_URL)
         return self._has_key(config.OPENAI_API_KEY)
 
     def _persist_env_value(self, env_name: str, value: str) -> None:
@@ -314,8 +325,10 @@ class LocalStream:
             active_backend = self._active_backend()
             has_openai_key = self._has_required_key(OPENAI_BACKEND)
             has_gemini_key = self._has_required_key(GEMINI_BACKEND)
+            has_s2s_session_url = self._has_required_key(SPEECH_TO_SPEECH_BACKEND)
             can_proceed_with_openai = has_openai_key
             can_proceed_with_gemini = has_gemini_key
+            can_proceed_with_s2s = has_s2s_session_url
             can_proceed = self._has_required_key(active_backend)
             requires_restart = backend_provider != active_backend
             return {
@@ -324,9 +337,11 @@ class LocalStream:
                 "has_key": can_proceed,
                 "has_openai_key": has_openai_key,
                 "has_gemini_key": has_gemini_key,
+                "has_s2s_session_url": has_s2s_session_url,
                 "can_proceed": can_proceed,
                 "can_proceed_with_openai": can_proceed_with_openai,
                 "can_proceed_with_gemini": can_proceed_with_gemini,
+                "can_proceed_with_speech_to_speech": can_proceed_with_s2s,
                 "requires_restart": requires_restart,
             }
 
@@ -367,7 +382,7 @@ class LocalStream:
         @self._settings_app.post("/backend_config")
         def _set_backend(payload: BackendPayload) -> JSONResponse:
             backend = payload.backend.strip().lower()
-            if backend not in {OPENAI_BACKEND, GEMINI_BACKEND}:
+            if backend not in {OPENAI_BACKEND, GEMINI_BACKEND, SPEECH_TO_SPEECH_BACKEND}:
                 return JSONResponse({"ok": False, "error": "invalid_backend"}, status_code=400)
 
             api_key = (payload.api_key or "").strip()
@@ -466,6 +481,12 @@ class LocalStream:
 
         # If key is still missing -> wait until provided via the settings UI
         if not self._has_required_key(active_backend):
+            if active_backend == SPEECH_TO_SPEECH_BACKEND:
+                logger.error(
+                    "S2S_REALTIME_SESSION_URL is not configured. "
+                    "Speech-to-speech mode cannot start without a session allocator URL."
+                )
+                return
             key_name = "GEMINI_API_KEY" if active_backend == GEMINI_BACKEND else "OPENAI_API_KEY"
             logger.warning("%s not found. Open the app settings page to enter it.", key_name)
             # Poll until the key becomes available (set via the settings UI)
@@ -548,7 +569,7 @@ class LocalStream:
         backend = getattr(self._robot.media, "backend", None)
         audio = getattr(self._robot.media, "audio", None)
         if audio is not None:
-            if backend == MediaBackend.LOCAL and hasattr(audio, "clear_player") and callable(audio.clear_player):
+            if backend in LOCAL_MEDIA_BACKENDS and hasattr(audio, "clear_player") and callable(audio.clear_player):
                 audio.clear_player()
             elif (
                 backend == MediaBackend.WEBRTC

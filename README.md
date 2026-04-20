@@ -14,7 +14,7 @@ tags:
 
 # Reachy Mini conversation app
 
-Conversational app for the Reachy Mini robot combining real-time voice APIs (OpenAI Realtime or Gemini Live), vision pipelines, and choreographed motion libraries.
+Conversational app for the Reachy Mini robot combining real-time voice APIs (OpenAI Realtime, a deployed speech-to-speech backend, or Gemini Live), vision pipelines, and choreographed motion libraries.
 
 ![Reachy Mini Dance](docs/assets/reachy_mini_dance.gif)
 
@@ -30,8 +30,9 @@ Conversational app for the Reachy Mini robot combining real-time voice APIs (Ope
 - [License](#license)
 
 ## Overview
-- Real-time audio conversation loop with `fastrtc` for low-latency streaming. Supports two backends:
+- Real-time audio conversation loop with `fastrtc` for low-latency streaming. Supports three backends:
   - **OpenAI Realtime** (`gpt-realtime`) — default
+  - **Speech-to-speech** (`gpt-realtime` via an OpenAI-compatible session allocator) — optional deployed backend
   - **Gemini Live** (`gemini-3.1-flash-live-preview`) — alternative, using the Google GenAI SDK
 - Vision processing uses the selected realtime backend by default (when camera tool is used), with optional on-device local vision using SmolVLM2 (CPU/GPU/MPS) via `--local-vision`.
 - Layered motion system queues primary moves (dances, emotions, goto poses, breathing) while blending speech-reactive wobble and head-tracking.
@@ -121,17 +122,31 @@ Some wheels (like PyTorch) are large and require compatible CUDA or CPU builds�
 ## Configuration
 
 1. Copy `.env.example` to `.env`
-2. Fill in your API key and backend choice
+2. Fill in the backend-specific settings you need
 
 | Variable | Description |
 |----------|-------------|
 | `OPENAI_API_KEY` | Optional override or fallback for OpenAI mode. In the headless settings flow, the app can use bundled OpenAI access when available; set your own key to override it or provide a fallback. |
 | `GEMINI_API_KEY` | Required for Gemini mode. Also accepts `GOOGLE_API_KEY`. Get one at [aistudio.google.com](https://aistudio.google.com/apikey). |
-| `BACKEND_PROVIDER` | Realtime backend to use: `openai` (default) or `gemini`. |
-| `MODEL_NAME` | Optional model override for the selected backend. Defaults to `gpt-realtime` for OpenAI and `gemini-3.1-flash-live-preview` for Gemini Live. |
+| `S2S_REALTIME_SESSION_URL` | Required for `speech-to-speech` mode. This is the HTTP session allocation endpoint that returns the OpenAI-compatible realtime connect URL. |
+| `BACKEND_PROVIDER` | Realtime backend to use: `openai` (default), `speech-to-speech`, or `gemini`. |
+| `MODEL_NAME` | Optional model override for the selected backend. Defaults to `gpt-realtime` for OpenAI and speech-to-speech, and `gemini-3.1-flash-live-preview` for Gemini Live. |
 | `HF_HOME` | Cache directory for local Hugging Face downloads (only used with `--local-vision` flag, defaults to `./cache`). |
 | `HF_TOKEN` | Optional token for Hugging Face access (for gated/private assets). |
 | `LOCAL_VISION_MODEL` | Hugging Face model path for local vision processing (only used with `--local-vision` flag, defaults to `HuggingFaceTB/SmolVLM2-2.2B-Instruct`). |
+
+### Switching to speech-to-speech
+
+To use the deployed speech-to-speech backend instead of direct OpenAI Realtime:
+
+```env
+BACKEND_PROVIDER="speech-to-speech"
+MODEL_NAME="gpt-realtime"
+S2S_REALTIME_SESSION_URL="https://your-session-allocator.example/session"
+```
+
+> [!NOTE]
+> Speech-to-speech uses the same OpenAI-compatible realtime handler as OpenAI mode, but allocates a session first and uses a different curated voice set (Aiden, Ryan, Dylan, Eric, Ono_Anna, Serena, Sohee, Uncle_Fu, Vivian). If a profile does not specify a voice, the backend default is used.
 
 ### Switching to Gemini Live
 
@@ -143,7 +158,7 @@ MODEL_NAME="gemini-3.1-flash-live-preview"
 GEMINI_API_KEY=your-gemini-api-key
 ```
 
-`BACKEND_PROVIDER` is the primary switch. The app still falls back to `MODEL_NAME` for compatibility with older configs, and all features (tools, profiles, head tracking) work with both backends.
+`BACKEND_PROVIDER` is the primary switch. The app still falls back to `MODEL_NAME` for compatibility with older configs, and all features (tools, profiles, head tracking) work with all three backends.
 
 > [!NOTE]
 > Gemini Live uses a different set of voices: Aoede, Charon, Fenrir, Kore (default), Leda, Orus, Puck, Zephyr. If your profile's `voice.txt` specifies an OpenAI voice, it will fall back to Kore.

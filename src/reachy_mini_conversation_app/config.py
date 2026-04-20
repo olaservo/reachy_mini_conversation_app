@@ -44,7 +44,7 @@ DEFAULT_PROFILES_DIRECTORY = _resolve_default_profiles_directory()
 # Full list of voices supported by the OpenAI Realtime / TTS API.
 # Source: https://developers.openai.com/api/docs/guides/text-to-speech/#voice-options
 # "marin" and "cedar" are recommended for gpt-realtime.
-AVAILABLE_VOICES: list[str] = [
+OPENAI_AVAILABLE_VOICES: list[str] = [
     "alloy",
     "ash",
     "ballad",
@@ -55,6 +55,20 @@ AVAILABLE_VOICES: list[str] = [
     "sage",
     "shimmer",
     "verse",
+]
+
+# Voices supported by the deployed speech-to-speech backend.
+# Source: faster-qwen3-tts demo speaker catalog.
+S2S_AVAILABLE_VOICES: list[str] = [
+    "Aiden",
+    "Ryan",
+    "Dylan",
+    "Eric",
+    "Ono_Anna",
+    "Serena",
+    "Sohee",
+    "Uncle_Fu",
+    "Vivian",
 ]
 
 # Voices supported by the Gemini Live API
@@ -71,14 +85,17 @@ GEMINI_AVAILABLE_VOICES: list[str] = [
 
 OPENAI_BACKEND = "openai"
 GEMINI_BACKEND = "gemini"
+SPEECH_TO_SPEECH_BACKEND = "speech-to-speech"
 DEFAULT_BACKEND_PROVIDER = OPENAI_BACKEND
 DEFAULT_MODEL_NAME_BY_BACKEND = {
     OPENAI_BACKEND: "gpt-realtime",
     GEMINI_BACKEND: "gemini-3.1-flash-live-preview",
+    SPEECH_TO_SPEECH_BACKEND: "gpt-realtime",
 }
 DEFAULT_VOICE_BY_BACKEND = {
     OPENAI_BACKEND: "cedar",
     GEMINI_BACKEND: "Kore",
+    SPEECH_TO_SPEECH_BACKEND: "Aiden",
 }
 
 logger = logging.getLogger(__name__)
@@ -96,6 +113,8 @@ def _normalize_backend_provider(
 ) -> str:
     """Normalize backend selection, falling back to MODEL_NAME for compatibility."""
     candidate = (backend_provider or "").strip().lower()
+    if candidate in {"speech_to_speech", "s2s"}:
+        candidate = SPEECH_TO_SPEECH_BACKEND
     if candidate in DEFAULT_MODEL_NAME_BY_BACKEND:
         return candidate
     return GEMINI_BACKEND if _is_gemini_model_name(model_name) else DEFAULT_BACKEND_PROVIDER
@@ -111,7 +130,7 @@ def _resolve_model_name(
     if candidate:
         if normalized_backend == GEMINI_BACKEND and _is_gemini_model_name(candidate):
             return candidate
-        if normalized_backend == OPENAI_BACKEND and not _is_gemini_model_name(candidate):
+        if normalized_backend in {OPENAI_BACKEND, SPEECH_TO_SPEECH_BACKEND} and not _is_gemini_model_name(candidate):
             return candidate
         logger.warning(
             "MODEL_NAME=%r does not match BACKEND_PROVIDER=%r, using default %r",
@@ -218,6 +237,7 @@ class Config:
         os.getenv("MODEL_NAME"),
     )
     MODEL_NAME = _resolve_model_name(BACKEND_PROVIDER, os.getenv("MODEL_NAME"))
+    S2S_REALTIME_SESSION_URL = os.getenv("S2S_REALTIME_SESSION_URL")
     HF_HOME = os.getenv("HF_HOME", "./cache")
     LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     HF_TOKEN = os.getenv("HF_TOKEN")  # Optional, falls back to hf auth login if not set
@@ -312,6 +332,7 @@ def refresh_runtime_config_from_env() -> None:
         os.getenv("MODEL_NAME"),
     )
     config.MODEL_NAME = _resolve_model_name(config.BACKEND_PROVIDER, os.getenv("MODEL_NAME"))
+    config.S2S_REALTIME_SESSION_URL = os.getenv("S2S_REALTIME_SESSION_URL")
     config.REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
 
 
@@ -332,7 +353,9 @@ def get_available_voices_for_backend(backend: str | None = None) -> list[str]:
     normalized_backend = get_backend_choice() if backend is None else _normalize_backend_provider(backend)
     if normalized_backend == GEMINI_BACKEND:
         return list(GEMINI_AVAILABLE_VOICES)
-    return list(AVAILABLE_VOICES)
+    if normalized_backend == SPEECH_TO_SPEECH_BACKEND:
+        return list(S2S_AVAILABLE_VOICES)
+    return list(OPENAI_AVAILABLE_VOICES)
 
 
 def get_default_voice_for_backend(backend: str | None = None) -> str:
@@ -344,6 +367,11 @@ def get_default_voice_for_backend(backend: str | None = None) -> str:
 def is_gemini_model() -> bool:
     """Return True if the configured MODEL_NAME is a Gemini Live model."""
     return get_backend_choice() == GEMINI_BACKEND
+
+
+# Backward-compatible aliases for legacy imports.
+AVAILABLE_VOICES: list[str] = list(OPENAI_AVAILABLE_VOICES)
+DEFAULT_VOICE = DEFAULT_VOICE_BY_BACKEND[DEFAULT_BACKEND_PROVIDER]
 
 
 def set_custom_profile(profile: str | None) -> None:

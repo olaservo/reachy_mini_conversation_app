@@ -11,9 +11,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from reachy_mini.media.media_manager import MediaBackend
-from reachy_mini_conversation_app.config import GEMINI_AVAILABLE_VOICES, config
+from reachy_mini_conversation_app.config import (
+    GEMINI_AVAILABLE_VOICES,
+    S2S_AVAILABLE_VOICES,
+    config,
+)
 from reachy_mini_conversation_app.console import LocalStream
 from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
+
+
+LOCAL_TEST_BACKEND = getattr(MediaBackend, "LOCAL", MediaBackend.GSTREAMER)
 
 
 def test_clear_audio_queue_prefers_clear_player_when_available() -> None:
@@ -23,7 +30,7 @@ def test_clear_audio_queue_prefers_clear_player_when_available() -> None:
         clear_player=MagicMock(),
         clear_output_buffer=MagicMock(),
     )
-    robot = SimpleNamespace(media=SimpleNamespace(audio=audio, backend=MediaBackend.LOCAL))
+    robot = SimpleNamespace(media=SimpleNamespace(audio=audio, backend=LOCAL_TEST_BACKEND))
     stream = LocalStream(handler, robot)
 
     stream.clear_audio_queue()
@@ -90,7 +97,7 @@ async def test_play_loop_feeds_head_wobbler_with_local_playback_delay() -> None:
     )
     media = SimpleNamespace(
         audio=audio,
-        backend=MediaBackend.LOCAL,
+        backend=LOCAL_TEST_BACKEND,
         get_output_audio_samplerate=lambda: 24000,
         push_audio_sample=MagicMock(),
     )
@@ -210,6 +217,44 @@ def test_backend_config_preserves_explicit_model_override_when_saving_key(
     assert "OPENAI_API_KEY=openai-test-key" in env_text
 
 
+def test_backend_config_persists_s2s_selection_without_credentials(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Settings API should allow switching to speech-to-speech without an API key."""
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
+    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
+    monkeypatch.setattr(config, "GEMINI_API_KEY", None)
+    monkeypatch.setattr(config, "S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
+    monkeypatch.setenv("BACKEND_PROVIDER", "openai")
+    monkeypatch.setenv("MODEL_NAME", "gpt-realtime")
+    monkeypatch.setenv("S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+
+    client = TestClient(app)
+    response = client.post("/backend_config", json={"backend": "speech-to-speech"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["backend_provider"] == "speech-to-speech"
+    assert data["active_backend"] == "openai"
+    assert data["has_s2s_session_url"] is True
+    assert data["can_proceed_with_speech_to_speech"] is True
+    assert data["requires_restart"] is True
+
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "BACKEND_PROVIDER=speech-to-speech" in env_text
+    assert "MODEL_NAME=gpt-realtime" in env_text
+
+
 def test_headless_personality_routes_return_gemini_voices_when_backend_selected(monkeypatch) -> None:
     """Headless personality UI should expose Gemini voices when Gemini is selected."""
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "gemini")
@@ -224,6 +269,22 @@ def test_headless_personality_routes_return_gemini_voices_when_backend_selected(
 
     assert response.status_code == 200
     assert response.json() == GEMINI_AVAILABLE_VOICES
+
+
+def test_headless_personality_routes_return_s2s_voices_when_backend_selected(monkeypatch) -> None:
+    """Headless personality UI should expose S2S voices when speech-to-speech is selected."""
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
+    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime")
+
+    app = FastAPI()
+    handler = MagicMock()
+    mount_personality_routes(app, handler, lambda: None)
+
+    client = TestClient(app)
+    response = client.get("/voices")
+
+    assert response.status_code == 200
+    assert response.json() == S2S_AVAILABLE_VOICES
 
 
 def test_headless_personality_routes_apply_voice_accepts_query_param() -> None:

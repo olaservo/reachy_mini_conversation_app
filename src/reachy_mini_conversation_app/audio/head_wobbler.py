@@ -22,9 +22,14 @@ logger = logging.getLogger(__name__)
 class HeadWobbler:
     """Converts audio deltas (base64) into head movement offsets."""
 
-    def __init__(self, set_speech_offsets: Callable[[Tuple[float, float, float, float, float, float]], None]) -> None:
+    def __init__(
+        self,
+        set_speech_offsets: Callable[[Tuple[float, float, float, float, float, float]], None],
+        default_sample_rate: int | None = None,
+    ) -> None:
         """Initialize the head wobbler."""
         self._apply_offsets = set_speech_offsets
+        self._default_sample_rate = default_sample_rate
         self._base_ts: float | None = None
         self._hops_done: int = 0
 
@@ -40,10 +45,13 @@ class HeadWobbler:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def feed(self, delta_b64: str, start_delay_s: float = 0.0) -> None:
+    def feed(self, delta_b64: str, sample_rate: int | None = None, start_delay_s: float = 0.0) -> None:
         """Thread-safe: push base64 audio into the consumer queue."""
         buf = np.frombuffer(base64.b64decode(delta_b64), dtype=np.int16).reshape(1, -1)
-        self.feed_pcm(buf, SAMPLE_RATE, start_delay_s=start_delay_s)
+        sr = sample_rate if sample_rate is not None else self._default_sample_rate
+        if sr is None:
+            sr = SAMPLE_RATE
+        self.feed_pcm(buf, sr, start_delay_s=start_delay_s)
 
     def feed_pcm(self, pcm: NDArray[np.int16], sample_rate: int, start_delay_s: float = 0.0) -> None:
         """Thread-safe: push PCM audio into the consumer queue."""

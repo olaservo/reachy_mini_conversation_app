@@ -19,6 +19,7 @@ dependencies = [
 
     #Environment variables
     "python-dotenv",
+    "httpx",
 
     #OpenAI
     "openai>=2.30.0",

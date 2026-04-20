@@ -11,6 +11,7 @@ import pytest
 
 import reachy_mini_conversation_app.openai_realtime as rt_mod
 import reachy_mini_conversation_app.tools.background_tool_manager as btm_mod
+from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler, _compute_response_cost
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.tools.background_tool_manager import ToolCallRoutine
@@ -851,3 +852,186 @@ async def test_response_sender_loop_times_out_waiting_for_previous_response(
     assert len(timeout_logs) == 1, (
         f"Expected 1 pre-condition timeout warning, got {len(timeout_logs)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_start_up_s2s_gradio_does_not_wait_for_api_key(monkeypatch: Any) -> None:
+    """Speech-to-speech startup should skip the Gradio API-key textbox flow."""
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
+    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
+
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    handler = rt_mod.OpenaiRealtimeHandler(deps, gradio_mode=True)
+
+    build_client = AsyncMock(return_value=MagicMock())
+    run_realtime_session = AsyncMock(return_value=None)
+    wait_for_args = AsyncMock(side_effect=AssertionError("wait_for_args should not be called"))
+
+    object.__setattr__(handler, "_build_realtime_client", build_client)
+    object.__setattr__(handler, "_run_realtime_session", run_realtime_session)
+    object.__setattr__(handler, "wait_for_args", wait_for_args)
+
+    await handler.start_up()
+
+    wait_for_args.assert_not_awaited()
+    build_client.assert_awaited_once_with(api_key=None)
+    run_realtime_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_realtime_session_omits_s2s_voice_when_unset(monkeypatch: Any) -> None:
+    """S2S sessions should omit voice when no profile voice is configured."""
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=None: default)
+    monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
+    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime")
+    monkeypatch.setattr(config, "S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
+
+    captured_update: dict[str, Any] = {}
+
+    class FakeSession:
+        async def update(self, **kwargs: Any) -> None:
+            captured_update.update(kwargs)
+
+    class FakeInputAudioBuffer:
+        async def append(self, **_kw: Any) -> None:
+            pass
+
+    class FakeItem:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConversation:
+        item = FakeItem()
+
+    class FakeResponse:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+        async def cancel(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConn:
+        session = FakeSession()
+        input_audio_buffer = FakeInputAudioBuffer()
+        conversation = FakeConversation()
+        response = FakeResponse()
+
+        async def __aenter__(self) -> "FakeConn":
+            return self
+
+        async def __aexit__(self, *_args: Any) -> bool:
+            return False
+
+        async def close(self) -> None:
+            pass
+
+        def __aiter__(self) -> "FakeConn":
+            return self
+
+        async def __anext__(self) -> Any:
+            raise StopAsyncIteration
+
+    class FakeRealtime:
+        def connect(self, **_kw: Any) -> FakeConn:
+            return FakeConn()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.realtime = FakeRealtime()
+
+    handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler.client = FakeClient()
+
+    await handler._run_realtime_session()
+
+    session = captured_update["session"]
+    assert session["audio"]["input"]["format"]["rate"] is None
+    assert session["audio"]["output"]["format"]["rate"] is None
+    assert "voice" not in session["audio"]["output"]
+
+
+@pytest.mark.asyncio
+async def test_run_realtime_session_passes_allocated_session_query(monkeypatch: Any) -> None:
+    """S2S sessions must forward the allocated session token when connecting."""
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=None: "Aiden")
+    monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
+    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime")
+
+    captured_connect: dict[str, Any] = {}
+
+    class FakeSession:
+        async def update(self, **_kw: Any) -> None:
+            pass
+
+    class FakeInputAudioBuffer:
+        async def append(self, **_kw: Any) -> None:
+            pass
+
+    class FakeItem:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConversation:
+        item = FakeItem()
+
+    class FakeResponse:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+        async def cancel(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConn:
+        session = FakeSession()
+        input_audio_buffer = FakeInputAudioBuffer()
+        conversation = FakeConversation()
+        response = FakeResponse()
+
+        async def __aenter__(self) -> "FakeConn":
+            return self
+
+        async def __aexit__(self, *_args: Any) -> bool:
+            return False
+
+        async def close(self) -> None:
+            pass
+
+        def __aiter__(self) -> "FakeConn":
+            return self
+
+        async def __anext__(self) -> Any:
+            raise StopAsyncIteration
+
+    class FakeRealtime:
+        def connect(self, **kwargs: Any) -> FakeConn:
+            captured_connect.update(kwargs)
+            return FakeConn()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.realtime = FakeRealtime()
+
+    handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler.client = FakeClient()
+    handler._realtime_connect_query = {"session_token": "abc123"}
+
+    await handler._run_realtime_session()
+
+    assert captured_connect["extra_query"] == {"session_token": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_handler_uses_s2s_sample_rate_for_s2s_backend(monkeypatch: Any) -> None:
+    """S2S should keep the 16 kHz local streaming configuration."""
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
+    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime")
+
+    handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+
+    assert handler.input_sample_rate == 16000
+    assert handler.output_sample_rate == 16000

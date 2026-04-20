@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 PROMPTS_LIBRARY_DIRECTORY = Path(__file__).parent / "prompts"
 INSTRUCTIONS_FILENAME = "instructions.txt"
 VOICE_FILENAME = "voice.txt"
+_BACKEND_DEFAULT = object()
 
 
 def _expand_prompt_includes(content: str) -> str:
@@ -91,14 +92,14 @@ def get_session_instructions() -> str:
         sys.exit(1)
 
 
-def get_session_voice(default: str | None = None) -> str:
+def get_session_voice(default: object = _BACKEND_DEFAULT) -> str | None:
     """Resolve the voice to use for the session.
 
     If a custom profile is selected and contains a voice.txt, return its
     trimmed content; otherwise return the provided default or the active
     backend default voice.
     """
-    fallback = get_default_voice_for_backend() if default is None else default
+    fallback = get_default_voice_for_backend() if default is _BACKEND_DEFAULT else default
     profile = config.REACHY_MINI_CUSTOM_PROFILE
     if not profile:
         return fallback
