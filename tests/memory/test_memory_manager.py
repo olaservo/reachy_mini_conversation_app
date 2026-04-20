@@ -45,11 +45,18 @@ class TestLayout:
         assert (mem / "logs" / "processed").is_dir()
 
     def test_session_log_written_under_pending(self, manager: MemoryManager, data_dir: Path) -> None:
-        """The live session log must land in logs/pending/ from the start."""
+        """The session log path must be reserved under logs/pending/ from the start.
+
+        The file itself is created lazily on the first append, so a boot with
+        no conversation leaves no stub behind.
+        """
         pending = data_dir / "memory" / "logs" / "pending"
-        logs = list(pending.glob("*.log"))
-        assert len(logs) == 1
-        assert manager.session_log_path == logs[0]
+        assert manager.session_log_path is not None
+        assert manager.session_log_path.parent == pending
+        assert not manager.session_log_path.exists()  # lazy: not yet written
+
+        manager.log_turn("user", "trigger lazy creation")
+        assert manager.session_log_path.exists()
 
 
 # ------------------------------------------------------------------
@@ -122,10 +129,12 @@ class TestSessionLog:
         assert "user: Hi" in text
 
     def test_new_session_rotates(self, manager: MemoryManager) -> None:
-        """Rotating the session creates a fresh pending log."""
+        """Rotating the session reserves a fresh pending log path."""
         first = manager.session_log_path
+        manager.log_turn("user", "first session")  # force lazy create
         manager.new_session()
         second = manager.session_log_path
+        manager.log_turn("user", "second session")  # force lazy create
         assert first != second
         assert first.exists() and second.exists()  # type: ignore[union-attr]
 

@@ -98,6 +98,7 @@ class MemoryManager:
         self._pending_logs_dir = self._logs_dir / "pending"
         self._processed_logs_dir = self._logs_dir / "processed"
         self._session_log_path: Path | None = None
+        self._session_log_header: str = ""
         self._ensure_dirs()
         self._migrate_legacy_layout()
         self._start_session_log()
@@ -165,7 +166,12 @@ class MemoryManager:
         )
 
     def _start_session_log(self) -> None:
-        """Create a new session log under logs/pending/ with a header."""
+        """Reserve a session log path under logs/pending/ without writing it.
+
+        The file is created lazily on the first append (see ``_append_log``).
+        Boots that never produce conversation leave nothing behind, so the
+        dreamer doesn't waste an LLM call processing an empty stub.
+        """
         now = _now_utc()
         base = now.strftime("%Y-%m-%d_%H-%M")
         path = self._pending_logs_dir / f"{base}.log"
@@ -173,14 +179,10 @@ class MemoryManager:
         while path.exists():
             path = self._pending_logs_dir / f"{base}_{suffix}.log"
             suffix += 1
-        try:
-            path.write_text(
-                f"--- session {now.strftime('%Y-%m-%d %H:%M')} UTC ---\n\n",
-                encoding="utf-8",
-            )
-        except OSError as e:
-            logger.warning("Failed to create session log: %s", e)
         self._session_log_path = path
+        self._session_log_header = (
+            f"--- session {now.strftime('%Y-%m-%d %H:%M')} UTC ---\n\n"
+        )
 
     # ------------------------------------------------------------------
     # Live log append (same as before, just targeted at pending/)
@@ -192,6 +194,8 @@ class MemoryManager:
             return
         try:
             with open(self._session_log_path, "a", encoding="utf-8") as f:
+                if f.tell() == 0:
+                    f.write(self._session_log_header)
                 f.write(line + "\n")
         except OSError as e:
             logger.warning("Failed to write conversation log: %s", e)

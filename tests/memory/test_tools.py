@@ -154,8 +154,11 @@ class TestShortTermMemory:
 
     @pytest.mark.asyncio
     async def test_handles_empty_session(self, deps: _FakeDeps) -> None:
-        """Returns the initial header if no turns have been logged."""
+        """Returns empty content when no turns have been logged.
+
+        The session log is created lazily on the first write, so a session
+        with no conversation produces no file and the read returns "".
+        """
         assert deps.memory_manager is not None
         result = await ShortTermMemory()(deps)
-        # The header line is always written on init.
-        assert result["content"].startswith("--- session")
+        assert result["content"] == ""
