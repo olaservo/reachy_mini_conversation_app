@@ -171,6 +171,7 @@ class Config:
     OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-realtime")
     BACKEND_PROVIDER = os.getenv("BACKEND_PROVIDER", "speech-to-speech").strip().lower()
     S2S_REALTIME_SESSION_URL = os.getenv("S2S_REALTIME_SESSION_URL")
+    S2S_REALTIME_WS_URL = os.getenv("S2S_REALTIME_WS_URL")
     HF_HOME = os.getenv("HF_HOME", "./cache")
     LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     HF_TOKEN = os.getenv("HF_TOKEN")  # Optional, falls back to hf auth login if not set
