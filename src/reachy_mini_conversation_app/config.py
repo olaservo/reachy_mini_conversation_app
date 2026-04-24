@@ -222,6 +222,8 @@ class Config:
     LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     HF_TOKEN = os.getenv("HF_TOKEN")  # Optional, falls back to hf auth login if not set
     DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")  # Optional, enables the send_discord tool
+    DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # Optional, enables the send_discord_dm tool
+    DISCORD_USER_ID = os.getenv("DISCORD_USER_ID")  # Optional, Discord user ID that receives DMs
 
     logger.debug(
         "Backend provider: %s, Model: %s, HF_HOME: %s, Vision Model: %s",

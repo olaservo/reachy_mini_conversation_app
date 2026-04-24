@@ -206,6 +206,8 @@ reachy-mini-conversation-app --gradio
 | `play_emotion` | Play a recorded emotion clip via Hugging Face datasets. | Core install only. Uses the default open emotions dataset: [`pollen-robotics/reachy-mini-emotions-library`](https://huggingface.co/datasets/pollen-robotics/reachy-mini-emotions-library). |
 | `stop_emotion` | Clear queued emotions. | Core install only. |
 | `do_nothing` | Explicitly remain idle. | Core install only. |
+| `send_discord` | Send a message (and optionally the current camera frame) to a Discord channel via a webhook. | Requires `DISCORD_WEBHOOK_URL` in `.env`. |
+| `send_discord_dm` | DM the configured user (and optionally the current camera frame) via a Discord bot. | Requires `DISCORD_BOT_TOKEN` and `DISCORD_USER_ID` in `.env`; bot must share a server with the user. |
 
 ## Advanced features
 
