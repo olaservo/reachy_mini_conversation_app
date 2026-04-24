@@ -316,6 +316,9 @@ def refresh_runtime_config_from_env() -> None:
     )
     config.MODEL_NAME = _resolve_model_name(config.BACKEND_PROVIDER, os.getenv("MODEL_NAME"))
     config.REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
+    config.DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+    config.DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+    config.DISCORD_USER_ID = os.getenv("DISCORD_USER_ID")
 
 
 def get_backend_choice(model_name: str | None = None) -> str:
