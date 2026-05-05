@@ -386,6 +386,16 @@ class Config:
     AUTOLOAD_EXTERNAL_TOOLS = _env_flag("AUTOLOAD_EXTERNAL_TOOLS", default=False)
     REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
 
+    # Memory system
+    MEMORY_ENABLED: bool = _env_flag("REACHY_MINI_MEMORY_ENABLED", default=True)
+    _data_dir_env = os.getenv("REACHY_MINI_DATA_DIRECTORY")
+    DATA_DIRECTORY: Path = Path(_data_dir_env) if _data_dir_env else Path.home() / ".reachy_mini" / "data"
+    # Model used by the dreamer (offline memory consolidation). Falls back to
+    # the default dreamer model in main.py if unset. Realtime-only aliases
+    # like "gpt-realtime" don't work with the Responses API; pick a
+    # chat-capable model (e.g. "gpt-5.4") if you override this.
+    MEMORY_DREAMER_MODEL: str | None = os.getenv("MEMORY_DREAMER_MODEL") or None
+
     logger.debug(f"Custom Profile: {REACHY_MINI_CUSTOM_PROFILE}")
 
     def __init__(self) -> None:
