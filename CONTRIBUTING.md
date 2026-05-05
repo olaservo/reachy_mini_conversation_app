@@ -35,8 +35,10 @@ We welcome all contributions: bug fixes, new features, documentation, testing, a
 
 This project is mirrored to a Hugging Face Space.
 
-- Every push to the `main` branch is automatically synchronized to [pollen-robotics/reachy_mini_conversation_app](https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app)
-- This sync is handled by a GitHub Action and requires no manual steps.
+- Tagged releases are automatically synchronized to [pollen-robotics/reachy_mini_conversation_app](https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app)
+- Pull requests opened from branches in this repository automatically get a private preview Space named `reachy_mini_conversation_app_PR<PR number>`
+- Preview Spaces are refreshed on each push to the PR branch and removed automatically when the PR closes
+- This sync is handled by GitHub Actions and requires no manual steps.
 - Contributors do not need to interact with the Space on Hugging Face hub directly.
 
 ### 1. Create an Issue
@@ -154,7 +156,7 @@ uv run pytest tests/ -v --cov  # With coverage
 
 ### All at Once
 ```bash
-uv run mypy --pretty --show-error-codes && uv run ruff check . --fix && uv run pytest tests/ -v
+uv run ruff check . --fix && uv run ruff format . && uv run mypy --pretty --show-error-codes && uv run pytest tests/ -v
 ```
 
 </details>

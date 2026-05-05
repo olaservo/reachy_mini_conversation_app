@@ -8,17 +8,27 @@ from typing import Any, List, Tuple
 from collections.abc import Callable
 
 import numpy as np
+from numpy.typing import NDArray
 
 from reachy_mini_conversation_app.audio.head_wobbler import HeadWobbler
 
 
-def _make_audio_chunk(duration_s: float = 0.3, frequency_hz: float = 220.0, sample_rate: int = 24000) -> str:
+def _make_audio_chunk(duration_s: float = 0.3, frequency_hz: float = 220.0) -> str:
     """Generate a base64-encoded mono PCM16 sine wave."""
+    pcm = _make_pcm(duration_s=duration_s, frequency_hz=frequency_hz, sample_rate=24000)
+    return base64.b64encode(pcm.tobytes()).decode("ascii")
+
+
+def _make_pcm(
+    duration_s: float = 0.3,
+    frequency_hz: float = 220.0,
+    sample_rate: int = 24000,
+) -> NDArray[np.int16]:
+    """Generate a mono PCM16 sine wave at the requested sample rate."""
     sample_count = int(sample_rate * duration_s)
     t = np.linspace(0, duration_s, sample_count, endpoint=False)
     wave = 0.6 * np.sin(2 * math.pi * frequency_hz * t)
-    pcm = np.clip(wave * np.iinfo(np.int16).max, -32768, 32767).astype(np.int16)
-    return base64.b64encode(pcm.tobytes()).decode("ascii")
+    return np.clip(wave * np.iinfo(np.int16).max, -32768, 32767).astype(np.int16)
 
 
 def _wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> bool:
@@ -43,7 +53,7 @@ def _start_wobbler() -> Tuple[HeadWobbler, List[Tuple[float, Tuple[float, float,
 
 
 def test_reset_drops_pending_offsets() -> None:
-    """Reset should stop wobble output derived from pre-reset audio."""
+    """Reset should stop prior wobble and restore neutral speech offsets."""
     wobbler, captured = _start_wobbler()
     try:
         wobbler.feed(_make_audio_chunk(duration_s=0.35))
@@ -51,8 +61,10 @@ def test_reset_drops_pending_offsets() -> None:
 
         pre_reset_count = len(captured)
         wobbler.reset()
+        assert _wait_for(lambda: len(captured) == pre_reset_count + 1), "reset did not emit neutral offsets"
+        assert captured[-1][1] == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         time.sleep(0.3)
-        assert len(captured) == pre_reset_count, "offsets continued after reset without new audio"
+        assert len(captured) == pre_reset_count + 1, "offsets continued after reset without new audio"
     finally:
         wobbler.stop()
 
@@ -70,6 +82,20 @@ def test_reset_allows_future_offsets() -> None:
         wobbler.feed(_make_audio_chunk(duration_s=0.35, frequency_hz=440.0))
         assert _wait_for(lambda: len(captured) > pre_second_count), "no offsets after reset"
         assert wobbler._thread is not None and wobbler._thread.is_alive()
+    finally:
+        wobbler.stop()
+
+
+def test_request_reset_after_current_audio_handles_16khz_chunks() -> None:
+    """Queued reset should wait for 16 kHz audio to finish before restoring neutral offsets."""
+    wobbler, captured = _start_wobbler()
+    try:
+        pcm = _make_pcm(duration_s=0.35, sample_rate=16000)
+        wobbler.feed_pcm(pcm.reshape(1, -1), 16000)
+        assert _wait_for(lambda: any(offsets != (0.0, 0.0, 0.0, 0.0, 0.0, 0.0) for _, offsets in captured))
+
+        wobbler.request_reset_after_current_audio()
+        assert _wait_for(lambda: len(captured) > 0 and captured[-1][1] == (0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
     finally:
         wobbler.stop()
 
@@ -107,25 +133,3 @@ def test_reset_during_inflight_chunk_keeps_worker(monkeypatch: Any) -> None:
         assert wobbler._thread.is_alive()
     finally:
         wobbler.stop()
-
-
-def test_feed_uses_explicit_sample_rate() -> None:
-    """Head wobble chunks should keep the provided assistant sample rate."""
-    wobbler = HeadWobbler(set_speech_offsets=lambda _offsets: None)
-
-    wobbler.feed(_make_audio_chunk(duration_s=0.1, sample_rate=16000), sample_rate=16000)
-
-    generation, sample_rate, chunk = wobbler.audio_queue.get_nowait()
-    assert generation == 0
-    assert sample_rate == 16000
-    assert chunk.shape[0] == 1
-
-
-def test_feed_falls_back_to_default_sample_rate() -> None:
-    """Head wobble chunks should use the configured default sample rate when omitted."""
-    wobbler = HeadWobbler(set_speech_offsets=lambda _offsets: None, default_sample_rate=24000)
-
-    wobbler.feed(_make_audio_chunk(duration_s=0.1))
-
-    _, sample_rate, _ = wobbler.audio_queue.get_nowait()
-    assert sample_rate == 24000

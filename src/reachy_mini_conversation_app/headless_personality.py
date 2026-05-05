@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import List
 from pathlib import Path
 
-from .config import DEFAULT_VOICE, DEFAULT_PROFILES_DIRECTORY
+from .config import DEFAULT_PROFILES_DIRECTORY, get_default_voice_for_backend
 
 
 DEFAULT_OPTION = "(built-in default)"
@@ -76,6 +76,16 @@ def read_instructions_for(name: str) -> str:
         return f"Could not load instructions: {e}"
 
 
+def read_tools_for(name: str) -> str:
+    """Read the tools.txt content for the given profile name."""
+    try:
+        profile_name = "default" if name == DEFAULT_OPTION else name
+        target = resolve_profile_dir(profile_name) / "tools.txt"
+        return target.read_text(encoding="utf-8") if target.exists() else ""
+    except Exception:
+        return ""
+
+
 def available_tools_for(selected: str) -> List[str]:
     """List available tool modules for the given profile selection."""
     shared: List[str] = []
@@ -96,9 +106,10 @@ def available_tools_for(selected: str) -> List[str]:
     return sorted(set(shared + local))
 
 
-def _write_profile(name_s: str, instructions: str, tools_text: str, voice: str = DEFAULT_VOICE) -> None:
+def _write_profile(name_s: str, instructions: str, tools_text: str, voice: str | None = None) -> None:
+    default_voice = get_default_voice_for_backend()
     target_dir = _profiles_root() / "user_personalities" / name_s
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "instructions.txt").write_text(instructions.strip() + "\n", encoding="utf-8")
     (target_dir / "tools.txt").write_text((tools_text or "").strip() + "\n", encoding="utf-8")
-    (target_dir / "voice.txt").write_text((voice or DEFAULT_VOICE).strip() + "\n", encoding="utf-8")
+    (target_dir / "voice.txt").write_text((voice or default_voice).strip() + "\n", encoding="utf-8")

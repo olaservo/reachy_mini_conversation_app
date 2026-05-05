@@ -7,6 +7,7 @@ import asyncio
 import argparse
 import threading
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 import gradio as gr
 from fastapi import FastAPI
@@ -45,20 +46,64 @@ def run(
     """Run the Reachy Mini conversation app."""
     # Putting these dependencies here makes the dashboard faster to load when the conversation app is installed
     from reachy_mini_conversation_app.moves import MovementManager
-    from reachy_mini_conversation_app.config import config
-    from reachy_mini_conversation_app.console import LocalStream
-    from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
-    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
-    from reachy_mini_conversation_app.audio.head_wobbler import HeadWobbler
+    from reachy_mini_conversation_app.config import (
+        HF_BACKEND,
+        GEMINI_BACKEND,
+        OPENAI_BACKEND,
+        HF_LOCAL_CONNECTION_MODE,
+        config,
+        is_gemini_model,
+        get_backend_label,
+        get_hf_connection_selection,
+        refresh_runtime_config_from_env,
+    )
+    from reachy_mini_conversation_app.startup_settings import (
+        StartupSettings,
+        load_startup_settings_into_runtime,
+    )
 
     logger = setup_logger(args.debug)
     logger.info("Starting Reachy Mini Conversation App")
+    startup_settings = StartupSettings()
+
+    if instance_path is not None:
+        try:
+            from dotenv import load_dotenv
+
+            env_path = Path(instance_path) / ".env"
+            if env_path.exists():
+                load_dotenv(dotenv_path=str(env_path), override=True)
+                refresh_runtime_config_from_env()
+                logger.info("Loaded instance configuration from %s", env_path)
+        except Exception as e:
+            logger.warning("Failed to load instance configuration: %s", e)
+
+        try:
+            startup_settings = load_startup_settings_into_runtime(instance_path)
+        except Exception as e:
+            logger.warning("Failed to load startup settings: %s", e)
+
+    if config.BACKEND_PROVIDER == HF_BACKEND:
+        logger.info(
+            "Configured backend provider: %s (%s), connection mode: %s",
+            config.BACKEND_PROVIDER,
+            get_backend_label(config.BACKEND_PROVIDER),
+            get_hf_connection_selection().mode,
+        )
+    else:
+        logger.info(
+            "Configured backend provider: %s (%s), model: %s",
+            config.BACKEND_PROVIDER,
+            get_backend_label(config.BACKEND_PROVIDER),
+            config.MODEL_NAME,
+        )
+
+    from reachy_mini_conversation_app.console import LocalStream
+    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
+    from reachy_mini_conversation_app.audio.head_wobbler import HeadWobbler
 
     if args.no_camera and args.head_tracker is not None:
-        logger.warning(
-            "Head tracking disabled: --no-camera flag is set. "
-            "Remove --no-camera to enable head tracking."
-        )
+        logger.warning("Head tracking disabled: --no-camera flag is set. Remove --no-camera to enable head tracking.")
 
     if robot is None:
         try:
@@ -70,25 +115,17 @@ def run(
             robot = ReachyMini(**robot_kwargs)
 
         except TimeoutError as e:
-            logger.error(
-                "Connection timeout: Failed to connect to Reachy Mini daemon. "
-                f"Details: {e}"
-            )
+            logger.error(f"Connection timeout: Failed to connect to Reachy Mini daemon. Details: {e}")
             log_connection_troubleshooting(logger, args.robot_name)
             sys.exit(1)
 
         except ConnectionError as e:
-            logger.error(
-                "Connection failed: Unable to establish connection to Reachy Mini. "
-                f"Details: {e}"
-            )
+            logger.error(f"Connection failed: Unable to establish connection to Reachy Mini. Details: {e}")
             log_connection_troubleshooting(logger, args.robot_name)
             sys.exit(1)
 
         except Exception as e:
-            logger.error(
-                f"Unexpected error during robot initialization: {type(e).__name__}: {e}"
-            )
+            logger.error(f"Unexpected error during robot initialization: {type(e).__name__}: {e}")
             logger.error("Please check your configuration and try again.")
             sys.exit(1)
 
@@ -118,10 +155,7 @@ def run(
         camera_worker=camera_worker,
     )
 
-    head_wobbler = HeadWobbler(
-        set_speech_offsets=movement_manager.set_speech_offsets,
-        default_sample_rate=OpenaiRealtimeHandler._get_realtime_sample_rate(),
-    )
+    head_wobbler = HeadWobbler(set_speech_offsets=movement_manager.set_speech_offsets)
 
     # Memory system
     memory_manager = None
@@ -153,7 +187,52 @@ def run(
     )
     logger.debug(f"Chatbot avatar images: {chatbot.avatar_images}")
 
-    handler = OpenaiRealtimeHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)
+    if is_gemini_model():
+        from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
+
+        logger.info(
+            "Using %s via GeminiLiveHandler",
+            get_backend_label(config.BACKEND_PROVIDER),
+        )
+        handler = GeminiLiveHandler(
+            deps,
+            gradio_mode=args.gradio,
+            instance_path=instance_path,
+            startup_voice=startup_settings.voice,
+        )
+    elif config.BACKEND_PROVIDER == HF_BACKEND:
+        from reachy_mini_conversation_app.huggingface_realtime import HuggingFaceRealtimeHandler
+
+        hf_connection_selection = get_hf_connection_selection()
+        transport_label = (
+            "Hugging Face direct websocket"
+            if hf_connection_selection.mode == HF_LOCAL_CONNECTION_MODE and hf_connection_selection.has_target
+            else "Hugging Face session proxy"
+        )
+        logger.info(
+            "Using %s via Hugging Face realtime handler (%s)",
+            get_backend_label(config.BACKEND_PROVIDER),
+            transport_label,
+        )
+        handler = HuggingFaceRealtimeHandler(
+            deps,
+            gradio_mode=args.gradio,
+            instance_path=instance_path,
+            startup_voice=startup_settings.voice,
+        )  # type: ignore[assignment]
+    else:
+        from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
+
+        logger.info(
+            "Using %s via OpenAI realtime handler (OpenAI Realtime API)",
+            get_backend_label(config.BACKEND_PROVIDER),
+        )
+        handler = OpenaiRealtimeHandler(
+            deps,
+            gradio_mode=args.gradio,
+            instance_path=instance_path,
+            startup_voice=startup_settings.voice,
+        )  # type: ignore[assignment]
 
     stream_manager: gr.Blocks | LocalStream | None = None
 
@@ -162,12 +241,16 @@ def run(
 
         personality_ui = PersonalityUI()
         personality_ui.create_components()
-        additional_inputs = [chatbot, *personality_ui.additional_inputs_ordered()]
-        if config.BACKEND_PROVIDER == "openai":
+        additional_inputs: list[Any] = [chatbot, *personality_ui.additional_inputs_ordered()]
+
+        if config.BACKEND_PROVIDER in {OPENAI_BACKEND, GEMINI_BACKEND}:
+            uses_gemini_backend = is_gemini_model()
             api_key_textbox = gr.Textbox(
-                label="OPENAI API Key",
+                label="GEMINI_API_KEY" if uses_gemini_backend else "OPENAI API Key",
                 type="password",
-                value=os.getenv("OPENAI_API_KEY") if not get_space() else "",
+                value=(os.getenv("GEMINI_API_KEY") if uses_gemini_backend else os.getenv("OPENAI_API_KEY"))
+                if not get_space()
+                else "",
             )
             additional_inputs.insert(1, api_key_textbox)
 
@@ -274,13 +357,9 @@ class ReachyMiniConversationApp(ReachyMiniApp):  # type: ignore[misc]
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
         """Run the Reachy Mini conversation app."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
         args, _ = parse_args()
-
-        # is_wireless = reachy_mini.client.get_status()["wireless_version"]
-        # args.head_tracker = None if is_wireless else "mediapipe"
 
         instance_path = self._get_instance_path().parent
         run(
