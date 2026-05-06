@@ -93,7 +93,7 @@ HF_REALTIME_CONNECTION_MODE_ENV = "HF_REALTIME_CONNECTION_MODE"
 HF_REALTIME_WS_URL_ENV = "HF_REALTIME_WS_URL"
 HF_LOCAL_CONNECTION_MODE = "local"
 HF_DEPLOYED_CONNECTION_MODE = "deployed"
-HF_REALTIME_SESSION_PROXY_URL = "https://pollen-robotics-reachy-mini-realtime-url.hf.space/session"
+HF_REALTIME_SESSION_PROXY_URL = "https://mewklqcmavs5gkid.us-east-1.aws.endpoints.huggingface.cloud/session"
 
 
 @dataclass(frozen=True)
