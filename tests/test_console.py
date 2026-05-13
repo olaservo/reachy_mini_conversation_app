@@ -1,6 +1,5 @@
 """Tests for the headless console stream."""
 
-import sys
 import asyncio
 import threading
 from types import SimpleNamespace
