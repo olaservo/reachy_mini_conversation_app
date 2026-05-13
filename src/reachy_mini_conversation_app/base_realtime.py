@@ -6,8 +6,9 @@ import random
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Final, Tuple, ClassVar, Callable, Optional
+from typing import Any, Final, Tuple, ClassVar, Optional
 from datetime import datetime
+from collections.abc import Callable
 
 import numpy as np
 import gradio as gr
@@ -165,10 +166,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._turn_response_created_at: float | None = None
         self._turn_first_audio_at: float | None = None
 
-        # Optional observer notified on every conversation activity transition
-        # (see ``_mark_activity``). Used by external surfaces (e.g. the SSE
-        # bridge in ``console.py``) to broadcast state to UI clients without
-        # coupling this handler to any specific transport.
+        # Notified on every activity transition; kept None until an external
+        # surface (e.g. the SSE bridge) wires itself in via set_activity_observer.
         self._activity_observer: Callable[[str], None] | None = None
 
     @staticmethod
@@ -245,10 +244,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         """Record non-idle conversation activity for the idle timer."""
         self.last_activity_time = asyncio.get_event_loop().time()
         logger.debug("last activity time updated to %s (%s)", self.last_activity_time, reason)
-        # Notify any external observer of the transition. The observer must be
-        # cheap and non-blocking - it runs synchronously inside the realtime
-        # event loop. Errors are swallowed on purpose: a faulty observer must
-        # never break the conversation.
+        # Observer runs synchronously in the event loop; errors are swallowed so
+        # a faulty observer never breaks the conversation.
         observer = self._activity_observer
         if observer is not None:
             try:
@@ -257,11 +254,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 logger.debug("activity observer raised (ignored)", exc_info=True)
 
     def set_activity_observer(self, observer: Callable[[str], None] | None) -> None:
-        """Register or clear an observer called on every activity transition.
-
-        See ``_mark_activity`` for the list of activity reasons emitted by this
-        handler. Pass ``None`` to detach a previously registered observer.
-        """
+        """Attach or detach an activity observer. Pass None to clear."""
         self._activity_observer = observer
 
     def copy(self) -> "BaseRealtimeHandler":
@@ -315,7 +308,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             try:
                 instructions = self._get_session_instructions()
                 voice = self.get_current_voice()
-            except BaseException as e:  # catch SystemExit from prompt loader without crashing
+            except Exception as e:
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
 
