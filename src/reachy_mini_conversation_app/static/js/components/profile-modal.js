@@ -24,7 +24,29 @@ export function openCustomProfileModal({ signal } = {}) {
     }
 
     function onKeydown(event) {
-      if (event.key === "Escape") close(null);
+      if (event.key === "Escape") {
+        close(null);
+        return;
+      }
+      if (event.key === "Tab") {
+        const focusable = Array.from(
+          dialog.querySelectorAll('button, input, textarea, select, [tabindex]:not([tabindex="-1"])')
+        ).filter((el) => !el.disabled);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey) {
+          if (document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
+      }
     }
 
     function onAbort() {
@@ -45,12 +67,17 @@ export function openCustomProfileModal({ signal } = {}) {
     signal?.addEventListener("abort", onAbort);
 
     dialog.querySelector("[data-action='cancel']").addEventListener("click", () => close(null));
+
+    const errorBox = dialog.querySelector(".modal__error");
+    dialog.querySelectorAll("input, textarea").forEach((field) => {
+      field.addEventListener("input", () => errorBox.classList.remove("is-visible"));
+    });
+
     dialog.querySelector("form").addEventListener("submit", (event) => {
       event.preventDefault();
       const formData = new FormData(event.target);
       const name = String(formData.get("name") || "").trim();
       const instructions = String(formData.get("instructions") || "").trim();
-      const errorBox = dialog.querySelector(".modal__error");
 
       if (!name) return showError(errorBox, "Please pick a name.");
       if (!NAME_PATTERN.test(name)) {
