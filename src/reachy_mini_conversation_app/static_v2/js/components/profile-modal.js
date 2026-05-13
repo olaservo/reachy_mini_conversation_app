@@ -1,14 +1,4 @@
-/**
- * Modal that asks for the bare minimum to create a "Custom" personality:
- * a display name and an instructions block (the system prompt).
- *
- * The modal is built and torn down on every call so there is never a stale
- * instance hanging around. It returns a Promise that resolves with
- * ``{ name, instructions }`` on save, or ``null`` if the user cancels.
- *
- * The host view (``home.js``) is responsible for actually saving and
- * applying the resulting profile - this module only collects input.
- */
+/** Modal to collect name + instructions for a new custom personality. Returns { name, instructions } or null. */
 
 import { h } from "../ui.js";
 

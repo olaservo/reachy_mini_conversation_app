@@ -1,23 +1,4 @@
-/**
- * Tiny vanilla DOM helpers to keep view code declarative.
- *
- * No framework, no virtual DOM. ``h`` builds an element from a tag name plus
- * an optional attribute object plus children. ``$`` and ``$$`` are short
- * aliases for query selectors scoped to a root.
- *
- * Children can be:
- *   - ``string`` / ``number`` / ``boolean``  -> text node
- *   - ``Node``                                -> appended as is
- *   - ``Array``                                -> flattened
- *   - ``null`` / ``undefined`` / ``false``    -> ignored (handy for conditional UI)
- *
- * Special attributes:
- *   - ``class``        : CSS class (string or array of strings)
- *   - ``style``        : inline style as object ``{ color: "red" }``
- *   - ``dataset``      : ``{ foo: "bar" }`` -> ``data-foo="bar"``
- *   - ``on<Event>``    : ``onClick: fn`` -> ``element.addEventListener("click", fn)``
- *   - everything else  : set as attribute via ``setAttribute``
- */
+/** Tiny DOM helpers: h(tag, attrs, ...children), $, $$, clear, prettifyProfileName. */
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
@@ -43,7 +24,6 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
-/** Append a (possibly nested) list of children, ignoring falsy values. */
 function appendChildren(parent, children) {
   for (const child of children.flat(Infinity)) {
     if (child == null || child === false || child === true) continue;
@@ -55,28 +35,18 @@ function appendChildren(parent, children) {
   }
 }
 
-/** ``document.querySelector`` shortcut, scoped to ``root`` (default ``document``). */
 export function $(selector, root = document) {
   return root.querySelector(selector);
 }
 
-/** ``document.querySelectorAll`` shortcut returning a real ``Array``. */
 export function $$(selector, root = document) {
   return Array.from(root.querySelectorAll(selector));
 }
 
-/** Replace all children of ``parent`` with ``newChildren``. */
 export function clear(parent) {
   while (parent.firstChild) parent.removeChild(parent.firstChild);
 }
 
-/**
- * Format a profile name for display.
- *
- * Backend names are snake_case (e.g. ``mad_scientist_assistant``) or prefixed
- * with ``user_personalities/`` for user-created profiles. We strip the prefix
- * and convert to Title Case for human-friendly card labels.
- */
 export function prettifyProfileName(name) {
   const stripped = name.replace(/^user_personalities\//, "");
   return stripped

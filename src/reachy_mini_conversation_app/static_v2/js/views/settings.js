@@ -1,20 +1,4 @@
-/**
- * Settings view: backend selector + credentials + voice.
- *
- * The view is split into three sections that map 1:1 onto existing backend
- * endpoints:
- *
- *   1. Backend  -> POST /backend_config        (also persists API keys for
- *                                                OpenAI/Gemini at the same
- *                                                time when provided)
- *   2. Voice    -> GET  /voices, POST /voices/apply
- *   3. Status   -> GET  /status, GET /ready    (read-only badges)
- *
- * The legacy UI exposed a richer flow (HF connection mode, port, etc.).
- * For the modern v1 we deliberately keep only what most users need; advanced
- * HF tweaks remain editable in the .env file. If we need them later we can
- * add a "Show advanced" toggle without changing the backend.
- */
+/** Settings view: backend selector, voice, and status. Advanced HF options stay in .env. */
 
 import {
   applyVoice,
@@ -38,9 +22,6 @@ const BACKEND_HINTS = Object.freeze({
   [BACKENDS.GEMINI]: "Bring your own GEMINI_API_KEY.",
 });
 
-/**
- * @param {{ outlet: HTMLElement, signal: AbortSignal }} ctx
- */
 export async function mountSettingsView({ outlet, signal }) {
   const backendSection = buildBackendSection();
   const voiceSection = buildVoiceSection();
@@ -66,10 +47,6 @@ export async function mountSettingsView({ outlet, signal }) {
     refreshVoices({ voiceSection, signal }),
   ]);
 }
-
-/* ---------------------------------------------------------------------------
- * Backend section
- * ------------------------------------------------------------------------- */
 
 function buildBackendSection() {
   const backendSelect = h(
@@ -156,10 +133,6 @@ function buildBackendSection() {
   };
 }
 
-/* ---------------------------------------------------------------------------
- * Voice section
- * ------------------------------------------------------------------------- */
-
 function buildVoiceSection() {
   const select = h("select", { class: "settings-select", name: "voice" });
   const status = h("p", { class: "settings-status", role: "status", "aria-live": "polite" });
@@ -209,10 +182,6 @@ function buildVoiceSection() {
   };
 }
 
-/* ---------------------------------------------------------------------------
- * Status section
- * ------------------------------------------------------------------------- */
-
 function buildStatusSection() {
   const list = h("dl", { class: "settings-status-grid" });
   const element = h(
@@ -252,10 +221,6 @@ function statusRow(label, value, tone) {
     h("dd", { class: "settings-status-value" }, value)
   );
 }
-
-/* ---------------------------------------------------------------------------
- * Async refresh helpers
- * ------------------------------------------------------------------------- */
 
 async function refreshStatus({ statusSection, backendSection, signal }) {
   try {

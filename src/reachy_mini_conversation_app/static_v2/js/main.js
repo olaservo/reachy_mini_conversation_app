@@ -1,11 +1,4 @@
-/**
- * Modern web UI bootstrap.
- *
- * Wires the persistent shell (logo + settings gear) to the hash router and
- * mounts views on demand. Keeping this file intentionally tiny: every view
- * lives in its own module under ``views/`` and owns its own teardown via the
- * router's per-view AbortSignal.
- */
+/** Bootstrap: wire the shell header to the hash router and mount views on demand. */
 
 import { ROUTES } from "./constants.js";
 import { createRouter } from "./router.js";
@@ -23,10 +16,6 @@ function boot() {
 
   const router = createRouter(
     {
-      // Home needs ``navigate`` so a personality click can transition to
-      // the Talk view straight after applying. Talk and Settings only
-      // navigate via the shell header (back button + gear), so they do
-      // not need a router reference of their own.
       [ROUTES.HOME]: (ctx) => mountHomeView({ ...ctx, navigate: router.navigate }),
       [ROUTES.TALK]: (ctx) => mountTalkView(ctx),
       [ROUTES.SETTINGS]: (ctx) => mountSettingsView(ctx),
@@ -34,11 +23,6 @@ function boot() {
     { fallback: ROUTES.HOME, outlet }
   );
 
-  // The settings gear lives in the shell ``<header>`` (see index.html) and
-  // is wired up here so navigation goes through the same router as the rest
-  // of the app rather than via a raw ``<a href="#/settings">``. Clicking the
-  // gear toggles between Settings and Home so users can use the same control
-  // to enter and leave the settings panel.
   const gear = $('[data-action="open-settings"]');
   if (gear) {
     gear.addEventListener("click", () => {
@@ -47,7 +31,6 @@ function boot() {
     });
   }
 
-  // Brand link returns to home, regardless of which view is currently active.
   const brand = $('[data-action="go-home"]');
   if (brand) {
     brand.addEventListener("click", (event) => {
@@ -56,19 +39,11 @@ function boot() {
     });
   }
 
-  // The Back button lives in the header (next to the brand) so it has a
-  // consistent place across views instead of floating inside the page
-  // content. It is only meaningful when the user is "deeper" than the
-  // home grid - currently just on the Talk view - so we toggle ``hidden``
-  // accordingly. ``data-action`` keeps the wiring in this single file.
   const back = $('[data-action="go-back"]');
   if (back) {
     back.addEventListener("click", () => router.navigate(ROUTES.HOME));
   }
 
-  // Reflect the active route on the header controls. The gear becomes
-  // "active" on Settings (rotated icon + tinted bg) and the back button
-  // shows up on Talk.
   function syncHeaderForRoute() {
     const route = window.location.hash;
     if (gear) {

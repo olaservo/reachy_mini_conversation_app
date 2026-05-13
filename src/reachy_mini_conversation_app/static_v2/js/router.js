@@ -1,30 +1,6 @@
 /**
- * Minimal hash router.
- *
- * Hash-based routing avoids any need for HTML5 ``History`` API server-side
- * support: every internal link uses ``#/foo``, the browser does not refetch,
- * and we listen to ``hashchange`` to swap the active view.
- *
- * Usage:
- *
- *   const router = createRouter({
- *     "#/":         () => mountHome(outlet),
- *     "#/talk":     () => mountTalk(outlet),
- *     "#/settings": () => mountSettings(outlet),
- *   }, { fallback: "#/" });
- *   router.start();
- *
- * The route handler is called every time the matching route becomes active.
- * It receives a ``ViewContext`` carrying the outlet element and a "signal"
- * that fires when the view is being unmounted (so the handler can clean up
- * timers, SSE subscriptions, event listeners, ...).
- */
-
-/**
- * @typedef {object} ViewContext
- * @property {HTMLElement} outlet  The container the view should populate.
- * @property {AbortSignal}  signal  Aborted right before the next view mounts.
- * @property {string}      route   The matched route key (e.g. "#/talk").
+ * Minimal hash router. Handlers receive a ViewContext { outlet, signal, route };
+ * signal is aborted when the view is replaced so cleanups (timers, SSE) can use it.
  */
 
 export function createRouter(routes, { fallback = "#/", outlet } = {}) {
@@ -55,8 +31,6 @@ export function createRouter(routes, { fallback = "#/", outlet } = {}) {
     try {
       routes[route](ctx);
     } catch (error) {
-      // A view crashing should not nuke the whole app: render a tiny error
-      // surface and let the user navigate away.
       console.error("Route handler failed for", route, error);
       outlet.replaceChildren(renderRouteError(route, error));
     }
@@ -72,8 +46,6 @@ export function createRouter(routes, { fallback = "#/", outlet } = {}) {
   return {
     start() {
       window.addEventListener("hashchange", dispatch);
-      // Normalise on boot: if the hash is missing or unknown, replace it so
-      // the URL reflects the actual view we are about to render.
       const target = resolve();
       if (window.location.hash !== target) {
         window.location.replace(target);

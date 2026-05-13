@@ -1,19 +1,4 @@
-/**
- * Home view: grid of personality cards + "Custom" card.
- *
- * Flow:
- *   1. Fetch ``/personalities`` to build the card grid (one per profile,
- *      avatar resolved via ``avatarFor``).
- *   2. Click on a card -> apply the personality (POST /personalities/apply)
- *      then navigate to ``#/talk`` so the user can start speaking.
- *   3. Click on the "Custom" card -> open a modal asking for a name and
- *      instructions, save it as a new profile (with the default tool set
- *      so the robot keeps its full expressivity), then apply + navigate.
- *
- * The view owns no global state. All async work is cancelled via the
- * AbortSignal provided by the router so a fast tab-switch never leaks
- * pending fetches.
- */
+/** Home view: grid of personality cards. Select one to apply it and navigate to Talk. */
 
 import {
   applyPersonality,
@@ -30,9 +15,6 @@ import {
 import { $, clear, h, prettifyProfileName } from "../ui.js";
 import { openCustomProfileModal } from "../components/profile-modal.js";
 
-/**
- * @param {{ outlet: HTMLElement, signal: AbortSignal, navigate: (route: string) => void }} ctx
- */
 export async function mountHomeView({ outlet, signal, navigate }) {
   const view = h(
     "section",
@@ -81,10 +63,6 @@ export async function mountHomeView({ outlet, signal, navigate }) {
       })
     );
   }
-  // The Custom card is always last, never disabled by a profile lock (the
-  // lock concerns the active profile, not the ability to author new ones on
-  // disk; the user just won't be able to apply the new profile until the
-  // lock is lifted).
   grid.appendChild(buildCustomCard({ onClick: handleCustomClick }));
 
   if (lockedTo) {
@@ -116,10 +94,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
         name: created.name,
         instructions: created.instructions,
         tools_text: DEFAULT_TOOLS.join("\n"),
-        // Voice is left unset on purpose: the backend falls back to the
-        // current backend's default voice, and the user can fine-tune it
-        // from the Settings view if they want.
-        voice: "",
+        voice: "", // falls back to backend default; user can change in Settings
       });
       if (signal.aborted) return;
       const newName = saveResult?.value || created.name;
@@ -154,9 +129,8 @@ function buildPersonalityCard({ name, isActive, disabled, onSelect }) {
         src: avatarFor(stripUserPrefix(name)),
         alt: "",
         loading: "lazy",
-        // Decorative for screen readers (the card label below already
-        // names the personality).
-        "aria-hidden": "true",
+        "aria-hidden": "true", // card label already names the personality
+
         class: !hasAvatar ? "personality-card__avatar--fallback" : null,
       })
     ),
@@ -165,7 +139,6 @@ function buildPersonalityCard({ name, isActive, disabled, onSelect }) {
   );
 }
 
-/** Discreet "active" badge, top-right of the card. */
 function checkBadge() {
   const badge = h("span", { class: "personality-card__badge", "aria-hidden": "true" });
   badge.innerHTML = `
