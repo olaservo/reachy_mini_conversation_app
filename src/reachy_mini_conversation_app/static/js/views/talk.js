@@ -21,8 +21,13 @@ const CAPTION_BY_STATE = Object.freeze({
 });
 
 export async function mountTalkView({ outlet, signal }) {
-  const orb = createOrb({ initialState: ORB_STATES.CONNECTING });
   const caption = h("p", { class: "talk__caption" }, CAPTION_BY_STATE[ORB_STATES.CONNECTING]);
+  const orb = createOrb({
+    initialState: ORB_STATES.CONNECTING,
+    onStateChange: (state) => {
+      caption.textContent = CAPTION_BY_STATE[state] || "";
+    },
+  });
   const profileBadge = h("span", { class: "talk__profile" }, "");
 
   const view = h(
@@ -42,13 +47,11 @@ export async function mountTalkView({ outlet, signal }) {
   const subscription = subscribeConversationEvents({
     onReady: () => {
       orb.setState(ORB_STATES.IDLE);
-      caption.textContent = CAPTION_BY_STATE[ORB_STATES.IDLE];
     },
     onActivity: (reason) => {
       const next = mapActivityToState(reason);
       if (next == null) return;
       orb.setState(next);
-      caption.textContent = CAPTION_BY_STATE[next] || "";
     },
     onError: () => {
       // EventSource auto-reconnects; we surface the error so callers can show a hint.

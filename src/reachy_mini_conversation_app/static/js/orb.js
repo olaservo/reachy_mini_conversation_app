@@ -36,7 +36,7 @@ export function mapActivityToState(reason) {
 const IDLE_FALLBACK_MS = 1500;
 
 /** Build the orb DOM. Returns { root, setState, applyActivity, dispose }. */
-export function createOrb({ initialState = ORB_STATES.IDLE } = {}) {
+export function createOrb({ initialState = ORB_STATES.IDLE, onStateChange } = {}) {
   let currentState = initialState;
   let idleTimer = null;
 
@@ -76,6 +76,7 @@ export function createOrb({ initialState = ORB_STATES.IDLE } = {}) {
     root.dataset.state = nextState;
     root.style.setProperty("--glow", GLOW_BY_STATE[nextState]);
     bumpIdleTimer(nextState);
+    onStateChange?.(nextState);
   }
 
   function bumpIdleTimer(state) {
