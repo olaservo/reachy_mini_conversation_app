@@ -51,19 +51,116 @@ from reachy_mini_conversation_app.headless_personality_ui import mount_personali
 
 try:
     # FastAPI is provided by the Reachy Mini Apps runtime
-    from fastapi import FastAPI, Response
+    from fastapi import FastAPI, Request, Response
     from pydantic import BaseModel
-    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
     from starlette.staticfiles import StaticFiles
 except Exception:  # pragma: no cover - only loaded when settings_app is used
     FastAPI = object  # type: ignore
     FileResponse = object  # type: ignore
     JSONResponse = object  # type: ignore
+    StreamingResponse = object  # type: ignore
     StaticFiles = object  # type: ignore
     BaseModel = object  # type: ignore
+    Request = object  # type: ignore
+
+from reachy_mini_conversation_app.conversation_events import ConversationEventBus
 
 
 logger = logging.getLogger(__name__)
+
+# Toggle which web UI is served by the settings app.
+#
+# The legacy UI lives in ``static/`` and is unchanged. A new web UI lives in
+# ``static_v2/`` and adds a personality picker (with avatars) plus a live
+# conversation orb fed by the ``/conversation_events`` SSE endpoint. The
+# ``REACHY_MINI_UI`` environment variable lets users opt into either one
+# without code changes:
+#
+#   unset / "modern"   -> serve ``static_v2/`` (default on this branch)
+#   "legacy"           -> serve ``static/``
+#
+# Defaulting to the modern UI on this branch keeps day-to-day testing easy
+# while the ``legacy`` switch acts as an instant escape hatch if anything
+# regresses.
+_UI_MODE_ENV = "REACHY_MINI_UI"
+_UI_LEGACY_DIR = "static"
+_UI_MODERN_DIR = "static_v2"
+
+
+def _select_ui_dir_name() -> str:
+    """Return the static folder name to serve, based on ``REACHY_MINI_UI``."""
+    mode = (os.environ.get(_UI_MODE_ENV) or "").strip().lower()
+    return _UI_LEGACY_DIR if mode == "legacy" else _UI_MODERN_DIR
+
+
+# Interval at which the SSE stream emits a comment line to keep the connection
+# alive across intermediate proxies. 15s is well below the typical 60s idle
+# timeout while staying invisible to the client.
+_SSE_KEEPALIVE_INTERVAL_SECONDS = 15.0
+
+
+def _detach_framework_root_routes(app: "FastAPI") -> None:
+    """Remove ``GET /`` and ``mount('/static')`` routes pre-registered by the framework.
+
+    The Reachy Mini Apps framework wires its own root + ``/static`` mount in
+    ``ReachyMiniApp.__init__`` (see ``reachy_mini/apps/app.py``). It points at
+    the per-instance ``static/`` folder which, for the modern UI, is exactly
+    what we want to override. We can only drop those routes after the
+    framework has run, hence this surgical cleanup right before we register
+    our own.
+
+    Routes are matched conservatively (``path == "/"`` or ``path == "/static"``)
+    so we never strip routes added by other apps or by user customisations
+    targeting different paths.
+    """
+    routes = getattr(app, "router", None)
+    routes = getattr(routes, "routes", None) if routes else getattr(app, "routes", None)
+    if routes is None:
+        return
+    survivors = []
+    for route in routes:
+        path = getattr(route, "path", None)
+        if path == "/" or path == "/static":
+            logger.debug("detaching framework-provided route %r (%s)", path, type(route).__name__)
+            continue
+        survivors.append(route)
+    routes[:] = survivors
+
+
+async def _conversation_events_stream(
+    bus: ConversationEventBus,
+    request: "Request",
+):
+    """Yield Server-Sent Events for one conversation event subscriber.
+
+    Format:
+        event: activity
+        data: <reason>
+
+    Plus periodic ``: keep-alive`` comment lines so the connection survives
+    long idle periods. The stream terminates cleanly when the client closes
+    the connection (detected via ``Request.is_disconnected``).
+    """
+    queue, unsubscribe = bus.subscribe()
+    try:
+        # Hint the browser to retry quickly on transient drops, and tell the
+        # client we are alive right now so it can flip to the "connected"
+        # state without waiting for the first real event.
+        yield "retry: 2000\n\n"
+        yield "event: ready\ndata: connected\n\n"
+
+        while True:
+            if await request.is_disconnected():
+                return
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=_SSE_KEEPALIVE_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            yield f"event: activity\ndata: {event}\n\n"
+    finally:
+        unsubscribe()
 
 LOCAL_PLAYER_BACKEND = (
     getattr(MediaBackend, "LOCAL", None)
@@ -124,6 +221,24 @@ class LocalStream:
         self._settings_initialized = False
         self._asyncio_loop = None
         self._active_backend_name = get_backend_choice()
+
+        # Bus that fans out conversation activity events to SSE subscribers
+        # (consumed by the modern web UI orb). The bus is permanently attached
+        # to the handler so it works regardless of which UI is selected; the
+        # legacy UI simply ignores the ``/conversation_events`` endpoint.
+        self._event_bus = ConversationEventBus()
+        self._attach_event_bus_to_handler()
+
+    def _attach_event_bus_to_handler(self) -> None:
+        """Wire the event bus into the realtime handler if it supports it.
+
+        Older or alternative handlers may not implement ``set_activity_observer``
+        (it is opt-in on ``BaseRealtimeHandler``). In that case the bus stays
+        live but receives no events, and SSE clients just see keep-alives.
+        """
+        setter = getattr(self.handler, "set_activity_observer", None)
+        if callable(setter):
+            setter(self._event_bus.publish)
 
     # ---- Settings UI ----
     def _read_env_lines(self, env_path: Path) -> list[str]:
@@ -345,12 +460,32 @@ class LocalStream:
         if self._settings_app is None:
             return
 
-        static_dir = Path(__file__).parent / "static"
+        # The folder is selected via REACHY_MINI_UI (see ``_select_ui_dir_name``).
+        # We also fall back to the legacy folder if the modern bundle is missing
+        # for some reason (e.g. trimmed install) so the settings page never 404s.
+        ui_dir_name = _select_ui_dir_name()
+        static_dir = Path(__file__).parent / ui_dir_name
+        if not (static_dir / "index.html").exists() and ui_dir_name != _UI_LEGACY_DIR:
+            logger.warning("UI folder %r missing, falling back to %r", ui_dir_name, _UI_LEGACY_DIR)
+            static_dir = Path(__file__).parent / _UI_LEGACY_DIR
         index_file = static_dir / "index.html"
+        logger.info("Serving settings UI from %s", static_dir)
+
+        # The Reachy Mini Apps framework (see ``reachy_mini.apps.app``) eagerly
+        # registers ``GET /`` and ``mount("/static", ...)`` against the per-app
+        # ``static/`` folder before this method runs. FastAPI dispatches on the
+        # first matching route, so without the cleanup below our routes would
+        # be silently shadowed and the user would still see the legacy UI even
+        # though our log says we are serving ``static_v2``. We strip those
+        # framework-registered routes first, then enregister ours pointing at
+        # the bundle selected via ``REACHY_MINI_UI``.
+        _detach_framework_root_routes(self._settings_app)
 
         if hasattr(self._settings_app, "mount"):
             try:
-                # Serve /static/* assets
+                # Serve /static/* assets from the selected UI folder. The mount
+                # path stays ``/static`` regardless of which folder is active so
+                # the HTML can use stable absolute URLs.
                 self._settings_app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
             except Exception:
                 pass
@@ -426,6 +561,26 @@ class LocalStream:
             except Exception:
                 ready = False
             return JSONResponse({"ready": ready})
+
+        # GET /conversation_events -> Server-Sent Events stream of conversation
+        # activity transitions (user_speech_started, response_created,
+        # assistant_audio_delta, ...). Consumed by the modern web UI orb.
+        # The stream emits raw activity reasons; the client maps them onto its
+        # own visual states. This keeps the backend a dumb event tap and lets
+        # the UI evolve its mapping without backend changes.
+        event_bus = self._event_bus
+
+        @self._settings_app.get("/conversation_events")
+        async def _conversation_events(request: Request) -> StreamingResponse:
+            return StreamingResponse(
+                _conversation_events_stream(event_bus, request),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",  # disable proxy buffering (e.g. nginx)
+                    "Connection": "keep-alive",
+                },
+            )
 
         # POST /openai_api_key -> set/persist key
         @self._settings_app.post("/openai_api_key")

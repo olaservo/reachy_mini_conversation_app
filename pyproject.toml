@@ -95,6 +95,10 @@ where = ["src"]
 reachy_mini_conversation_app = [
   "images/*",
   "static/*",
+  # Modern web UI assets (HTML / JS / CSS / SVG avatars). Served by
+  # ``console.LocalStream`` when ``REACHY_MINI_UI`` selects the modern bundle
+  # (default on the ``feat/new-minimal-ui`` branch).
+  "static_v2/**/*",
   ".env.example",
   "demos/**/*.txt",
   "prompts_library/*.txt",

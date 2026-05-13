@@ -6,7 +6,7 @@ import random
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Final, Tuple, ClassVar, Optional
+from typing import Any, Final, Tuple, ClassVar, Callable, Optional
 from datetime import datetime
 
 import numpy as np
@@ -165,6 +165,12 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._turn_response_created_at: float | None = None
         self._turn_first_audio_at: float | None = None
 
+        # Optional observer notified on every conversation activity transition
+        # (see ``_mark_activity``). Used by external surfaces (e.g. the SSE
+        # bridge in ``console.py``) to broadcast state to UI clients without
+        # coupling this handler to any specific transport.
+        self._activity_observer: Callable[[str], None] | None = None
+
     @staticmethod
     def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any]:
         """Remove bulky transport-only fields before echoing tool output back to the model."""
@@ -239,6 +245,24 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         """Record non-idle conversation activity for the idle timer."""
         self.last_activity_time = asyncio.get_event_loop().time()
         logger.debug("last activity time updated to %s (%s)", self.last_activity_time, reason)
+        # Notify any external observer of the transition. The observer must be
+        # cheap and non-blocking - it runs synchronously inside the realtime
+        # event loop. Errors are swallowed on purpose: a faulty observer must
+        # never break the conversation.
+        observer = self._activity_observer
+        if observer is not None:
+            try:
+                observer(reason)
+            except Exception:
+                logger.debug("activity observer raised (ignored)", exc_info=True)
+
+    def set_activity_observer(self, observer: Callable[[str], None] | None) -> None:
+        """Register or clear an observer called on every activity transition.
+
+        See ``_mark_activity`` for the list of activity reasons emitted by this
+        handler. Pass ``None`` to detach a previously registered observer.
+        """
+        self._activity_observer = observer
 
     def copy(self) -> "BaseRealtimeHandler":
         """Create a copy of the handler."""
