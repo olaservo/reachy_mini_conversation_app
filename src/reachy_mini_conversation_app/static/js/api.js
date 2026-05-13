@@ -40,17 +40,9 @@ async function request(method, url, { body, timeoutMs = DEFAULT_TIMEOUT_MS } = {
 }
 
 export const getStatus = () => request("GET", "/status");
-export const getReady = () => request("GET", "/ready");
 
 export const saveBackendConfig = (payload) =>
   request("POST", "/backend_config", { body: payload });
-export const saveOpenAiKey = (key) =>
-  request("POST", "/openai_api_key", { body: { openai_api_key: key } });
-export const validateOpenAiKey = (key) =>
-  request("POST", "/validate_api_key", {
-    body: { openai_api_key: key },
-    timeoutMs: 12000, // upstream call to api.openai.com, can be slower
-  });
 
 export const listPersonalities = () => request("GET", "/personalities");
 export const loadPersonality = (name) =>
