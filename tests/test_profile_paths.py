@@ -9,7 +9,6 @@ import reachy_mini_conversation_app.config as config_mod
 import reachy_mini_conversation_app.prompts as prompts_mod
 import reachy_mini_conversation_app.headless_personality as headless_mod
 from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, config
-from reachy_mini_conversation_app.gradio_personality import PersonalityUI
 from reachy_mini_conversation_app.headless_personality import (
     DEFAULT_OPTION,
     read_tools_for,
@@ -91,21 +90,6 @@ def test_builtin_default_profile_tools_load_for_ui() -> None:
 
     assert read_tools_for(DEFAULT_OPTION) == expected
 
-
-def test_gradio_personality_ui_prefills_builtin_default_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Gradio should show the built-in default profile tools on first render."""
-    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
-
-    ui = PersonalityUI()
-    ui.create_components()
-
-    expected_tools = read_tools_for(ui.DEFAULT_OPTION)
-    expected_enabled = [
-        line.strip() for line in expected_tools.splitlines() if line.strip() and not line.strip().startswith("#")
-    ]
-
-    assert ui.tools_txt_ta.value == expected_tools
-    assert sorted(ui.available_tools_cg.value) == sorted(expected_enabled)
 
 
 def test_session_voice_defaults_follow_selected_backend(monkeypatch: pytest.MonkeyPatch) -> None:

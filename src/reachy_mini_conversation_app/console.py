@@ -1,8 +1,7 @@
-"""Bidirectional local audio stream with optional settings UI.
+"""Bidirectional local audio stream with optional web settings UI.
 
-In headless mode there is no Gradio UI. If the selected backend is missing its
-required API key, a settings page is served via the Reachy Mini Apps settings
-server so users can pick a backend and provide any missing credentials.
+If the selected backend is missing its required API key, a settings page is
+served via the Reachy Mini Apps settings server so users can configure it.
 """
 
 import os

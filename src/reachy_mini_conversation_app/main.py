@@ -1,18 +1,14 @@
 """Entrypoint for the Reachy Mini conversation app."""
 
-import os
 import sys
 import time
 import asyncio
 import argparse
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Optional
 from pathlib import Path
 
-import gradio as gr
 from fastapi import FastAPI
-from fastrtc import Stream
-from gradio.utils import get_space
 
 from reachy_mini import ReachyMini, ReachyMiniApp
 from reachy_mini_conversation_app.utils import (
@@ -22,12 +18,6 @@ from reachy_mini_conversation_app.utils import (
     initialize_camera_and_vision,
     log_connection_troubleshooting,
 )
-
-
-def update_chatbot(chatbot: List[Dict[str, Any]], response: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Update the chatbot with AdditionalOutputs."""
-    chatbot.append(response)
-    return chatbot
 
 
 def main() -> None:
@@ -48,8 +38,6 @@ def run(
     from reachy_mini_conversation_app.moves import MovementManager
     from reachy_mini_conversation_app.config import (
         HF_BACKEND,
-        GEMINI_BACKEND,
-        OPENAI_BACKEND,
         HF_LOCAL_CONNECTION_MODE,
         config,
         is_gemini_model,
@@ -129,21 +117,6 @@ def run(
             logger.error("Please check your configuration and try again.")
             sys.exit(1)
 
-    # Auto-enable Gradio in simulation mode (both MuJoCo for daemon and mockup-sim for desktop app)
-    status = robot.client.get_status()
-    if isinstance(status, dict):
-        simulation_enabled = status.get("simulation_enabled", False)
-        mockup_sim_enabled = status.get("mockup_sim_enabled", False)
-    else:
-        simulation_enabled = getattr(status, "simulation_enabled", False)
-        mockup_sim_enabled = getattr(status, "mockup_sim_enabled", False)
-
-    is_simulation = simulation_enabled or mockup_sim_enabled
-
-    if is_simulation and not args.gradio and not args.ui:
-        logger.info("Simulation mode detected. Automatically enabling gradio flag.")
-        args.gradio = True
-
     try:
         camera_worker, vision_processor = initialize_camera_and_vision(args, robot)
     except CameraVisionInitializationError as e:
@@ -164,18 +137,6 @@ def run(
         vision_processor=vision_processor,
         head_wobbler=head_wobbler,
     )
-    current_file_path = os.path.dirname(os.path.abspath(__file__))
-    logger.debug(f"Current file absolute path: {current_file_path}")
-    chatbot = gr.Chatbot(
-        type="messages",
-        resizable=True,
-        avatar_images=(
-            os.path.join(current_file_path, "images", "user_avatar.png"),
-            os.path.join(current_file_path, "images", "reachymini_avatar.png"),
-        ),
-    )
-    logger.debug(f"Chatbot avatar images: {chatbot.avatar_images}")
-
     if is_gemini_model():
         from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
 
@@ -185,7 +146,6 @@ def run(
         )
         handler = GeminiLiveHandler(
             deps,
-            gradio_mode=args.gradio,
             instance_path=instance_path,
             startup_voice=startup_settings.voice,
         )
@@ -205,7 +165,6 @@ def run(
         )
         handler = HuggingFaceRealtimeHandler(
             deps,
-            gradio_mode=args.gradio,
             instance_path=instance_path,
             startup_voice=startup_settings.voice,
         )  # type: ignore[assignment]
@@ -218,77 +177,37 @@ def run(
         )
         handler = OpenaiRealtimeHandler(
             deps,
-            gradio_mode=args.gradio,
             instance_path=instance_path,
             startup_voice=startup_settings.voice,
         )  # type: ignore[assignment]
 
-    stream_manager: gr.Blocks | LocalStream | None = None
+    stream_manager: LocalStream | None = None
     own_ui_server = None
 
-    if args.gradio:
-        from reachy_mini_conversation_app.gradio_personality import PersonalityUI
+    effective_settings_app = settings_app
+    if args.ui and settings_app is None:
+        effective_settings_app = FastAPI()
 
-        personality_ui = PersonalityUI()
-        personality_ui.create_components()
-        additional_inputs: list[Any] = [chatbot, *personality_ui.additional_inputs_ordered()]
+    stream_manager = LocalStream(
+        handler,
+        robot,
+        settings_app=effective_settings_app,
+        instance_path=instance_path,
+    )
 
-        if config.BACKEND_PROVIDER in {OPENAI_BACKEND, GEMINI_BACKEND}:
-            uses_gemini_backend = is_gemini_model()
-            api_key_textbox = gr.Textbox(
-                label="GEMINI_API_KEY" if uses_gemini_backend else "OPENAI API Key",
-                type="password",
-                value=(os.getenv("GEMINI_API_KEY") if uses_gemini_backend else os.getenv("OPENAI_API_KEY"))
-                if not get_space()
-                else "",
-            )
-            additional_inputs.insert(1, api_key_textbox)
+    if args.ui and settings_app is None and effective_settings_app is not None:
+        import uvicorn
 
-        stream = Stream(
-            handler=handler,
-            mode="send-receive",
-            modality="audio",
-            additional_inputs=additional_inputs,
-            additional_outputs=[chatbot],
-            additional_outputs_handler=update_chatbot,
-            ui_args={"title": "Talk with Reachy Mini"},
+        # Register routes now so uvicorn serves them from the first request.
+        # launch() will call _init_settings_ui_if_needed() again but the
+        # _settings_initialized guard makes it a no-op.
+        stream_manager._init_settings_ui_if_needed()
+
+        own_ui_server = uvicorn.Server(
+            uvicorn.Config(effective_settings_app, host="0.0.0.0", port=7860, log_level="warning")
         )
-        stream_manager = stream.ui
-        if not settings_app:
-            app = FastAPI()
-        else:
-            app = settings_app
-
-        personality_ui.wire_events(handler, stream_manager)
-
-        app = gr.mount_gradio_app(app, stream.ui, path="/")
-    else:
-        # In standalone --ui mode, create our own FastAPI app and serve it via uvicorn.
-        # The framework path passes settings_app from outside; don't override it.
-        effective_settings_app = settings_app
-        if args.ui and settings_app is None:
-            effective_settings_app = FastAPI()
-
-        stream_manager = LocalStream(
-            handler,
-            robot,
-            settings_app=effective_settings_app,
-            instance_path=instance_path,
-        )
-
-        if args.ui and settings_app is None and effective_settings_app is not None:
-            import uvicorn
-
-            # Register routes now so uvicorn serves them from the first request.
-            # launch() will call _init_settings_ui_if_needed() again but the
-            # _settings_initialized guard makes it a no-op.
-            stream_manager._init_settings_ui_if_needed()
-
-            own_ui_server = uvicorn.Server(
-                uvicorn.Config(effective_settings_app, host="0.0.0.0", port=7860, log_level="warning")
-            )
-            threading.Thread(target=own_ui_server.run, daemon=True, name="ui-server").start()
-            logger.info("Web UI available at http://localhost:7860")
+        threading.Thread(target=own_ui_server.run, daemon=True, name="ui-server").start()
+        logger.info("Web UI available at http://localhost:7860")
 
     # Each async service → its own thread/loop
     movement_manager.start()

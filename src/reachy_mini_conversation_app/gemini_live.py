@@ -18,7 +18,6 @@ from typing import Any, Dict, List, Final, Tuple, Literal, Optional
 from datetime import datetime
 
 import numpy as np
-import gradio as gr
 from google import genai
 from fastrtc import AdditionalOutputs, wait_for_item, audio_to_int16
 from google.genai import types
@@ -144,7 +143,6 @@ class GeminiLiveHandler(ConversationHandler):
     def __init__(
         self,
         deps: ToolDependencies,
-        gradio_mode: bool = False,
         instance_path: Optional[str] = None,
         startup_voice: Optional[str] = None,
     ):
@@ -156,7 +154,6 @@ class GeminiLiveHandler(ConversationHandler):
         )
 
         self.deps = deps
-        self.gradio_mode = gradio_mode
         self.instance_path = instance_path
         self._voice_override: str | None = _resolve_gemini_startup_voice(startup_voice)
 
@@ -184,10 +181,9 @@ class GeminiLiveHandler(ConversationHandler):
         self._listening_state = False
 
     def copy(self) -> "GeminiLiveHandler":
-        """Create a copy of the handler."""
+        """Return a fresh handler, preserving deps and voice override."""
         return GeminiLiveHandler(
             self.deps,
-            self.gradio_mode,
             self.instance_path,
             startup_voice=self._voice_override,
         )
@@ -287,20 +283,9 @@ class GeminiLiveHandler(ConversationHandler):
     async def start_up(self) -> None:
         """Start the handler with retries on unexpected closure."""
         gemini_api_key = config.GEMINI_API_KEY
-        if self.gradio_mode and not gemini_api_key:
-            await self.wait_for_args()  # type: ignore[no-untyped-call]
-            args = list(self.latest_args)
-            textbox_api_key = args[3] if len(args) > 3 and len(args[3]) > 0 else None
-            if textbox_api_key is not None:
-                gemini_api_key = textbox_api_key
-                self._key_source = "textbox"
-                self._provided_api_key = textbox_api_key
-            else:
-                gemini_api_key = config.GEMINI_API_KEY
-        else:
-            if not gemini_api_key or not gemini_api_key.strip():
-                logger.warning("GEMINI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
-                gemini_api_key = "DUMMY"
+        if not gemini_api_key or not gemini_api_key.strip():
+            logger.warning("GEMINI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
+            gemini_api_key = "DUMMY"
 
         self.client = genai.Client(api_key=gemini_api_key)
 
@@ -491,24 +476,9 @@ class GeminiLiveHandler(ConversationHandler):
                     {
                         "role": "assistant",
                         "content": console_content,
-                        "metadata": {
-                            "title": f"🛠️ Used tool {bg_tool.tool_name}",
-                            "status": "done",
-                        },
                     },
                 ),
             )
-
-            if bg_tool.tool_name == "camera" and self.deps.camera_worker is not None:
-                np_img = self.deps.camera_worker.get_latest_frame()
-                if np_img is not None:
-                    rgb_frame = np.ascontiguousarray(np_img[..., ::-1])
-                else:
-                    rgb_frame = None
-                img = gr.Image(value=rgb_frame)
-                await self.output_queue.put(
-                    AdditionalOutputs({"role": "assistant", "content": img}),
-                )
 
         except Exception as e:
             logger.warning("Error sending tool result to Gemini: %s", e)
@@ -602,10 +572,6 @@ class GeminiLiveHandler(ConversationHandler):
                                             if len(audio_array) == 0:
                                                 continue
 
-                                            if self.gradio_mode and self.deps.head_wobbler is not None:
-                                                self.deps.head_wobbler.feed(
-                                                    base64.b64encode(audio_bytes).decode("utf-8")
-                                                )
 
                                             self.last_activity_time = asyncio.get_event_loop().time()
 

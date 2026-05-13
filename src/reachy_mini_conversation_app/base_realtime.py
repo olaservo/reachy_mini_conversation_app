@@ -11,7 +11,6 @@ from datetime import datetime
 from collections.abc import Callable
 
 import numpy as np
-import gradio as gr
 from openai import AsyncOpenAI
 from fastrtc import AdditionalOutputs, wait_for_item, audio_to_int16
 from pydantic import Field, BaseModel
@@ -111,7 +110,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
     def __init__(
         self,
         deps: ToolDependencies,
-        gradio_mode: bool = False,
         instance_path: Optional[str] = None,
         startup_voice: Optional[str] = None,
     ):
@@ -135,7 +133,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self.last_activity_time = asyncio.get_event_loop().time()
         self.start_time = asyncio.get_event_loop().time()
         self.is_idle_tool_call = False
-        self.gradio_mode = gradio_mode
         self.instance_path = instance_path
         self._voice_override: str | None = self._normalize_startup_voice(startup_voice)
         self._realtime_connect_query: dict[str, str] = {}
@@ -258,10 +255,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._activity_observer = observer
 
     def copy(self) -> "BaseRealtimeHandler":
-        """Create a copy of the handler."""
+        """Return a fresh handler of the same type, preserving deps and voice override."""
         return type(self)(
             self.deps,
-            self.gradio_mode,
             self.instance_path,
             startup_voice=self._voice_override,
         )
@@ -591,11 +587,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     {
                         "role": "assistant",
                         "content": json.dumps(tool_result_for_model),
-                        # Gradio UI metadata.status accept only "pending" and "done". Do not accept bg.tool.status values.
-                        "metadata": {
-                            "title": f"🛠️ Used tool {bg_tool.tool_name}",
-                            "status": "done",
-                        },
                     },
                 ),
             )
@@ -633,24 +624,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     logger.info(
                         "Added camera image to conversation jpeg_bytes=%s",
                         jpeg_bytes,
-                    )
-
-                if self.deps.camera_worker is not None:
-                    np_img = self.deps.camera_worker.get_latest_frame()
-                    if np_img is not None:
-                        # Camera frames are BGR; reverse channels without requiring OpenCV in core installs.
-                        rgb_frame = np_img[:, :, ::-1].copy() if np_img.ndim == 3 and np_img.shape[-1] == 3 else np_img
-                    else:
-                        rgb_frame = None
-                    img = gr.Image(value=rgb_frame)
-
-                    await self.output_queue.put(
-                        AdditionalOutputs(
-                            {
-                                "role": "assistant",
-                                "content": img,
-                            },
-                        ),
                     )
 
             # If this tool call was triggered by an idle signal, don't make the robot speak.
@@ -827,8 +800,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     if event.type == "response.output_audio.delta":
                         decoded_pcm_bytes = base64.b64decode(event.delta)
                         decoded_pcm = np.frombuffer(decoded_pcm_bytes, dtype=np.int16).reshape(1, -1)
-                        if self.gradio_mode and self.deps.head_wobbler is not None:
-                            self.deps.head_wobbler.feed_pcm(decoded_pcm, self.output_sample_rate)
                         self._mark_activity("assistant_audio_delta")
                         if self._turn_user_done_at is not None and self._turn_first_audio_at is None:
                             self._turn_first_audio_at = time.perf_counter()

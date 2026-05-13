@@ -585,9 +585,6 @@ def test_local_stream_launch_waits_for_manual_openai_key_without_download(
     monkeypatch.setenv("BACKEND_PROVIDER", "openai")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    fake_client_ctor = MagicMock(side_effect=AssertionError("launch() should not try to download an OpenAI key"))
-    monkeypatch.setitem(sys.modules, "gradio_client", SimpleNamespace(Client=fake_client_ctor))
-
     media = SimpleNamespace(
         start_recording=MagicMock(),
         start_playing=MagicMock(),
@@ -603,7 +600,6 @@ def test_local_stream_launch_waits_for_manual_openai_key_without_download(
 
     stream.launch()
 
-    fake_client_ctor.assert_not_called()
     init_settings_ui.assert_called_once()
     media.start_recording.assert_not_called()
     media.start_playing.assert_not_called()
