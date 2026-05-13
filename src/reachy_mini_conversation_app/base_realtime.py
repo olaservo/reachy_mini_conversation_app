@@ -8,7 +8,6 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Final, Tuple, ClassVar, Optional
 from datetime import datetime
-from collections.abc import Callable
 
 import numpy as np
 from openai import AsyncOpenAI
@@ -163,10 +162,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._turn_response_created_at: float | None = None
         self._turn_first_audio_at: float | None = None
 
-        # Notified on every activity transition; kept None until an external
-        # surface (e.g. the SSE bridge) wires itself in via set_activity_observer.
-        self._activity_observer: Callable[[str], None] | None = None
-
     @staticmethod
     def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any]:
         """Remove bulky transport-only fields before echoing tool output back to the model."""
@@ -238,21 +233,15 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         return await wait_for_item(self.output_queue)  # type: ignore[no-any-return]
 
     def _mark_activity(self, reason: str) -> None:
-        """Record non-idle conversation activity for the idle timer."""
+        """Refresh the idle timestamp and notify the activity observer."""
         self.last_activity_time = asyncio.get_event_loop().time()
         logger.debug("last activity time updated to %s (%s)", self.last_activity_time, reason)
-        # Observer runs synchronously in the event loop; errors are swallowed so
-        # a faulty observer never breaks the conversation.
         observer = self._activity_observer
         if observer is not None:
             try:
                 observer(reason)
             except Exception:
                 logger.debug("activity observer raised (ignored)", exc_info=True)
-
-    def set_activity_observer(self, observer: Callable[[str], None] | None) -> None:
-        """Attach or detach an activity observer. Pass None to clear."""
-        self._activity_observer = observer
 
     def copy(self) -> "BaseRealtimeHandler":
         """Return a fresh handler of the same type, preserving deps and voice override."""

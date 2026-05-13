@@ -207,10 +207,22 @@ class GeminiLiveHandler(ConversationHandler):
 
         await self.output_queue.put(AdditionalOutputs({"role": role, "content": transcript}))
 
+    def _mark_activity(self, reason: str) -> None:
+        """Refresh the idle timestamp and notify the activity observer."""
+        self.last_activity_time = asyncio.get_event_loop().time()
+        logger.debug("last activity time updated to %s (%s)", self.last_activity_time, reason)
+        observer = self._activity_observer
+        if observer is not None:
+            try:
+                observer(reason)
+            except Exception:
+                logger.debug("activity observer raised (ignored)", exc_info=True)
+
     async def _mark_model_response_started(self) -> None:
         """Switch out of user-listening mode when the model begins responding."""
         await self._flush_transcript_chunks("user", self._pending_user_transcript_chunks)
         self._set_listening_state(False)
+        self._mark_activity("response_created")
 
     async def _handle_interruption(self) -> None:
         """Stop current playback and preserve any transcript already spoken."""
@@ -469,6 +481,7 @@ class GeminiLiveHandler(ConversationHandler):
                 name=bg_tool.tool_name,
                 response=tool_result,
             )
+            self._mark_activity("tool_result_ready")
             await self.session.send_tool_response(function_responses=[function_response])
 
             await self.output_queue.put(
@@ -572,7 +585,7 @@ class GeminiLiveHandler(ConversationHandler):
                                             if len(audio_array) == 0:
                                                 continue
 
-                                            self.last_activity_time = asyncio.get_event_loop().time()
+                                            self._mark_activity("assistant_audio_delta")
 
                                             await self.output_queue.put(
                                                 (GEMINI_OUTPUT_SAMPLE_RATE, audio_array),
@@ -584,6 +597,7 @@ class GeminiLiveHandler(ConversationHandler):
                                     logger.debug("User transcript chunk: %s", transcript)
                                     self._pending_user_transcript_chunks.append(transcript)
                                     self._set_listening_state(True)
+                                    self._mark_activity("user_transcription_delta")
 
                                 # Handle output transcription (model speech)
                                 if content.output_transcription and content.output_transcription.text:
@@ -594,10 +608,12 @@ class GeminiLiveHandler(ConversationHandler):
 
                                 # Turn complete
                                 if content.turn_complete:
+                                    self._mark_activity("assistant_transcript_done")
                                     await self._handle_turn_complete()
 
                             # Handle tool calls
                             if response.tool_call:
+                                self._mark_activity("tool_call_received")
                                 await self._handle_tool_call(response)
 
                     except Exception as e:
