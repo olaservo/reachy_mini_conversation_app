@@ -28,7 +28,7 @@ import {
   avatarFor,
 } from "../constants.js";
 import { $, clear, h, prettifyProfileName } from "../ui.js";
-import { openCustomProfileModal } from "../components/custom-profile-modal.js";
+import { openCustomProfileModal } from "../components/profile-modal.js";
 
 /**
  * @param {{ outlet: HTMLElement, signal: AbortSignal, navigate: (route: string) => void }} ctx

@@ -13,7 +13,7 @@
  *   4. Home view (personality grid + cards)
  *   5. Talk view (orb wrapper, caption, back button)
  *   6. Settings view (sections, forms, status grid)
- *   7. Modal (custom-profile-modal)
+ *   7. Modal (profile-modal)
  *   8. Conversation orb (port of mobile app's orb.css)
  * ========================================================================== */
 
@@ -710,7 +710,7 @@ button {
 
 
 /* ----------------------------------------------------------------------------
- * 7. Modal (custom-profile-modal)
+ * 7. Modal (profile-modal)
  * -------------------------------------------------------------------------- */
 
 .modal-overlay {
