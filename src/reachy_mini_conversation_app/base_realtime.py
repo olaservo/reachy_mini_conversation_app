@@ -308,7 +308,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             try:
                 instructions = self._get_session_instructions()
                 voice = self.get_current_voice()
-            except Exception as e:
+            except BaseException as e:  # catch SystemExit from prompt loader without crashing
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
 

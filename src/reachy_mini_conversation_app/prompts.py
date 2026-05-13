@@ -1,4 +1,5 @@
 import re
+import sys
 import logging
 from pathlib import Path
 
@@ -81,12 +82,13 @@ def get_session_instructions() -> str:
                 # Expand [<name>] placeholders with content from prompts library
                 expanded_instructions = _expand_prompt_includes(instructions)
                 return expanded_instructions
-            raise RuntimeError(f"Profile '{profile}' has empty {INSTRUCTIONS_FILENAME}")
-        raise RuntimeError(f"Profile '{profile}' has no {INSTRUCTIONS_FILENAME}")
-    except RuntimeError:
-        raise
+            logger.error(f"Profile '{profile}' has empty {INSTRUCTIONS_FILENAME}")
+            sys.exit(1)
+        logger.error(f"Profile {profile} has no {INSTRUCTIONS_FILENAME}")
+        sys.exit(1)
     except Exception as e:
-        raise RuntimeError(f"Failed to load instructions from profile '{profile}': {e}") from e
+        logger.error(f"Failed to load instructions from profile '{profile}': {e}")
+        sys.exit(1)
 
 
 def get_session_voice(default: str | None = None) -> str:
