@@ -20,7 +20,7 @@ from reachy_mini_conversation_app.startup_settings import (
     StartupSettings,
     load_startup_settings_into_runtime,
 )
-from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
+from reachy_mini_conversation_app.personality_routes import mount_personality_routes
 
 
 def test_clear_audio_queue_prefers_clear_player_when_available() -> None:
@@ -428,7 +428,7 @@ def test_status_reports_direct_hf_ws_url_as_ready(
     assert data["can_proceed_with_hf"] is True
 
 
-def test_headless_personality_routes_return_gemini_voices_when_backend_selected(
+def test_personality_routes_return_gemini_voices_when_backend_selected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Headless personality UI should expose Gemini voices when Gemini is selected."""
@@ -446,7 +446,7 @@ def test_headless_personality_routes_return_gemini_voices_when_backend_selected(
     assert response.json() == GEMINI_AVAILABLE_VOICES
 
 
-def test_headless_personality_routes_load_builtin_default_tools() -> None:
+def test_personality_routes_load_builtin_default_tools() -> None:
     """Headless personality UI should expose built-in default tools on initial load."""
     app = FastAPI()
     handler = MagicMock()
@@ -462,7 +462,7 @@ def test_headless_personality_routes_load_builtin_default_tools() -> None:
     assert "camera" in data["enabled_tools"]
 
 
-def test_headless_personality_routes_apply_voice_accepts_query_param() -> None:
+def test_personality_routes_apply_voice_accepts_query_param() -> None:
     """Headless personality UI should apply a voice change from a POST query param."""
     app = FastAPI()
     handler = MagicMock()
@@ -495,7 +495,7 @@ def test_headless_personality_routes_apply_voice_accepts_query_param() -> None:
         loop.close()
 
 
-def test_headless_personality_routes_persist_startup_with_voice_override() -> None:
+def test_personality_routes_persist_startup_with_voice_override() -> None:
     """Saving a startup personality should persist the active manual voice override."""
     app = FastAPI()
     handler = MagicMock()

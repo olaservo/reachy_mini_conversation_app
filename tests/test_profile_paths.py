@@ -7,9 +7,9 @@ import pytest
 
 import reachy_mini_conversation_app.config as config_mod
 import reachy_mini_conversation_app.prompts as prompts_mod
-import reachy_mini_conversation_app.headless_personality as headless_mod
+import reachy_mini_conversation_app.personality as headless_mod
 from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, config
-from reachy_mini_conversation_app.headless_personality import (
+from reachy_mini_conversation_app.personality import (
     DEFAULT_OPTION,
     read_tools_for,
     resolve_profile_dir,

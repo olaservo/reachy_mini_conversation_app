@@ -1,9 +1,8 @@
-"""Settings UI routes for headless personality management.
+"""FastAPI routes for personality and voice management.
 
-Exposes REST endpoints on the provided FastAPI settings app. The
-implementation schedules backend actions (apply personality, fetch voices)
-onto the running LocalStream asyncio loop using the supplied get_loop
-callable to avoid cross-thread issues.
+Exposes REST endpoints on the provided FastAPI app. Backend actions
+(apply personality, fetch voices) are scheduled onto the running
+LocalStream asyncio loop via the supplied get_loop callable.
 """
 
 from __future__ import annotations
@@ -19,8 +18,7 @@ from .config import (
     get_default_voice_for_backend,
     get_available_voices_for_backend,
 )
-from .conversation_handler import ConversationHandler
-from .headless_personality import (
+from .personality import (
     DEFAULT_OPTION,
     _sanitize_name,
     _write_profile,
@@ -30,6 +28,7 @@ from .headless_personality import (
     resolve_profile_dir,
     read_instructions_for,
 )
+from .conversation_handler import ConversationHandler
 
 
 logger = logging.getLogger(__name__)
@@ -131,7 +130,7 @@ def mount_personality_routes(
             return JSONResponse({"ok": False, "error": "invalid_name"}, status_code=400)  # type: ignore
         try:
             logger.info(
-                "Headless save: name=%r voice=%r instr_len=%d tools_len=%d",
+                "save: name=%r voice=%r instr_len=%d tools_len=%d",
                 name_s,
                 voice,
                 len(instructions),
@@ -180,7 +179,7 @@ def mount_personality_routes(
         v = str(data.get("voice") or get_default_voice_for_backend())
         try:
             logger.info(
-                "Headless save_raw: name=%r voice=%r instr_len=%d tools_len=%d", name_s, v, len(instr), len(tools)
+                "save_raw: name=%r voice=%r instr_len=%d tools_len=%d", name_s, v, len(instr), len(tools)
             )
             _write_profile(name_s, instr, tools, v)
             value = f"user_personalities/{name_s}"
@@ -197,7 +196,7 @@ def mount_personality_routes(
         try:
             normalized_voice = voice or get_default_voice_for_backend()
             logger.info(
-                "Headless save_raw(GET): name=%r voice=%r instr_len=%d tools_len=%d",
+                "save_raw(GET): name=%r voice=%r instr_len=%d tools_len=%d",
                 name_s,
                 normalized_voice,
                 len(instructions),
@@ -260,7 +259,7 @@ def mount_personality_routes(
             return status, voice_override
 
         try:
-            logger.info("Headless apply: requested name=%r", sel_name)
+            logger.info("apply: requested name=%r", sel_name)
             fut = asyncio.run_coroutine_threadsafe(_do_apply(), loop)
             status, voice_override = fut.result(timeout=10)
             persisted_choice = _startup_choice()

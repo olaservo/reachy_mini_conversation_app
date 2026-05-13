@@ -1,10 +1,7 @@
-"""Headless personality management (console-based).
+"""Personality (profile) data layer.
 
-Provides an interactive CLI to browse, preview, apply, create and edit
-"personalities" (profiles) when running without Gradio.
-
-This module is intentionally not shared with the Gradio implementation to
-avoid coupling and keep responsibilities clear for headless mode.
+Provides functions to list, read, and write personality profiles stored
+on disk. No HTTP or framework dependencies — importable anywhere.
 """
 
 from __future__ import annotations
