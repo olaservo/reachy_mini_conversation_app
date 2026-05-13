@@ -138,7 +138,6 @@ async def test_partial_transcription_uses_latest_snapshot(monkeypatch: Any) -> N
     assert handler.input_transcript_chunks_by_item.deltas == ["Hey, how are you?"]
 
 
-
 @pytest.mark.asyncio
 async def test_emit_skips_idle_signal_while_response_active(monkeypatch: Any) -> None:
     """Idle tools should not trigger while a response is still active."""
@@ -191,7 +190,6 @@ def test_handler_normalizes_hf_voice_case(monkeypatch: Any) -> None:
     handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
 
     assert handler.get_current_voice() == "Serena"
-
 
 
 @pytest.mark.asyncio

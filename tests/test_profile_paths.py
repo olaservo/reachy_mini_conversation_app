@@ -91,7 +91,6 @@ def test_builtin_default_profile_tools_load_for_ui() -> None:
     assert read_tools_for(DEFAULT_OPTION) == expected
 
 
-
 def test_session_voice_defaults_follow_selected_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     """Session voice should fall back to the active backend default."""
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "gemini")

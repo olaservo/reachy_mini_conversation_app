@@ -572,7 +572,6 @@ class GeminiLiveHandler(ConversationHandler):
                                             if len(audio_array) == 0:
                                                 continue
 
-
                                             self.last_activity_time = asyncio.get_event_loop().time()
 
                                             await self.output_queue.put(

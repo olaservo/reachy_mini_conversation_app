@@ -625,7 +625,6 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
     assert len(warnings) == 1
 
 
-
 @pytest.mark.asyncio
 async def test_run_realtime_session_propagates_session_update_failure(monkeypatch: Any) -> None:
     """A failed session.update must abort startup instead of looking like a clean session exit."""
