@@ -10,7 +10,7 @@ import { mountSettingsView } from "./views/settings.js";
 function boot() {
   const outlet = $("#view-outlet");
   if (!outlet) {
-    console.error("static_v2: #view-outlet missing from index.html");
+    console.error("#view-outlet missing from index.html");
     return;
   }
 

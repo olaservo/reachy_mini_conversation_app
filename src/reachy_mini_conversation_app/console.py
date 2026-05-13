@@ -1,4 +1,4 @@
-"""Bidirectional local audio stream with optional settings UI (static_v2/).
+"""Bidirectional local audio stream with optional settings UI.
 
 In headless mode there is no Gradio UI. If the selected backend is missing its
 required API key, a settings page is served via the Reachy Mini Apps settings
@@ -440,7 +440,7 @@ class LocalStream:
         if self._settings_app is None:
             return
 
-        static_dir = Path(__file__).parent / "static_v2"
+        static_dir = Path(__file__).parent / "static"
         index_file = static_dir / "index.html"
         logger.info("Serving settings UI from %s", static_dir)
 
