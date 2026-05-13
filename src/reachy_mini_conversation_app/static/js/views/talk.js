@@ -12,7 +12,7 @@ const SSE_ENDPOINT = "/conversation_events";
 
 /** Human-readable label below the orb for each visual state. */
 const CAPTION_BY_STATE = Object.freeze({
-  [ORB_STATES.IDLE]: "Tap to talk - the robot is listening passively.",
+  [ORB_STATES.IDLE]: "Ready — just speak to Reachy.",
   [ORB_STATES.CONNECTING]: "Connecting to the conversation event stream…",
   [ORB_STATES.LISTENING]: "Listening…",
   [ORB_STATES.THINKING]: "Thinking…",
