@@ -140,7 +140,7 @@ def run(
 
     is_simulation = simulation_enabled or mockup_sim_enabled
 
-    if is_simulation and not args.gradio:
+    if is_simulation and not args.gradio and not args.ui:
         logger.info("Simulation mode detected. Automatically enabling gradio flag.")
         args.gradio = True
 
@@ -224,6 +224,7 @@ def run(
         )  # type: ignore[assignment]
 
     stream_manager: gr.Blocks | LocalStream | None = None
+    own_ui_server = None
 
     if args.gradio:
         from reachy_mini_conversation_app.gradio_personality import PersonalityUI
@@ -262,13 +263,32 @@ def run(
 
         app = gr.mount_gradio_app(app, stream.ui, path="/")
     else:
-        # In headless mode, wire settings_app + instance_path to console LocalStream
+        # In standalone --ui mode, create our own FastAPI app and serve it via uvicorn.
+        # The framework path passes settings_app from outside; don't override it.
+        effective_settings_app = settings_app
+        if args.ui and settings_app is None:
+            effective_settings_app = FastAPI()
+
         stream_manager = LocalStream(
             handler,
             robot,
-            settings_app=settings_app,
+            settings_app=effective_settings_app,
             instance_path=instance_path,
         )
+
+        if args.ui and settings_app is None and effective_settings_app is not None:
+            import uvicorn
+
+            # Register routes now so uvicorn serves them from the first request.
+            # launch() will call _init_settings_ui_if_needed() again but the
+            # _settings_initialized guard makes it a no-op.
+            stream_manager._init_settings_ui_if_needed()
+
+            own_ui_server = uvicorn.Server(
+                uvicorn.Config(effective_settings_app, host="0.0.0.0", port=7860, log_level="warning")
+            )
+            threading.Thread(target=own_ui_server.run, daemon=True, name="ui-server").start()
+            logger.info("Web UI available at http://localhost:7860")
 
     # Each async service → its own thread/loop
     movement_manager.start()
@@ -295,6 +315,9 @@ def run(
     except KeyboardInterrupt:
         logger.info("Keyboard interruption in main thread... closing server.")
     finally:
+        if own_ui_server is not None:
+            own_ui_server.should_exit = True
+
         movement_manager.stop()
         head_wobbler.stop()
         if camera_worker:
