@@ -1,13 +1,8 @@
-"""Bidirectional local audio stream with optional settings UI.
+"""Bidirectional local audio stream with optional settings UI (static_v2/).
 
-In headless mode, there is no Gradio UI. If the selected backend is missing
-its required API key, we expose a minimal settings page via the Reachy Mini
-Apps settings server so users can pick a backend and provide any missing
-credentials.
-
-The settings UI is served from this package's ``static/`` folder. It persists
-the selected backend and any provided API keys into the app instance's ``.env``
-file when available.
+In headless mode there is no Gradio UI. If the selected backend is missing its
+required API key, a settings page is served via the Reachy Mini Apps settings
+server so users can pick a backend and provide any missing credentials.
 """
 
 import os
@@ -67,17 +62,6 @@ except Exception:  # pragma: no cover - only loaded when settings_app is used
     Request = object  # type: ignore
 
 logger = logging.getLogger(__name__)
-
-# REACHY_MINI_UI env var: "legacy" → static/, anything else → static_v2/ (default).
-_UI_MODE_ENV = "REACHY_MINI_UI"
-_UI_LEGACY_DIR = "static"
-_UI_MODERN_DIR = "static_v2"
-
-
-def _select_ui_dir_name() -> str:
-    mode = (os.environ.get(_UI_MODE_ENV) or "").strip().lower()
-    return _UI_LEGACY_DIR if mode == "legacy" else _UI_MODERN_DIR
-
 
 _SSE_KEEPALIVE_INTERVAL_SECONDS = 15.0  # below typical 60s proxy idle timeout
 
@@ -456,14 +440,7 @@ class LocalStream:
         if self._settings_app is None:
             return
 
-        # The folder is selected via REACHY_MINI_UI (see ``_select_ui_dir_name``).
-        # We also fall back to the legacy folder if the modern bundle is missing
-        # for some reason (e.g. trimmed install) so the settings page never 404s.
-        ui_dir_name = _select_ui_dir_name()
-        static_dir = Path(__file__).parent / ui_dir_name
-        if not (static_dir / "index.html").exists() and ui_dir_name != _UI_LEGACY_DIR:
-            logger.warning("UI folder %r missing, falling back to %r", ui_dir_name, _UI_LEGACY_DIR)
-            static_dir = Path(__file__).parent / _UI_LEGACY_DIR
+        static_dir = Path(__file__).parent / "static_v2"
         index_file = static_dir / "index.html"
         logger.info("Serving settings UI from %s", static_dir)
 

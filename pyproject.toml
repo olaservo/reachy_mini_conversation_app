@@ -94,7 +94,6 @@ where = ["src"]
 [tool.setuptools.package-data]
 reachy_mini_conversation_app = [
   "images/*",
-  "static/*",
   "static_v2/**/*",
   ".env.example",
   "demos/**/*.txt",
