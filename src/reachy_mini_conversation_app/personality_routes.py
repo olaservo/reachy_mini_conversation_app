@@ -178,9 +178,7 @@ def mount_personality_routes(
         tools = str(data.get("tools_text") or "")
         v = str(data.get("voice") or get_default_voice_for_backend())
         try:
-            logger.info(
-                "save_raw: name=%r voice=%r instr_len=%d tools_len=%d", name_s, v, len(instr), len(tools)
-            )
+            logger.info("save_raw: name=%r voice=%r instr_len=%d tools_len=%d", name_s, v, len(instr), len(tools))
             _write_profile(name_s, instr, tools, v)
             value = f"user_personalities/{name_s}"
             choices = [DEFAULT_OPTION, *list_personalities()]
