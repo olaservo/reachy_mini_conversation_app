@@ -1,21 +1,14 @@
 /**
- * Talk view: conversation orb + state caption.
- *
- * The view subscribes to the SSE event stream on mount and unsubscribes on
- * unmount via the AbortSignal carried by the router context. The orb is the
- * sole source of UI state - this module just glues SSE -> orb and renders
- * a small caption below.
- *
- * No audio is captured or played in the browser: audio I/O happens entirely
- * inside the Python process talking to the realtime model. This view is a
- * read-only "watch what the robot is doing" surface.
+ * Talk view: conversation orb driven by the SSE activity stream.
+ * Audio I/O runs entirely in Python; this view is a read-only status surface.
  */
 
 import { listPersonalities } from "../api.js";
 import { BUILT_IN_DEFAULT_OPTION, ORB_STATES } from "../constants.js";
-import { subscribeConversationEvents } from "../conversation-events.js";
 import { createOrb, mapActivityToState } from "../orb.js";
 import { h, prettifyProfileName } from "../ui.js";
+
+const SSE_ENDPOINT = "/conversation_events";
 
 /** Human-readable label below the orb for each visual state. */
 const CAPTION_BY_STATE = Object.freeze({
@@ -27,18 +20,11 @@ const CAPTION_BY_STATE = Object.freeze({
   [ORB_STATES.ERROR]: "Conversation event stream disconnected.",
 });
 
-/**
- * @param {{ outlet: HTMLElement, signal: AbortSignal }} ctx
- */
 export async function mountTalkView({ outlet, signal }) {
   const orb = createOrb({ initialState: ORB_STATES.CONNECTING });
   const caption = h("p", { class: "talk__caption" }, CAPTION_BY_STATE[ORB_STATES.CONNECTING]);
   const profileBadge = h("span", { class: "talk__profile" }, "");
 
-  // The back affordance lives in the global header (see main.js +
-  // index.html); it shows up automatically when this route is active.
-  // Keeping it out of the view body lets the orb have the whole stage
-  // and avoids two competing "back" anchors (one per view, one global).
   const view = h(
     "section",
     { class: "view view--talk" },
@@ -48,15 +34,11 @@ export async function mountTalkView({ outlet, signal }) {
   );
   outlet.replaceChildren(view);
 
-  // Best-effort lookup of the active profile name to label the surface.
   fetchActiveProfileLabel().then((label) => {
     if (signal.aborted || !label) return;
     profileBadge.textContent = label;
   });
 
-  // Drive the orb from the SSE stream. ``mapActivityToState`` lives on the
-  // orb so it can decide which states are worth animating; this view just
-  // forwards the raw reasons.
   const subscription = subscribeConversationEvents({
     onReady: () => {
       orb.setState(ORB_STATES.IDLE);
@@ -69,7 +51,7 @@ export async function mountTalkView({ outlet, signal }) {
       caption.textContent = CAPTION_BY_STATE[next] || "";
     },
     onError: () => {
-      // ``EventSource`` will keep retrying on its own; we just hint the user.
+      // EventSource auto-reconnects; we surface the error so callers can show a hint.
       orb.setState(ORB_STATES.ERROR);
       caption.textContent = CAPTION_BY_STATE[ORB_STATES.ERROR];
     },
@@ -90,4 +72,31 @@ async function fetchActiveProfileLabel() {
   } catch {
     return "";
   }
+}
+
+function subscribeConversationEvents({ onActivity, onReady, onError } = {}) {
+  if (typeof onActivity !== "function") {
+    throw new TypeError("subscribeConversationEvents: onActivity is required");
+  }
+
+  const source = new EventSource(SSE_ENDPOINT);
+
+  source.addEventListener("activity", (ev) => {
+    const reason = (ev.data || "").trim();
+    if (reason) onActivity(reason);
+  });
+
+  if (typeof onReady === "function") {
+    source.addEventListener("ready", () => onReady());
+  }
+
+  if (typeof onError === "function") {
+    source.addEventListener("error", (err) => onError(err));
+  }
+
+  return {
+    close() {
+      source.close();
+    },
+  };
 }
