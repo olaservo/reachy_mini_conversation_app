@@ -180,6 +180,89 @@ button {
   gap: 8px;
 }
 
+/* Personality reminder pinned just below the topbar, top-left of the
+   viewport. Avatar disc on the left, two-row text column on the right,
+   mirroring the mobile app's ``IdentityChipBar`` (avatar + identity
+   stack). Kept outside the header so the topbar layout (lead + gear)
+   stays untouched. Borderless / no background so it reads as an inline
+   label rather than a control. */
+.app-shell__personality {
+  position: fixed;
+  top: 90px;
+  left: 32px;
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  min-width: 0;
+  max-width: 320px;
+}
+
+.app-shell__personality[hidden] {
+  display: none;
+}
+
+/* Two-row text column: small uppercase label, then the active profile
+   name. Avatar sits to the left now, so the column aligns its rows to
+   the left edge. */
+.app-shell__personality-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.app-shell__personality-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.app-shell__personality-name {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+/* Avatar disc on the left: same well + oversized SVG treatment as
+   ``.app-shell__brand-mark`` so the surface reads as one family.
+   Larger than the brand mark for visual presence outside the topbar. */
+.app-shell__personality-avatar {
+  position: relative;
+  display: inline-block;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--bg-soft);
+  overflow: visible;
+  flex-shrink: 0;
+}
+
+.app-shell__personality-avatar img {
+  position: absolute;
+  width: 140%;
+  height: auto;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -57%);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  display: block;
+}
+
 /* Shared style for the round icon buttons in the header (back + gear).
    Factored so both feel like the same control: same disc, same hover,
    same focus ring, same press feedback. */

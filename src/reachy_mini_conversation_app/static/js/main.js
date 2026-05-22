@@ -2,6 +2,11 @@
 
 import { ROUTES } from "./constants.js";
 import { createRouter } from "./router.js";
+import {
+  hidePersonalityBadge,
+  mountPersonalityBadge,
+  showPersonalityBadge,
+} from "./personality-badge.js";
 import { $, h } from "./ui.js";
 import { mountHomeView } from "./views/home.js";
 import { mountTalkView } from "./views/talk.js";
@@ -44,6 +49,8 @@ function boot() {
     back.addEventListener("click", () => router.navigate(ROUTES.HOME));
   }
 
+  mountPersonalityBadge(document);
+
   function syncHeaderForRoute() {
     const route = window.location.hash;
     if (gear) {
@@ -54,6 +61,8 @@ function boot() {
     if (back) {
       back.hidden = route !== ROUTES.TALK;
     }
+    if (route === ROUTES.TALK) showPersonalityBadge();
+    else hidePersonalityBadge();
   }
   window.addEventListener("hashchange", syncHeaderForRoute);
   syncHeaderForRoute();

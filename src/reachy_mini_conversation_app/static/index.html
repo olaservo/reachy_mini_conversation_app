@@ -48,6 +48,21 @@
         </svg>
       </button>
     </header>
+    <div
+      class="app-shell__personality"
+      data-component="personality-badge"
+      role="status"
+      aria-live="polite"
+      hidden
+    >
+      <span class="app-shell__personality-avatar" aria-hidden="true">
+        <img src="/static/avatars/default.svg" alt="" draggable="false" />
+      </span>
+      <div class="app-shell__personality-text">
+        <span class="app-shell__personality-label">Personality</span>
+        <span class="app-shell__personality-name"></span>
+      </div>
+    </div>
     <main id="view-outlet" class="app-shell__outlet" role="main"></main>
   </body>
 </html>

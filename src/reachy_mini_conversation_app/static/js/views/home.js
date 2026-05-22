@@ -14,6 +14,8 @@ import {
 } from "../constants.js";
 import { $, clear, h, prettifyProfileName } from "../ui.js";
 import { openCustomProfileModal } from "../components/profile-modal.js";
+import { setPendingApply } from "../pending-apply.js";
+import { setPersonality } from "../personality-badge.js";
 
 export async function mountHomeView({ outlet, signal, navigate }) {
   const view = h(
@@ -70,18 +72,14 @@ export async function mountHomeView({ outlet, signal, navigate }) {
     status.classList.add("is-warning");
   }
 
-  async function handleSelection(name) {
-    status.classList.remove("is-warning", "is-error");
-    status.textContent = `Applying "${prettifyProfileName(name)}"…`;
-    try {
-      await applyPersonality(name, { persist: false });
-      if (signal.aborted) return;
-      navigate(ROUTES.TALK);
-    } catch (error) {
-      if (signal.aborted) return;
-      status.textContent = `Failed to apply: ${error?.message || error}`;
-      status.classList.add("is-error");
-    }
+  function handleSelection(name) {
+    // Optimistic header update so the badge already reads the chosen
+    // personality while the apply request is still in flight.
+    setPersonality(name);
+    // Fire-and-forget: hand the apply promise to talk.js so the user sees
+    // the orb in CONNECTING immediately instead of waiting on home.
+    setPendingApply({ name, promise: applyPersonality(name, { persist: false }) });
+    navigate(ROUTES.TALK);
   }
 
   async function handleCustomClick() {
@@ -89,6 +87,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
     if (!created || signal.aborted) return;
     status.classList.remove("is-warning", "is-error");
     status.textContent = `Saving "${created.name}"…`;
+    let newName;
     try {
       const saveResult = await savePersonality({
         name: created.name,
@@ -97,15 +96,16 @@ export async function mountHomeView({ outlet, signal, navigate }) {
         voice: "", // falls back to backend default; user can change in Settings
       });
       if (signal.aborted) return;
-      const newName = saveResult?.value || created.name;
-      await applyPersonality(newName, { persist: false });
-      if (signal.aborted) return;
-      navigate(ROUTES.TALK);
+      newName = saveResult?.value || created.name;
     } catch (error) {
       if (signal.aborted) return;
       status.textContent = `Failed to create profile: ${error?.message || error}`;
       status.classList.add("is-error");
+      return;
     }
+    setPersonality(newName);
+    setPendingApply({ name: newName, promise: applyPersonality(newName, { persist: false }) });
+    navigate(ROUTES.TALK);
   }
 }
 
