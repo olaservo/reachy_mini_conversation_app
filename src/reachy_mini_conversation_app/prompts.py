@@ -3,6 +3,7 @@ import sys
 import logging
 from typing import Any
 from pathlib import Path
+from datetime import datetime
 
 from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, config, get_default_voice_for_backend
 
@@ -13,6 +14,20 @@ logger = logging.getLogger(__name__)
 PROMPTS_LIBRARY_DIRECTORY = Path(__file__).parent / "prompts"
 INSTRUCTIONS_FILENAME = "instructions.txt"
 VOICE_FILENAME = "voice.txt"
+
+
+def _current_date_line() -> str:
+    """One-line current-date anchor for the model, from the local system clock.
+
+    LLMs don't reliably know today's date; this gives them an anchor so they can
+    resolve "yesterday" / "a few weeks ago" into concrete dates for recall_memories.
+    Best-effort: any failure degrades to "unknown" rather than crashing.
+    """
+    try:
+        return f"The current date is {datetime.now().strftime('%Y-%m-%d')}."
+    except Exception as e:  # pragma: no cover - clock failures are exceptional
+        logger.warning("Could not read current date: %s", e)
+        return "The current date is unknown."
 
 
 def _expand_prompt_includes(content: str) -> str:
@@ -88,6 +103,9 @@ def get_session_instructions(memory_manager: "Any | None" = None) -> str:
             if instructions:
                 # Expand [<name>] placeholders with content from prompts library
                 expanded_instructions = _expand_prompt_includes(instructions)
+
+                # Anchor the model to today's date (for date-aware recall).
+                expanded_instructions += "\n\n" + _current_date_line()
 
                 # Append persistent memory block if available
                 if memory_manager is not None:

@@ -516,4 +516,4 @@ class TestMemoryBlock:
         assert "## MEMORY" in block
         assert "chess" in block.lower()
         assert "recall_memory" in block
-        assert "recall_topic" in block
+        assert "recall_memories" in block

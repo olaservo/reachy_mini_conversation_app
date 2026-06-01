@@ -383,7 +383,7 @@ class MemoryManager:
     ) -> list[dict[str, Any]]:
         """List memory summaries, optionally filtered by tag and/or kind.
 
-        Each entry is ``{id, summary, tags, kind, pinned, created, superseded_by}``.
+        Each entry is ``{id, summary, tags, kind, pinned, created, sources, superseded_by}``.
         Dropped from default output: any memory with a non-null ``superseded_by`` —
         the replacement is what the dreamer (and live LLM) care about.
         """
@@ -411,6 +411,7 @@ class MemoryManager:
                     "kind": meta.get("kind"),
                     "pinned": bool(meta.get("pinned", False)),
                     "created": meta.get("created"),
+                    "sources": list(meta.get("sources") or []),
                     "superseded_by": meta.get("superseded_by"),
                 }
             )
@@ -509,8 +510,9 @@ class MemoryManager:
             "\n\n## MEMORY\n"
             "The index below is automatically curated between sessions. "
             "Use `recall_memory(id)` to read a specific memory (and its related neighbours), "
-            "`recall_topic(tag)` to load a cluster, or `short_term_memory()` to re-read the "
-            "current session.\n\n" + content
+            "`recall_memories(tag=..., date_from=..., date_to=...)` to filter by topic and/or "
+            "conversation date, or `short_term_memory()` to re-read the current session. "
+            "Dates always refer to when something was discussed.\n\n" + content
         )
 
     # ------------------------------------------------------------------

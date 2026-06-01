@@ -3,6 +3,7 @@
 import logging
 from typing import Any, Dict
 
+from reachy_mini_conversation_app.memory.dates import present_memory
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
 
 
@@ -61,11 +62,11 @@ class RecallMemory(Tool):
         related_payload = []
         for rid in related_ids:
             try:
-                related_payload.append(manager.read_memory(rid))
+                related_payload.append(present_memory(manager.read_memory(rid)))
             except FileNotFoundError:
                 logger.warning("recall_memory: related %s missing", rid)
 
         return {
-            "memory": target,
+            "memory": present_memory(target),
             "related": related_payload,
         }

@@ -10,22 +10,12 @@ from __future__ import annotations
 from typing import Any
 from datetime import datetime, timezone, timedelta
 
+from reachy_mini_conversation_app.memory.dates import event_date
+
 
 RECENT_WINDOW = timedelta(days=30)
 OLDER_TAG_LIMIT = 15
-
-
-def _parse_created(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        # Canonical form from dump: YYYY-MM-DDTHH:MM:SSZ
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    except ValueError:
-        try:
-            return datetime.fromisoformat(value.rstrip("Z"))
-        except ValueError:
-            return None
+_MIN_DATE = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _fmt_entry(mem: dict[str, Any]) -> str:
@@ -71,8 +61,8 @@ def render_index(memories: list[dict[str, Any]], now: datetime | None = None) ->
     recent: list[dict[str, Any]] = []
     older: list[dict[str, Any]] = []
     for mem in non_core:
-        created = _parse_created(mem.get("created"))
-        if created is None or created >= cutoff:
+        when = event_date(mem)
+        if when is None or when >= cutoff:
             recent.append(mem)
         else:
             older.append(mem)
@@ -92,7 +82,7 @@ def render_index(memories: list[dict[str, Any]], now: datetime | None = None) ->
         groups = _group_by_primary_tag(recent)
         for tag in sorted(groups):
             lines.append(f"### {tag}")
-            for mem in sorted(groups[tag], key=lambda m: m.get("created") or m["id"]):
+            for mem in sorted(groups[tag], key=lambda m: event_date(m) or _MIN_DATE):
                 lines.append(_fmt_entry(mem))
     else:
         lines.append("(none)")
@@ -114,7 +104,7 @@ def render_index(memories: list[dict[str, Any]], now: datetime | None = None) ->
         if remaining:
             lines.append(f"- … +{remaining} more tags")
         lines.append("")
-        lines.append("Use `recall_topic(tag)` to load.")
+        lines.append("Use `recall_memories(tag=...)` to load (also filters by date_from/date_to).")
     else:
         lines.append("(none)")
 

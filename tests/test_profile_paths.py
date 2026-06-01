@@ -81,7 +81,10 @@ def test_prompts_load_from_compact_builtin_profile(monkeypatch: pytest.MonkeyPat
         .strip()
     )
 
-    assert prompts_mod.get_session_instructions() == expected
+    # Instructions now carry a current-date anchor appended after the profile text.
+    instructions = prompts_mod.get_session_instructions()
+    assert instructions.startswith(expected)
+    assert "The current date is " in instructions
     assert read_instructions_for("mad_scientist_assistant") == expected
 
 
