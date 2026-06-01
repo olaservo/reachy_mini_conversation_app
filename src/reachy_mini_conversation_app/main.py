@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import asyncio
+import inspect
 import argparse
 import threading
 from typing import Any, Dict, List, Optional
@@ -177,14 +178,18 @@ def run(
     )
     current_file_path = os.path.dirname(os.path.abspath(__file__))
     logger.debug(f"Current file absolute path: {current_file_path}")
-    chatbot = gr.Chatbot(
-        type="messages",
-        resizable=True,
-        avatar_images=(
+    chatbot_kwargs: dict[str, Any] = {
+        "resizable": True,
+        "avatar_images": (
             os.path.join(current_file_path, "images", "user_avatar.png"),
             os.path.join(current_file_path, "images", "reachymini_avatar.png"),
         ),
-    )
+    }
+    # gradio >= 6 dropped the Chatbot ``type`` arg ("messages" is the only format
+    # now); gradio 5.x still defaults to the legacy "tuples" format and needs it.
+    if "type" in inspect.signature(gr.Chatbot.__init__).parameters:
+        chatbot_kwargs["type"] = "messages"
+    chatbot = gr.Chatbot(**chatbot_kwargs)
     logger.debug(f"Chatbot avatar images: {chatbot.avatar_images}")
 
     if is_gemini_model():
