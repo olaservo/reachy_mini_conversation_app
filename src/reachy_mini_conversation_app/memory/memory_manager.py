@@ -180,9 +180,7 @@ class MemoryManager:
             path = self._pending_logs_dir / f"{base}_{suffix}.log"
             suffix += 1
         self._session_log_path = path
-        self._session_log_header = (
-            f"--- session {now.strftime('%Y-%m-%d %H:%M')} UTC ---\n\n"
-        )
+        self._session_log_header = f"--- session {now.strftime('%Y-%m-%d %H:%M')} UTC ---\n\n"
 
     # ------------------------------------------------------------------
     # Live log append (same as before, just targeted at pending/)
@@ -276,8 +274,7 @@ class MemoryManager:
     def _memory_path(self, memory_id: str) -> Path:
         if not _MEMORY_ID_PATTERN.match(memory_id):
             raise ValueError(
-                f"invalid memory id: {memory_id!r}. "
-                "Expected format: YYYY-MM-DD_<slug>_<3-hex>, ASCII lowercase."
+                f"invalid memory id: {memory_id!r}. Expected format: YYYY-MM-DD_<slug>_<3-hex>, ASCII lowercase."
             )
         return self._memories_dir / f"{memory_id}.md"
 
@@ -386,15 +383,17 @@ class MemoryManager:
                 continue
             if kind is not None and meta.get("kind") != kind:
                 continue
-            out.append({
-                "id": mem_id,
-                "summary": _one_line_summary(body),
-                "tags": list(tags_val),
-                "kind": meta.get("kind"),
-                "pinned": bool(meta.get("pinned", False)),
-                "created": meta.get("created"),
-                "superseded_by": meta.get("superseded_by"),
-            })
+            out.append(
+                {
+                    "id": mem_id,
+                    "summary": _one_line_summary(body),
+                    "tags": list(tags_val),
+                    "kind": meta.get("kind"),
+                    "pinned": bool(meta.get("pinned", False)),
+                    "created": meta.get("created"),
+                    "superseded_by": meta.get("superseded_by"),
+                }
+            )
         return out
 
     def find_related_memories(
@@ -442,13 +441,15 @@ class MemoryManager:
             mem_id = meta.get("id") or path.stem
             tags_val = meta.get("tags") or []
             summary = _one_line_summary(body)
-            haystack = " ".join([
-                mem_id,
-                " ".join(tags_val),
-                str(meta.get("kind") or ""),
-                summary,
-                body,
-            ]).lower()
+            haystack = " ".join(
+                [
+                    mem_id,
+                    " ".join(tags_val),
+                    str(meta.get("kind") or ""),
+                    summary,
+                    body,
+                ]
+            ).lower()
             score = sum(1 for needle in needles if needle in haystack)
             if score == 0:
                 continue
@@ -464,12 +465,11 @@ class MemoryManager:
             if body_preview_chars > 0:
                 stripped = body.strip()
                 entry["body_preview"] = (
-                    stripped if len(stripped) <= body_preview_chars
-                    else stripped[:body_preview_chars].rstrip() + "…"
+                    stripped if len(stripped) <= body_preview_chars else stripped[:body_preview_chars].rstrip() + "…"
                 )
             scored.append((score, entry))
         scored.sort(key=lambda sc: (-sc[0], sc[1]["id"]))
-        return [entry for _, entry in scored[:max(1, limit)]]
+        return [entry for _, entry in scored[: max(1, limit)]]
 
     # ------------------------------------------------------------------
     # Prompt injection
@@ -490,8 +490,7 @@ class MemoryManager:
             "The index below is automatically curated between sessions. "
             "Use `recall_memory(id)` to read a specific memory (and its related neighbours), "
             "`recall_topic(tag)` to load a cluster, or `short_term_memory()` to re-read the "
-            "current session.\n\n"
-            + content
+            "current session.\n\n" + content
         )
 
     # ------------------------------------------------------------------

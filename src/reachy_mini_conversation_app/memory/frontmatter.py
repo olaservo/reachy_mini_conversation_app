@@ -74,7 +74,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         else:
             meta[key] = _parse_scalar(raw_value)
 
-    body = "\n".join(lines[end_idx + 1:])
+    body = "\n".join(lines[end_idx + 1 :])
     if body.startswith("\n"):
         body = body[1:]
     return meta, body

@@ -61,6 +61,7 @@ def _msg_item(text: str) -> dict[str, Any]:
 
 def _call_item(name: str, args: dict[str, Any], call_id: str = "c1") -> dict[str, Any]:
     import json as _json
+
     return {
         "type": "function_call",
         "name": name,
@@ -101,18 +102,20 @@ class TestDreamerSingleLog:
     def test_write_memory_flow(self, manager: MemoryManager) -> None:
         """Scripted LLM: write one memory, then stop."""
         steps: list[list[dict[str, Any]]] = [
-            [_call_item(
-                "write_memory",
-                {
-                    "id": "2026-04-14_user-name_a01",
-                    "body": "User's name is Rémi.",
-                    "kind": "fact",
-                    "tags": ["identity"],
-                    "sources": ["2026-04-14_09-15.log"],
-                    "pinned": True,
-                },
-                call_id="c1",
-            )],
+            [
+                _call_item(
+                    "write_memory",
+                    {
+                        "id": "2026-04-14_user-name_a01",
+                        "body": "User's name is Rémi.",
+                        "kind": "fact",
+                        "tags": ["identity"],
+                        "sources": ["2026-04-14_09-15.log"],
+                        "pinned": True,
+                    },
+                    call_id="c1",
+                )
+            ],
             [_msg_item("Wrote one identity memory.")],
             # Self-reflection call
             [_msg_item("All good.")],
@@ -145,15 +148,17 @@ class TestDreamerSingleLog:
         )
         steps: list[list[dict[str, Any]]] = [
             [_call_item("list_existing_memories", {"tag": "chess"}, call_id="c1")],
-            [_call_item(
-                "update_memory",
-                {
-                    "id": "2026-04-10_chess_aaa",
-                    "body": "User plays chess and prefers the Queen's Gambit.",
-                    "sources": ["2026-04-14_09-15.log"],
-                },
-                call_id="c2",
-            )],
+            [
+                _call_item(
+                    "update_memory",
+                    {
+                        "id": "2026-04-10_chess_aaa",
+                        "body": "User plays chess and prefers the Queen's Gambit.",
+                        "sources": ["2026-04-14_09-15.log"],
+                    },
+                    call_id="c2",
+                )
+            ],
             [_msg_item("Enriched existing memory.")],
             [_msg_item("Reflection.")],
         ]
@@ -167,16 +172,18 @@ class TestDreamerSingleLog:
     def test_errors_keep_log_in_pending(self, manager: MemoryManager) -> None:
         """If a tool call raises, the log must stay in pending/ for retry."""
         steps: list[list[dict[str, Any]]] = [
-            [_call_item(
-                "write_memory",
-                {
-                    "id": "invalid id!",
-                    "body": "bad",
-                    "kind": "fact",
-                    "tags": ["t"],
-                },
-                call_id="c1",
-            )],
+            [
+                _call_item(
+                    "write_memory",
+                    {
+                        "id": "invalid id!",
+                        "body": "bad",
+                        "kind": "fact",
+                        "tags": ["t"],
+                    },
+                    call_id="c1",
+                )
+            ],
             [_msg_item("Giving up.")],
             [_msg_item("Reflection.")],
         ]

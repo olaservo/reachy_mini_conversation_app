@@ -2,14 +2,12 @@
 
 from pathlib import Path
 from dataclasses import dataclass
-from unittest.mock import MagicMock
 
 import pytest
 
-from reachy_mini_conversation_app.memory.memory_manager import MemoryManager
-from reachy_mini_conversation_app.memory.index_renderer import rebuild_index
-from reachy_mini_conversation_app.tools.recall_memory import RecallMemory
 from reachy_mini_conversation_app.tools.recall_topic import RecallTopic
+from reachy_mini_conversation_app.tools.recall_memory import RecallMemory
+from reachy_mini_conversation_app.memory.memory_manager import MemoryManager
 from reachy_mini_conversation_app.tools.short_term_memory import ShortTermMemory
 
 
@@ -58,9 +56,7 @@ class TestRecallMemory:
         assert deps.memory_manager is not None
         main = _mid("chess-openings", "111")
         neighbour = _mid("chess-match", "222")
-        deps.memory_manager.write_memory(
-            neighbour, "Lost to Jean.", kind="event", tags=["chess"]
-        )
+        deps.memory_manager.write_memory(neighbour, "Lost to Jean.", kind="event", tags=["chess"])
         deps.memory_manager.write_memory(
             main,
             "Prefers Queen's Gambit.",
@@ -75,9 +71,7 @@ class TestRecallMemory:
     async def test_missing_returns_error(self, deps: _FakeDeps) -> None:
         """Unknown ID returns an error plus a sample of known IDs."""
         assert deps.memory_manager is not None
-        deps.memory_manager.write_memory(
-            _mid("known"), "body", kind="fact", tags=["foo"]
-        )
+        deps.memory_manager.write_memory(_mid("known"), "body", kind="fact", tags=["foo"])
         result = await RecallMemory()(deps, id=_mid("unknown", "fff"))
         assert "error" in result
         assert _mid("known") in result["known_ids_sample"]
@@ -110,9 +104,7 @@ class TestRecallTopic:
                 tags=["chess"],
                 created=None,
             )
-        deps.memory_manager.write_memory(
-            _mid("cooking"), "cooking", kind="preference", tags=["cooking"]
-        )
+        deps.memory_manager.write_memory(_mid("cooking"), "cooking", kind="preference", tags=["cooking"])
         result = await RecallTopic()(deps, tag="chess", limit=2)
         assert result["returned"] == 2
         assert result["total_matches"] == 3

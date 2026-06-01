@@ -1,9 +1,9 @@
 """Persistent memory subsystem for the Reachy Mini conversation app."""
 
 from .dreamer import Dreamer, DreamLogStats, run_dream_pass
-from .memory_manager import MemoryManager
 from .index_renderer import render_index, rebuild_index
-from .dream_scheduler import DreamSummary, DreamScheduler, DEFAULT_DREAMER_MODEL
+from .memory_manager import MemoryManager
+from .dream_scheduler import DEFAULT_DREAMER_MODEL, DreamSummary, DreamScheduler
 
 
 __all__ = [

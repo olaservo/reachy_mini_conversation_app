@@ -33,9 +33,9 @@ from reachy_mini_conversation_app.config import (
     get_default_voice_for_backend,
     get_available_voices_for_backend,
 )
+from reachy_mini_conversation_app.memory import DEFAULT_DREAMER_MODEL, DreamSummary, DreamScheduler
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.conversation_handler import ConversationHandler
-from reachy_mini_conversation_app.memory import DreamSummary, DreamScheduler, DEFAULT_DREAMER_MODEL
 from reachy_mini_conversation_app.tools.background_tool_manager import (
     ToolCallRoutine,
     ToolNotification,

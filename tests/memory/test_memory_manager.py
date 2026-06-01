@@ -5,11 +5,11 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
-from reachy_mini_conversation_app.memory.memory_manager import MemoryManager
 from reachy_mini_conversation_app.memory.index_renderer import (
     render_index,
     rebuild_index,
 )
+from reachy_mini_conversation_app.memory.memory_manager import MemoryManager
 
 
 @pytest.fixture

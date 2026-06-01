@@ -28,8 +28,7 @@ class RecallMemory(Tool):
             "id": {
                 "type": "string",
                 "description": (
-                    "The memory ID from the MEMORY index, e.g. "
-                    "'2026-04-17_chess-openings_a3f'. Required."
+                    "The memory ID from the MEMORY index, e.g. '2026-04-17_chess-openings_a3f'. Required."
                 ),
             },
         },

@@ -15,8 +15,8 @@ behaviour.
 
 from __future__ import annotations
 import os
-import json
 import re
+import json
 import time
 import logging
 from typing import Any, Callable
@@ -24,11 +24,11 @@ from dataclasses import field, dataclass
 
 from openai import OpenAI
 
+from reachy_mini_conversation_app.memory.index_renderer import rebuild_index
 from reachy_mini_conversation_app.memory.memory_manager import (
     ALLOWED_KINDS,
     MemoryManager,
 )
-from reachy_mini_conversation_app.memory.index_renderer import rebuild_index
 
 
 logger = logging.getLogger(__name__)
@@ -359,10 +359,7 @@ class DreamLogStats:
         """Render a single-line summary for the terminal logger."""
         counts = self.tool_calls_count
         total_tool_calls = sum(counts.values())
-        parts = [
-            f"{name}×{count} ({sum(self.tool_durations_s[name]):.2f}s)"
-            for name, count in sorted(counts.items())
-        ]
+        parts = [f"{name}×{count} ({sum(self.tool_durations_s[name]):.2f}s)" for name, count in sorted(counts.items())]
         tools_str = ", ".join(parts) if parts else "(no tool calls)"
         outcome = f"created {self.created}, updated {self.updated}"
         if self.errors:
@@ -477,10 +474,10 @@ class Dreamer:
             return stats
 
         existing = self.manager.list_memories(include_superseded=False)
-        summaries = "\n".join(
-            f"- [{m['id']}] ({m['kind']}, tags={m['tags']}) {m['summary']}"
-            for m in existing
-        ) or "(none yet)"
+        summaries = (
+            "\n".join(f"- [{m['id']}] ({m['kind']}, tags={m['tags']}) {m['summary']}" for m in existing)
+            or "(none yet)"
+        )
 
         try:
             index_text = self.manager.active_memory_path.read_text(encoding="utf-8")
@@ -541,15 +538,15 @@ class Dreamer:
                     did_call_tool = True
                     input_items.append(item_dict)
                     tool_result, ok = self._dispatch_tool(item_dict, stats)
-                    input_items.append({
-                        "type": "function_call_output",
-                        "call_id": item_dict["call_id"],
-                        "output": json.dumps(tool_result, ensure_ascii=False),
-                    })
+                    input_items.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": item_dict["call_id"],
+                            "output": json.dumps(tool_result, ensure_ascii=False),
+                        }
+                    )
                     if not ok:
-                        stats.errors.append(
-                            f"tool {item_dict.get('name')}: {tool_result.get('error')}"
-                        )
+                        stats.errors.append(f"tool {item_dict.get('name')}: {tool_result.get('error')}")
                 elif item_type == "message":
                     text_chunks = []
                     for chunk in item_dict.get("content", []) or []:
@@ -565,9 +562,7 @@ class Dreamer:
             if not did_call_tool:
                 break
         else:
-            stats.errors.append(
-                f"max_tool_calls_per_log ({self.max_tool_calls_per_log}) exceeded"
-            )
+            stats.errors.append(f"max_tool_calls_per_log ({self.max_tool_calls_per_log}) exceeded")
             logger.error("[DREAM] %s: tool-call budget exceeded", filename)
 
         stats.duration_s = time.monotonic() - t0
@@ -615,17 +610,13 @@ class Dreamer:
         content = self.manager.read_pending_log(filename)
         return {"filename": filename, "content": content}
 
-    def _tool_list_existing_memories(
-        self, args: dict[str, Any], _: DreamLogStats
-    ) -> dict[str, Any]:
+    def _tool_list_existing_memories(self, args: dict[str, Any], _: DreamLogStats) -> dict[str, Any]:
         tag = args.get("tag") or None
         kind = args.get("kind") or None
         items = self.manager.list_memories(tag=tag, kind=kind)
         return {"count": len(items), "memories": items}
 
-    def _tool_find_related_memories(
-        self, args: dict[str, Any], _: DreamLogStats
-    ) -> dict[str, Any]:
+    def _tool_find_related_memories(self, args: dict[str, Any], _: DreamLogStats) -> dict[str, Any]:
         query = args.get("query") or ""
         tags = args.get("tags") or None
         limit = int(args.get("limit") or 10)
@@ -642,9 +633,7 @@ class Dreamer:
     def _tool_read_memory(self, args: dict[str, Any], _: DreamLogStats) -> dict[str, Any]:
         return self.manager.read_memory(args.get("id", ""))
 
-    def _tool_write_memory(
-        self, args: dict[str, Any], stats: DreamLogStats
-    ) -> dict[str, Any]:
+    def _tool_write_memory(self, args: dict[str, Any], stats: DreamLogStats) -> dict[str, Any]:
         memory_id = args.get("id") or ""
         body = args.get("body") or ""
         kind = args.get("kind") or ""
@@ -674,9 +663,7 @@ class Dreamer:
         stats.created += 1
         return {"status": "created", "id": memory_id}
 
-    def _tool_update_memory(
-        self, args: dict[str, Any], stats: DreamLogStats
-    ) -> dict[str, Any]:
+    def _tool_update_memory(self, args: dict[str, Any], stats: DreamLogStats) -> dict[str, Any]:
         memory_id = args.get("id") or ""
         body = args.get("body")
         frontmatter_updates: dict[str, Any] = {}
@@ -776,9 +763,7 @@ def run_dream_pass(
     """
     resolved_model = model or os.getenv("MEMORY_DREAMER_MODEL") or os.getenv("OPENAI_MODEL_NAME") or ""
     if not resolved_model:
-        raise DreamerRuntimeError(
-            "No dreamer model configured. Set MEMORY_DREAMER_MODEL or OPENAI_MODEL_NAME."
-        )
+        raise DreamerRuntimeError("No dreamer model configured. Set MEMORY_DREAMER_MODEL or OPENAI_MODEL_NAME.")
     dreamer = Dreamer(
         manager,
         model=resolved_model,

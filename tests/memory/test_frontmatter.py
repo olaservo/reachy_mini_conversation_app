@@ -13,14 +13,7 @@ class TestParse:
 
     def test_simple_scalars(self) -> None:
         """Parse strings, bools, and null values."""
-        text = (
-            "---\n"
-            "id: 2026-04-17_demo_abc\n"
-            "pinned: false\n"
-            "supersedes: null\n"
-            "---\n"
-            "Body here.\n"
-        )
+        text = "---\nid: 2026-04-17_demo_abc\npinned: false\nsupersedes: null\n---\nBody here.\n"
         meta, body = parse_frontmatter(text)
         assert meta["id"] == "2026-04-17_demo_abc"
         assert meta["pinned"] is False
