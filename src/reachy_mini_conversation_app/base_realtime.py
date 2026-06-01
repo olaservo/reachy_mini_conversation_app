@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 # Hidden context notes injected when the background dream starts/finishes, so the
 # robot can explain the chime if asked ("what was that sound?") without ever
-# bringing it up on its own. See docs/memory-background-dreaming-spec.md §5.
+# bringing it up on its own. See docs/memory-system-design.md.
 DREAM_START_NOTE: Final[str] = (
     "[Background event: a soft chime just played. Your memory-consolidation "
     '"dreaming" process started in the background — you are quietly reprocessing '
@@ -817,7 +817,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             if self.deps.memory_manager is not None:
                 self.deps.memory_manager.new_session()
                 # Consolidate previous sessions' logs in the background, in
-                # parallel with this conversation (was a blocking boot phase).
+                # parallel with this conversation.
                 self._start_background_dreaming()
 
             response_sender_task: asyncio.Task[None] | None = None

@@ -292,9 +292,8 @@ def run(
     if camera_worker:
         camera_worker.start()
 
-    # NOTE: memory consolidation ("dreaming") used to run here as a blocking
-    # boot phase. It now runs in the background during the conversation — see
-    # DreamScheduler, launched per session from base_realtime.py.
+    # Memory consolidation ("dreaming") runs in the background per session,
+    # launched from base_realtime.py (see DreamScheduler); it never blocks startup.
 
     def poll_stop_event() -> None:
         """Poll the stop event to allow graceful shutdown."""

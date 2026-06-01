@@ -10,7 +10,7 @@ Storage layout::
         ├── pending/                  # Live log + logs waiting to be dreamed
         └── processed/                # Logs already dreamed
 
-See ``docs/memory-rework-dreaming-spec.md``.
+See ``docs/memory-system-design.md``.
 """
 
 from __future__ import annotations
@@ -125,11 +125,10 @@ class MemoryManager:
         - Move any ``logs/*.log`` (old top-level logs) into ``logs/pending/``.
         - Remove any legacy ``archive/`` directory.
 
-        Note: this runs on every construction, so it must stay idempotent. It
-        deliberately does NOT touch ``active_memory.md`` — that file is the index
-        injected into the system prompt and must persist across restarts. (An
-        earlier version wiped it here on every init, which meant the summary was
-        never present in the prompt; see ``_ensure_index`` for the rebuild path.)
+        Runs on every construction, so it must stay idempotent. It deliberately
+        leaves ``active_memory.md`` alone: that file is the index injected into the
+        system prompt and must persist across restarts [``_ensure_index`` rebuilds it
+        if it is ever missing].
         """
         moved = 0
         for entry in self._logs_dir.iterdir():
@@ -509,10 +508,9 @@ class MemoryManager:
         return (
             "\n\n## MEMORY\n"
             "The index below is automatically curated between sessions. "
-            "Use `recall_memory(id)` to read a specific memory (and its related neighbours), "
+            "Use `recall_memory(id)` to read a specific memory and its related neighbours, or "
             "`recall_memories(tag=..., date_from=..., date_to=...)` to filter by topic and/or "
-            "conversation date, or `short_term_memory()` to re-read the current session. "
-            "Dates always refer to when something was discussed.\n\n" + content
+            "conversation date. Dates always refer to when something was discussed.\n\n" + content
         )
 
     # ------------------------------------------------------------------

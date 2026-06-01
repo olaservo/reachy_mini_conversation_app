@@ -1,4 +1,4 @@
-"""System tool: recall_memory — read a memory file plus its related_to neighbours."""
+"""System tool ``recall_memory``: read one memory file plus its related_to neighbours."""
 
 import logging
 from typing import Any, Dict
@@ -18,7 +18,7 @@ class RecallMemory(Tool):
         "Read a specific memory by its ID. The memory index (in your MEMORY section) "
         "lists IDs in square brackets, e.g. [2026-04-17_chess-openings_a3f]. "
         "This returns the full memory body plus every memory listed in its `related_to` "
-        "field — use it whenever the user asks about a past topic. "
+        "field; use it whenever the user asks about a past topic. "
         "Before calling, tell the user you're checking your memory "
         "(e.g. 'Let me think back...' or 'That rings a bell, one moment...'). "
         "If the ID isn't found you'll get an error and a short list of existing IDs."

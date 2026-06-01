@@ -1,17 +1,16 @@
 """Dreaming agent: offline memory consolidation.
 
-The dreamer runs in the background during a conversation (on a daemon thread —
-see ``DreamScheduler``). It walks through every log in ``logs/pending/``, calls
+The dreamer runs in the background during a conversation, on a daemon thread
+[see ``DreamScheduler``]. It walks through every log in ``logs/pending/``, calls
 an LLM with dedicated tools, and lets the LLM create/update/merge atomic memory
 files. After every log it rebuilds the index. At the end of the run it asks the
 LLM to reflect on its own work.
 
-The conversation LLM never sees any of this — it simply inherits the
-curated memory state, refreshed between sessions.
+The conversation LLM never sees any of this; it simply inherits the curated
+memory state, refreshed between sessions.
 
 Every tool call, every LLM input/output, and every per-log statistic is
-printed to the terminal logger. See §7 of the spec for the expected
-behaviour.
+printed to the terminal logger. See ``docs/memory-system-design.md``.
 """
 
 from __future__ import annotations
@@ -759,8 +758,7 @@ def run_dream_pass(
     """Run one dream pass and return the per-log stats list.
 
     If ``model`` is None, the environment variable ``MEMORY_DREAMER_MODEL``
-    wins; otherwise it falls back to ``OPENAI_MODEL_NAME``. That matches the
-    §9 spec: "default = live LLM model".
+    wins; otherwise it falls back to ``OPENAI_MODEL_NAME``.
     """
     resolved_model = model or os.getenv("MEMORY_DREAMER_MODEL") or os.getenv("OPENAI_MODEL_NAME") or ""
     if not resolved_model:

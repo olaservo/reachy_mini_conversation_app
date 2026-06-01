@@ -1,9 +1,9 @@
 """Event-date helpers for memories.
 
-A memory's date is the date of the *conversation(s)* it was drawn from — parsed
-from its ``sources`` log filenames (``YYYY-MM-DD_HH-MM.log``) — never the date the
-dreamer happened to write the file (``created``). A single memory can span several
-conversations on different days, so a memory has potentially many event dates; the
+A memory's date is the date of the conversation(s) it was drawn from [parsed from
+its ``sources`` log filenames, ``YYYY-MM-DD_HH-MM.log``], not the date the dreamer
+happened to write the file (``created``). A single memory can span several
+conversations on different days, so it has potentially many event dates; the
 ``created`` timestamp is only a last-resort fallback when no source date is parseable.
 
 This is the one place that defines "when a memory happened", used by the index
@@ -76,8 +76,8 @@ def event_dates(memory: dict[str, Any]) -> list[str]:
 def present_memory(mem: dict[str, Any]) -> dict[str, Any]:
     """Model-facing view of a ``read_memory`` result (``{id, frontmatter, body}``).
 
-    Drops the dreamer's ``created`` timestamp — which the model could mistake for
-    when the conversation happened — and adds ``dates_discussed`` (the actual
+    Drops the dreamer's ``created`` timestamp [which the model could mistake for
+    when the conversation happened] and adds ``dates_discussed`` (the actual
     conversation dates), so the only dates the model ever sees are the real ones.
     """
     frontmatter = dict(mem.get("frontmatter") or {})

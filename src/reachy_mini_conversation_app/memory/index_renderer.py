@@ -3,7 +3,7 @@
 Input: a list of memory summaries (as produced by ``MemoryManager.list_memories``).
 Output: a markdown string written to ``active_memory.md``.
 
-See §4 of ``docs/memory-rework-dreaming-spec.md``.
+See ``docs/memory-system-design.md``.
 """
 
 from __future__ import annotations

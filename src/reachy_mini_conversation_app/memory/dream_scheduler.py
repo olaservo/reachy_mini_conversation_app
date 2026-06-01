@@ -1,15 +1,13 @@
-"""Background ("hidden") dream runner.
+"""Background dream runner.
 
-Replaces the blocking boot phase (``boot.py``) from
-``docs/memory-rework-dreaming-spec.md`` §8 with the parallel design in
-``docs/memory-background-dreaming-spec.md``: ``Dreamer.run()`` runs on a daemon
-thread *during* the conversation instead of gating startup.
+Runs ``Dreamer.run()`` on a daemon thread during the conversation so memory
+consolidation never blocks startup. The scheduler is framework-agnostic: it knows
+nothing about audio or the realtime connection. It only calls two callbacks,
+``on_start`` (just before the dream begins) and ``on_finish`` (once it ends, always,
+even on error). The realtime backend wires those to the subtle chime and the hidden
+"you just dreamed" context note [see ``base_realtime.py``].
 
-The scheduler is deliberately framework-agnostic — it knows nothing about audio
-or the realtime connection. It only calls two callbacks: ``on_start`` just
-before the dream begins and ``on_finish`` once it ends (always, even on error).
-The realtime backend wires those callbacks to the subtle chime + the hidden
-"you just dreamed" context note (see ``base_realtime.py``).
+See ``docs/memory-system-design.md``.
 """
 
 from __future__ import annotations
@@ -26,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 # OPENAI_MODEL_NAME is typically a realtime alias ("gpt-realtime") which doesn't
-# exist on the Responses API that the dreamer uses. Don't fall back to it — pick
+# exist on the Responses API that the dreamer uses. Don't fall back to it; pick
 # a chat-capable default instead.
 DEFAULT_DREAMER_MODEL = "gpt-5.4"
 

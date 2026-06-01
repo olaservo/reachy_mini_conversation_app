@@ -1,9 +1,8 @@
-"""System tool: recall_memories — filter memories by tag and/or conversation date.
+"""System tool ``recall_memories``: filter stored memories by tag and/or conversation date.
 
-Generalises the old ``recall_topic`` (tag-only) into a filtered recall: the model
-can ask for a tag, a date range, or both. "Date" always means the date of the
-*conversation* (from a memory's ``sources``), never the dreamer's creation date —
-see ``memory/dates.py``.
+Returns the full text of each matching memory (id, frontmatter, body, and the dates it
+was discussed), newest first. "Date" means the date of the conversation a memory came
+from (parsed from its ``sources``), not when the file was written [see ``memory/dates.py``].
 """
 
 import logging
@@ -48,18 +47,19 @@ def _in_range(memory: Dict[str, Any], date_from: datetime | None, date_to: datet
 
 
 class RecallMemories(Tool):
-    """Filter memories by tag and/or conversation-date range — newest first."""
+    """Filter memories by tag and/or conversation-date range, newest first."""
 
     name = "recall_memories"
     description = (
-        "Recall stored memories filtered by topic and/or date. Provide a `tag` "
-        "(e.g. 'chess' — tags are shown in the MEMORY index), a date range "
-        "(`date_from`/`date_to` as YYYY-MM-DD), or both. Dates refer to when "
-        "something was discussed: for 'what did we do yesterday?', work out "
-        "yesterday's date from the current date in your context and pass it as "
-        "both date_from and date_to. At least one filter is required. Before "
-        "calling, tell the user you're checking your memory (e.g. 'Let me think "
-        "back...'). Returns up to `limit` memories, newest first."
+        "Recall stored memories filtered by topic and/or date, returning each "
+        "match's full text (not just titles or IDs). Provide a `tag` (a topic shown "
+        "in the MEMORY index), a date range (`date_from`/`date_to` as YYYY-MM-DD), "
+        "or both; at least one is required. Dates refer to when something was "
+        "discussed: for 'what did we do yesterday?', work out yesterday's date from "
+        "the current date in your context and pass it as both date_from and date_to. "
+        "Before calling, tell the user you're checking your memory (e.g. 'Let me "
+        "think back...'). Returns up to `limit` memories (full body plus the dates "
+        "each was discussed), newest first."
     )
     parameters_schema = {
         "type": "object",
