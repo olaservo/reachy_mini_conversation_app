@@ -199,6 +199,8 @@ So if asked "what was that sound?" it can explain, but it never raises it unprom
 - `MEMORY_DREAMER_MODEL` [default `gpt-5.4`]: the dreamer's chat model. It must be a
   Responses-API model, not a realtime alias.
 - `OPENAI_API_KEY`: used by the dreamer [the live audio backend is separate].
+- `MEMORY_DREAMER_REFLECTION` [default false, dev-only]: make one extra LLM call per
+  dream that prints a self-critique to the terminal. Off in production [pure cost].
 
 ## Privacy
 

@@ -587,6 +587,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             api_key=api_key,
             on_start=on_start,
             on_finish=on_finish,
+            self_reflect=config.MEMORY_DREAMER_REFLECTION,
         )
         self._dream_scheduler.start()
 
@@ -672,7 +673,11 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 args = json.loads(bg_tool.args_json_str) if bg_tool.args_json_str else {}
                 self.deps.memory_manager.log_tool_call(bg_tool.tool_name, args=args, result=tool_result)
             except Exception:
-                pass
+                logger.debug(
+                    "Failed to log tool call '%s' to memory; continuing.",
+                    bg_tool.tool_name,
+                    exc_info=True,
+                )
 
         # Connection may have closed while tool was running
         if not self.connection:

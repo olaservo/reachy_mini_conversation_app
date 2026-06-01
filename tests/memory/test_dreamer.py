@@ -8,8 +8,8 @@ from dataclasses import field, dataclass
 import pytest
 
 from reachy_mini_conversation_app.memory.dreamer import (
+    DEFAULT_DREAMER_MODEL,
     Dreamer,
-    DreamerRuntimeError,
     run_dream_pass,
 )
 from reachy_mini_conversation_app.memory.memory_manager import MemoryManager
@@ -206,29 +206,25 @@ class TestDreamerSingleLog:
 class TestRunDreamPass:
     """Verify the convenience runner's model-selection behaviour."""
 
-    def test_raises_when_no_model_configured(
+    def test_defaults_to_dreamer_model_not_realtime_alias(
         self,
         manager: MemoryManager,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Raise if neither env var is set."""
+        """With no model arg/env, fall back to DEFAULT_DREAMER_MODEL and ignore OPENAI_MODEL_NAME."""
         monkeypatch.delenv("MEMORY_DREAMER_MODEL", raising=False)
-        monkeypatch.delenv("OPENAI_MODEL_NAME", raising=False)
-        fake = _FakeClient(responses=_FakeResponses(on_create=lambda _i: []))
-        with pytest.raises(DreamerRuntimeError):
-            run_dream_pass(manager, client=fake)
+        monkeypatch.setenv("OPENAI_MODEL_NAME", "gpt-realtime")  # realtime alias must be ignored
+        fake = _FakeClient(responses=_FakeResponses(on_create=lambda _i: [_msg_item("done")]))
+        run_dream_pass(manager, client=fake)
+        assert fake.responses.calls[0]["model"] == DEFAULT_DREAMER_MODEL
 
     def test_uses_memory_dreamer_model_env(
         self,
         manager: MemoryManager,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """MEMORY_DREAMER_MODEL takes precedence over OPENAI_MODEL_NAME."""
+        """MEMORY_DREAMER_MODEL is used when set."""
         monkeypatch.setenv("MEMORY_DREAMER_MODEL", "custom-model")
-        monkeypatch.setenv("OPENAI_MODEL_NAME", "other-model")
         fake = _FakeClient(responses=_FakeResponses(on_create=lambda _i: [_msg_item("done")]))
-        # Run with no pending logs — just confirms no error.
-        for p in manager.pending_logs_dir.glob("*.log"):
-            if p.name != manager.session_log_path.name:  # type: ignore[union-attr]
-                p.unlink()
         run_dream_pass(manager, client=fake)
+        assert fake.responses.calls[0]["model"] == "custom-model"

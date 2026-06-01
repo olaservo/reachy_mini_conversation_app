@@ -34,6 +34,12 @@ from reachy_mini_conversation_app.memory.memory_manager import (
 logger = logging.getLogger(__name__)
 
 
+# OPENAI_MODEL_NAME is typically a realtime alias ("gpt-realtime") that doesn't
+# exist on the Responses API the dreamer uses. Don't fall back to it; use a
+# chat-capable default instead.
+DEFAULT_DREAMER_MODEL = "gpt-5.4"
+
+
 DREAMER_SYSTEM_PROMPT = """\
 You are the Dreamer — a background memory-consolidation agent running between
 live conversations with a human.
@@ -373,10 +379,6 @@ class DreamLogStats:
         )
 
 
-class DreamerRuntimeError(RuntimeError):
-    """Raised when the dreamer encounters an unrecoverable condition."""
-
-
 class Dreamer:
     """LLM-driven memory consolidation runner.
 
@@ -399,11 +401,17 @@ class Dreamer:
         base_url: str | None = None,
         client: OpenAI | None = None,
         max_tool_calls_per_log: int = 40,
+        self_reflect: bool = False,
     ) -> None:
-        """Initialize the dreamer. Pass ``client`` in tests to bypass OpenAI."""
+        """Initialize the dreamer. Pass ``client`` in tests to bypass OpenAI.
+
+        ``self_reflect`` enables a dev-only end-of-run reflection LLM call that only
+        prints to the terminal; off by default so production pays no extra cost.
+        """
         self.manager = manager
         self.model = model
         self.max_tool_calls_per_log = max_tool_calls_per_log
+        self.self_reflect = self_reflect
         self.client = client if client is not None else OpenAI(api_key=api_key, base_url=base_url)
 
     # ------------------------------------------------------------------
@@ -442,7 +450,8 @@ class Dreamer:
         logger.info("[DREAM] Rebuilt active_memory.md (%d chars).", len(rendered))
 
         total = time.monotonic() - t_run0
-        self._self_reflection(stats_list, total_seconds=total)
+        if self.self_reflect:
+            self._self_reflection(stats_list, total_seconds=total)
         logger.info("[DREAM] Dream pass finished in %.1fs.", total)
         return stats_list
 
@@ -754,20 +763,21 @@ def run_dream_pass(
     api_key: str | None = None,
     base_url: str | None = None,
     client: OpenAI | None = None,
+    self_reflect: bool = False,
 ) -> list[DreamLogStats]:
     """Run one dream pass and return the per-log stats list.
 
-    If ``model`` is None, the environment variable ``MEMORY_DREAMER_MODEL``
-    wins; otherwise it falls back to ``OPENAI_MODEL_NAME``.
+    Model resolution: explicit ``model`` wins, then ``MEMORY_DREAMER_MODEL``, then
+    ``DEFAULT_DREAMER_MODEL``. (Not ``OPENAI_MODEL_NAME`` — that is a realtime alias
+    that does not work with the Responses API the dreamer uses.)
     """
-    resolved_model = model or os.getenv("MEMORY_DREAMER_MODEL") or os.getenv("OPENAI_MODEL_NAME") or ""
-    if not resolved_model:
-        raise DreamerRuntimeError("No dreamer model configured. Set MEMORY_DREAMER_MODEL or OPENAI_MODEL_NAME.")
+    resolved_model = model or os.getenv("MEMORY_DREAMER_MODEL") or DEFAULT_DREAMER_MODEL
     dreamer = Dreamer(
         manager,
         model=resolved_model,
         api_key=api_key,
         base_url=base_url,
         client=client,
+        self_reflect=self_reflect,
     )
     return dreamer.run()

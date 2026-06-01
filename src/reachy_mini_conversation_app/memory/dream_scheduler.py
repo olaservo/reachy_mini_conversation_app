@@ -16,17 +16,13 @@ import threading
 from typing import Callable
 from dataclasses import dataclass
 
-from reachy_mini_conversation_app.memory.dreamer import Dreamer, DreamLogStats
+from reachy_mini_conversation_app.memory.dreamer import DEFAULT_DREAMER_MODEL, Dreamer, DreamLogStats
 from reachy_mini_conversation_app.memory.memory_manager import MemoryManager
 
 
 logger = logging.getLogger(__name__)
 
-
-# OPENAI_MODEL_NAME is typically a realtime alias ("gpt-realtime") which doesn't
-# exist on the Responses API that the dreamer uses. Don't fall back to it; pick
-# a chat-capable default instead.
-DEFAULT_DREAMER_MODEL = "gpt-5.4"
+__all__ = ["DreamScheduler", "DreamSummary", "DEFAULT_DREAMER_MODEL"]
 
 
 @dataclass
@@ -70,6 +66,7 @@ class DreamScheduler:
         base_url: str | None = None,
         on_start: Callable[[], None],
         on_finish: Callable[[DreamSummary], None],
+        self_reflect: bool = False,
         dreamer_factory: Callable[[], Dreamer] | None = None,
     ) -> None:
         """Initialize the scheduler. Pass ``dreamer_factory`` in tests to stub the dreamer."""
@@ -79,6 +76,7 @@ class DreamScheduler:
         self._base_url = base_url
         self._on_start = on_start
         self._on_finish = on_finish
+        self._self_reflect = self_reflect
         self._dreamer_factory = dreamer_factory
         self._thread: threading.Thread | None = None
 
@@ -133,4 +131,10 @@ class DreamScheduler:
                 logger.exception("[DREAM] on_finish callback raised.")
 
     def _build_dreamer(self) -> Dreamer:
-        return Dreamer(self._manager, model=self._model, api_key=self._api_key, base_url=self._base_url)
+        return Dreamer(
+            self._manager,
+            model=self._model,
+            api_key=self._api_key,
+            base_url=self._base_url,
+            self_reflect=self._self_reflect,
+        )
