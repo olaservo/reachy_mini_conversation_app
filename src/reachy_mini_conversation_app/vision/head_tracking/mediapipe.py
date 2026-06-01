@@ -1,4 +1,4 @@
-"""MediaPipe head tracker backed by reachy_mini_toolbox."""
+"""MediaPipe head tracker backed by reachy_mini."""
 
 import numpy as np
 from numpy.typing import NDArray
@@ -7,11 +7,11 @@ from reachy_mini_conversation_app.vision.head_tracking import HeadTracker, HeadT
 
 
 class MediapipeHeadTracker:
-    """MediaPipe head tracker provided by reachy_mini_toolbox."""
+    """MediaPipe head tracker provided by reachy_mini."""
 
     def __init__(self) -> None:
-        """Initialize the toolbox head tracker lazily."""
-        from reachy_mini_toolbox import vision
+        """Initialize the head tracker lazily."""
+        from reachy_mini import vision
 
         self._tracker: HeadTracker = vision.HeadTracker()
 
