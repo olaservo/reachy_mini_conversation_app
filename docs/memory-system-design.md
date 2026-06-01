@@ -50,6 +50,39 @@ supersedes: null                        # / superseded_by: explicit replacement 
 First line is a one-sentence TL;DR [the only thing the index shows]. Then detail.
 ```
 
+**The seven `kind` values** [a closed vocabulary the dreamer assigns; rejected at
+write time if not one of these]: `fact` [stable truths], `preference` [likes, styles,
+how they want things done], `event` [something that happened], `skill` [something the
+user can do or is learning], `relationship` [people and how they relate], `goal`
+[what the user is trying to achieve], `other` [escape hatch]. The `id` is ASCII-only
+and cross-platform safe, matching `^\d{4}-\d{2}-\d{2}_<slug>_<3-hex>$` [the 3-hex
+suffix keeps the slug split unambiguous].
+
+A design choice visible in the body: the dreamer **cites its evidence inline with
+source-log timestamps**, so any memory is auditable back to what was actually said.
+Real example [trimmed]:
+
+```markdown
+---
+id: 2026-04-20_chess-fried-liver_4b7
+created: "2026-04-20T20:20:08Z"
+sources: [2026-04-17_14-37_2.log, 2026-04-17_14-45.log, 2026-04-17_17-34_2.log, 2026-05-05_09-29.log]
+kind: goal
+tags: [chess, fried-liver-attack, opening-prep, teaching]
+related_to: [2026-04-20_chess-notation_6b1]
+pinned: false
+supersedes: null
+superseded_by: null
+---
+User wants to teach a counter to the Fried Liver Attack and repeatedly returns to the exact trap line ending in smothered mate.
+From 2026-04-17_14-45.log: user said the good move for Black is "d5" (14:48:39) [...]; the finish is the knight from d4 jumping to f3 for a smothered mate, the bishop pinned and the king suffocated by its own pieces (14:51:52).
+From 2026-05-05_09-29.log: the user asked "Can you give me the full line please?" (09:31:43) and responded "This is great. Thank you." (09:33:11).
+Keep this paired with the notation preference memory when presenting the line aloud.
+```
+
+[This one memory spans five conversations across two days, links to a related
+`notation` memory, and its event date is the latest source: 2026-05-05.]
+
 ## Dates
 
 A memory's date is the date of the **conversation** it came from [parsed from the
@@ -72,7 +105,31 @@ Regenerated from frontmatter at the end of every dream pass. Three tiers:
 - **Older**: ranked tag counts only [topic + volume signal, not the individual lines].
 
 It is appended to the system prompt at session start by
-`get_session_instructions` -> `get_memory_block`.
+`get_session_instructions` -> `get_memory_block`. Real example [trimmed]:
+
+```markdown
+# Memory index
+
+## Core (pinned)
+- [2026-04-21_user-name-remy_4d2] The user's name may be Remy, but speaker identity was explicitly uncertain in this group demo.
+
+## Recent (last 30 days)
+### chess
+- [2026-04-20_chess-fried-liver_4b7] User wants to teach a counter to the Fried Liver Attack and repeatedly returns to the exact trap line ending in smothered mate.
+- [2026-05-05_chess-human-teaching_7af] User wants chess teaching framed for humans, not just engine-best play.
+### memory
+- [2026-05-05_memory-tool-transparency_c61] User is actively testing whether answers came from visible summaries or fresh memory-tool calls.
+
+## Older
+Tags (count), ranked by frequency:
+- colleagues (8), memory (6), retrieval (3), robotics (3), television (3), work (3), clement (2), coco (2), ... +54 more tags
+
+Use `recall_memories(tag=...)` to load (also filters by date_from/date_to).
+```
+
+[Two design choices show here: the pinned name memory honestly preserves
+uncertainty rather than guessing, and Older collapses to topic + counts instead of
+listing every line, keeping the always-injected index small.]
 
 ## Recall tools [live model]
 
