@@ -8,7 +8,6 @@ import pytest
 from reachy_mini_conversation_app.tools.recall_memory import RecallMemory
 from reachy_mini_conversation_app.memory.memory_manager import MemoryManager
 from reachy_mini_conversation_app.tools.recall_memories import RecallMemories
-from reachy_mini_conversation_app.tools.short_term_memory import ShortTermMemory
 
 
 @dataclass
@@ -183,34 +182,3 @@ class TestRecallMemories:
         result = await RecallMemories()(deps, tag="missing")
         assert result["returned"] == 0
         assert result["memories"] == []
-
-
-# ------------------------------------------------------------------
-# short_term_memory
-# ------------------------------------------------------------------
-
-
-class TestShortTermMemory:
-    """Verify short_term_memory reads the current log verbatim."""
-
-    @pytest.mark.asyncio
-    async def test_returns_session_content(self, deps: _FakeDeps) -> None:
-        """Turns logged during the session show up in the returned content."""
-        assert deps.memory_manager is not None
-        deps.memory_manager.log_turn("user", "Hello!")
-        deps.memory_manager.log_turn("assistant", "Hi Rémi.")
-        result = await ShortTermMemory()(deps)
-        assert "Hello!" in result["content"]
-        assert "Hi Rémi." in result["content"]
-        assert result["length_chars"] == len(result["content"])
-
-    @pytest.mark.asyncio
-    async def test_handles_empty_session(self, deps: _FakeDeps) -> None:
-        """Returns empty content when no turns have been logged.
-
-        The session log is created lazily on the first write, so a session
-        with no conversation produces no file and the read returns "".
-        """
-        assert deps.memory_manager is not None
-        result = await ShortTermMemory()(deps)
-        assert result["content"] == ""
