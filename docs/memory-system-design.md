@@ -60,13 +60,16 @@ suffix keeps the slug split unambiguous].
 
 A design choice visible in the body: the dreamer **cites its evidence inline with
 source-log timestamps**, so any memory is auditable back to what was actually said.
-Real example [trimmed]:
+
+**Example: a real memory file, copied verbatim from a running instance.** [It spans
+five conversations across two days, links to a related `notation` memory, and its
+event date is the latest source, 2026-05-05.]
 
 ```markdown
 ---
 id: 2026-04-20_chess-fried-liver_4b7
 created: "2026-04-20T20:20:08Z"
-sources: [2026-04-17_14-37_2.log, 2026-04-17_14-45.log, 2026-04-17_17-34_2.log, 2026-05-05_09-29.log]
+sources: [2026-04-17_14-37_2.log, 2026-04-17_14-45.log, 2026-04-17_14-54_3.log, 2026-04-17_17-34_2.log, 2026-05-05_09-29.log]
 kind: goal
 tags: [chess, fried-liver-attack, opening-prep, teaching]
 related_to: [2026-04-20_chess-notation_6b1]
@@ -75,13 +78,13 @@ supersedes: null
 superseded_by: null
 ---
 User wants to teach a counter to the Fried Liver Attack and repeatedly returns to the exact trap line ending in smothered mate.
-From 2026-04-17_14-45.log: user said the good move for Black is "d5" (14:48:39) [...]; the finish is the knight from d4 jumping to f3 for a smothered mate, the bishop pinned and the king suffocated by its own pieces (14:51:52).
-From 2026-05-05_09-29.log: the user asked "Can you give me the full line please?" (09:31:43) and responded "This is great. Thank you." (09:33:11).
+From 2026-04-17_14-37_2.log: final corrected Fried Liver setup was "e four, e five, knight to f three, knight to c six, bishop to c four, knight to f six and knight to g five" (14:42:12). At 14:43:19 the user wanted it written that they want to teach a counter to this attack.
+From 2026-04-17_14-45.log: after the Fried Liver position, user said the good move for Black is "d5" (14:48:39). Then White takes and Black's c6 knight is attacked; the user likes White pushing to d4 (14:48:47). User then gave the trap: Black plays "queen to d6" to invite the fork (14:49:35); White plays Nf7 forking queen and rook (14:49:42); Black queen goes to c6 (14:50:13); a typical lower-level blunder is White taking the rook with Nh8 (14:50:26); then Black queen takes g2 (14:50:34). User clarified this does not win material immediately, but threatens the rook with checks, so White's only move is Rf1 (14:51:06). Then Black plays Qe4+ (14:51:12). White can block with the queen and lose it to the knight, or blunder bigger with Be2 (14:51:30, 14:51:38). The finish the user highlighted: the knight from d4 jumps to f3 for a smothered mate; the bishop cannot capture because it is pinned, and the king is suffocated by its own pieces (14:51:52, 14:52:23).
+From 2026-04-17_14-54_3.log: user insisted on recalling "all of the moves with the explanations and everything" (14:56:05), reinforcing that this is a memorization/teaching line worth preserving.
+From 2026-04-17_17-34_2.log: the user explicitly asked to remember the exact Fried Liver line again (17:37:04-17:37:22), corrected the assistant to search the deeper session (17:40:27), and asked for "everything" from it (17:42:20). The assistant's recap matched the stored line: Black's strong move is d5, the line is not about winning material immediately, but about luring overcommitment, getting initiative and checks, and finishing with Nf3 smothered mate because the bishop is pinned and the king is boxed in (17:43:24-17:44:39).
+From 2026-05-05_09-29.log: after asking "Now do you remember anything about chess?" (09:31:20), the user asked, "Can you give me the full line please?" (09:31:43), and responded, "This is great. Thank you." (09:33:11) after hearing the spoken sequence again.
 Keep this paired with the notation preference memory when presenting the line aloud.
 ```
-
-[This one memory spans five conversations across two days, links to a related
-`notation` memory, and its event date is the latest source: 2026-05-05.]
 
 ## Dates
 
@@ -105,7 +108,12 @@ Regenerated from frontmatter at the end of every dream pass. Three tiers:
 - **Older**: ranked tag counts only [topic + volume signal, not the individual lines].
 
 It is appended to the system prompt at session start by
-`get_session_instructions` -> `get_memory_block`. Real example [trimmed]:
+`get_session_instructions` -> `get_memory_block`.
+
+**Example: a real `active_memory.md`, copied verbatim from a running instance.** [Note
+how the pinned name memory honestly preserves uncertainty rather than guessing, and how
+*Older* collapses to topic + counts instead of listing every line, keeping the
+always-injected index small.]
 
 ```markdown
 # Memory index
@@ -117,19 +125,37 @@ It is appended to the system prompt at session start by
 ### chess
 - [2026-04-20_chess-fried-liver_4b7] User wants to teach a counter to the Fried Liver Attack and repeatedly returns to the exact trap line ending in smothered mate.
 - [2026-05-05_chess-human-teaching_7af] User wants chess teaching framed for humans, not just engine-best play.
+- [2026-06-01_chess-trust-memory-over-calculation_b9e] The user values honest source attribution in chess and was impressed that the assistant explained a line from stored memory rather than bluffing calculation.
 ### memory
+- [2026-05-05_memory-recall-chess-check_c3a] The user did another live memory-recall check, then immediately verified chess recall by asking for the full Fried Liver line.
+- [2026-05-05_memory-recall-colleagues_8b4] The user validated that Coco and Clément memories were retrievable with uncertainty preserved.
 - [2026-05-05_memory-tool-transparency_c61] User is actively testing whether answers came from visible summaries or fresh memory-tool calls.
+- [2026-06-01_memory-recall-benchmarking_7d4] The user benchmarked memory by asking for loaded recall first, then verified tool-backed chess recall and explanation quality.
+- [2026-06-01_memory-recall-index-limits_5c1] The user probed that memory cannot be searched by date alone and asked whether there was another session today.
+### work
+- [2026-04-21_local-runtime-split_6c2] User's conversation app mostly runs locally on their laptop, with the LLM remote for now and STT/TTS split across PC and robot.
 
 ## Older
 Tags (count), ranked by frequency:
-- colleagues (8), memory (6), retrieval (3), robotics (3), television (3), work (3), clement (2), coco (2), ... +54 more tags
+- colleagues (8)
+- memory (6)
+- retrieval (3)
+- robotics (3)
+- television (3)
+- work (3)
+- clement (2)
+- coco (2)
+- remy (2)
+- retrieval-test (2)
+- uncertainty (2)
+- voice (2)
+- accessibility (1)
+- animation (1)
+- apps (1)
+- … +54 more tags
 
 Use `recall_memories(tag=...)` to load (also filters by date_from/date_to).
 ```
-
-[Two design choices show here: the pinned name memory honestly preserves
-uncertainty rather than guessing, and Older collapses to topic + counts instead of
-listing every line, keeping the always-injected index small.]
 
 ## Recall tools [live model]
 
