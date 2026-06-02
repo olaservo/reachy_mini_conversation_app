@@ -235,7 +235,7 @@ class MemoryManager:
         self._append_log(f"{ts} tool: {tool_name}({args_str}) -> {result_str}")
 
     # ------------------------------------------------------------------
-    # Log inspection (used by dreamer and short_term_memory tool)
+    # Log inspection (used by the dreamer)
     # ------------------------------------------------------------------
 
     def read_current_session_log(self) -> str:
