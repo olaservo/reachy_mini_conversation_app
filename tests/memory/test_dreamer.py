@@ -202,6 +202,30 @@ class TestDreamerSingleLog:
         assert stats_list == []
         assert fake.responses.calls == []
 
+    def test_auth_error_aborts_whole_pass(self, manager: MemoryManager) -> None:
+        """A 401/auth failure aborts the pass after the first log, never re-tries each log."""
+        import httpx
+        from openai import AuthenticationError
+
+        # Second pending log, to prove the pass stops early rather than retrying all logs.
+        (manager.pending_logs_dir / "2026-04-15_10-00.log").write_text(
+            "--- session ---\n10:00:00 user: hi\n", encoding="utf-8"
+        )
+
+        def boom(_inp: Any) -> Any:
+            resp = httpx.Response(401, request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+            raise AuthenticationError("Missing scopes: api.responses.write", response=resp, body=None)
+
+        fake = _FakeClient(responses=_FakeResponses(on_create=boom))
+        # Must not raise: the dreamer swallows the auth failure and aborts cleanly.
+        Dreamer(manager, model="fake-model", client=fake).run()
+
+        # Only one LLM attempt, then abort (not one failed call per pending log).
+        assert len(fake.responses.calls) == 1
+        # Both logs remain in pending for a later pass with a valid key.
+        assert (manager.pending_logs_dir / "2026-04-14_09-15.log").is_file()
+        assert (manager.pending_logs_dir / "2026-04-15_10-00.log").is_file()
+
 
 class TestRunDreamPass:
     """Verify the convenience runner's model-selection behaviour."""

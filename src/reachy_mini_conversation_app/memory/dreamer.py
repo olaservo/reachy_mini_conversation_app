@@ -22,7 +22,7 @@ import logging
 from typing import Any, Callable
 from dataclasses import field, dataclass
 
-from openai import OpenAI
+from openai import OpenAI, APIStatusError, AuthenticationError
 
 from reachy_mini_conversation_app.memory.index_renderer import rebuild_index
 from reachy_mini_conversation_app.memory.memory_manager import (
@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 # exist on the Responses API the dreamer uses. Don't fall back to it; use a
 # chat-capable default instead.
 DEFAULT_DREAMER_MODEL = "gpt-5.4"
+
+
+class DreamerAuthError(RuntimeError):
+    """The dreamer's endpoint rejected the credentials (no OpenAI Responses access).
+
+    Raised so the whole dream pass aborts at once instead of re-failing on every
+    pending log; the live conversation is unaffected.
+    """
 
 
 DREAMER_SYSTEM_PROMPT = """\
@@ -429,7 +437,18 @@ class Dreamer:
         t_run0 = time.monotonic()
         stats_list: list[DreamLogStats] = []
         for filename in pending:
-            stats = self._process_one_log(filename)
+            try:
+                stats = self._process_one_log(filename)
+            except DreamerAuthError as e:
+                logger.error(
+                    "[DREAM] Memory consolidation skipped: the configured key was rejected by "
+                    "the model endpoint (%s). The dreamer needs OpenAI Responses API access "
+                    "(scope 'api.responses.write'); point MEMORY_DREAMER_MODEL/OPENAI_API_KEY at "
+                    "a key that has it. Pending logs are kept for a later pass; the live "
+                    "conversation is unaffected.",
+                    e,
+                )
+                break
             stats_list.append(stats)
             logger.info(stats.one_line())
             if not stats.errors:
@@ -525,6 +544,16 @@ class Dreamer:
                     input=input_items,  # type: ignore[arg-type]
                     tools=DREAMER_TOOL_SPECS,  # type: ignore[arg-type]
                 )
+            except AuthenticationError as e:
+                stats.record_llm(time.monotonic() - t_llm)
+                raise DreamerAuthError(str(e)) from e
+            except APIStatusError as e:
+                stats.record_llm(time.monotonic() - t_llm)
+                if e.status_code in (401, 403):
+                    raise DreamerAuthError(str(e)) from e
+                logger.exception("[DREAM] LLM call failed on %s: %s", filename, e)
+                stats.errors.append(f"llm_call: {e}")
+                break
             except Exception as e:
                 stats.record_llm(time.monotonic() - t_llm)
                 logger.exception("[DREAM] LLM call failed on %s: %s", filename, e)
