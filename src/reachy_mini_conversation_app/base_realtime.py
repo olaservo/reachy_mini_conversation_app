@@ -161,6 +161,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._response_done_event.set()
         self._response_started_or_rejected_event: asyncio.Event = asyncio.Event()
         self._last_response_rejected: bool = False
+        self._turn_speech_started_at: float | None = None
+        self._turn_speech_stopped_at: float | None = None
         self._turn_user_done_at: float | None = None
         self._turn_response_created_at: float | None = None
         self._turn_first_audio_at: float | None = None
@@ -719,6 +721,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     if event.type == "input_audio_buffer.speech_started":
                         self.is_idle_tool_call = False
                         self._mark_activity("user_speech_started")
+                        self._turn_speech_started_at = time.perf_counter()
+                        self._turn_speech_stopped_at = None
                         self._turn_user_done_at = None
                         self._turn_response_created_at = None
                         self._turn_first_audio_at = None
@@ -729,7 +733,13 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
                     if event.type == "input_audio_buffer.speech_stopped":
                         self._mark_activity("user_speech_stopped")
+                        self._turn_speech_stopped_at = time.perf_counter()
                         self.deps.movement_manager.set_listening(False)
+                        if self._turn_speech_started_at is not None:
+                            delta_ms = (self._turn_speech_stopped_at - self._turn_speech_started_at) * 1000
+                            logger.info(
+                                "Turn timing: server VAD speech_stopped %.0f ms after speech_started", delta_ms
+                            )
                         logger.debug("User speech stopped - server will auto-commit with VAD")
 
                     if event.type == "response.output_audio.done":
@@ -742,7 +752,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         if self._turn_user_done_at is not None and self._turn_response_created_at is None:
                             self._turn_response_created_at = time.perf_counter()
                             delta_ms = (self._turn_response_created_at - self._turn_user_done_at) * 1000
-                            logger.info("Turn latency: response.created %.0f ms after user transcript", delta_ms)
+                            logger.info("Backend latency: response.created %.0f ms after user transcript", delta_ms)
                         logger.debug("Response created (active)")
 
                     if event.type == "response.done":
@@ -798,6 +808,18 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         self._turn_user_done_at = time.perf_counter()
                         self._turn_response_created_at = None
                         self._turn_first_audio_at = None
+                        if self._turn_speech_stopped_at is not None:
+                            delta_ms = (self._turn_user_done_at - self._turn_speech_stopped_at) * 1000
+                            logger.info(
+                                "Turn timing: user transcript completed %.0f ms after speech_stopped",
+                                delta_ms,
+                            )
+                        elif self._turn_speech_started_at is not None:
+                            delta_ms = (self._turn_user_done_at - self._turn_speech_started_at) * 1000
+                            logger.info(
+                                "Turn timing: user transcript completed %.0f ms after speech_started",
+                                delta_ms,
+                            )
 
                         await self.output_queue.put(AdditionalOutputs({"role": "user", "content": transcript}))
 
@@ -819,7 +841,26 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         if self._turn_user_done_at is not None and self._turn_first_audio_at is None:
                             self._turn_first_audio_at = time.perf_counter()
                             delta_ms = (self._turn_first_audio_at - self._turn_user_done_at) * 1000
-                            logger.info("Turn latency: first audio delta %.0f ms after user transcript", delta_ms)
+                            chunk_samples = decoded_pcm.shape[-1]
+                            chunk_ms = chunk_samples / self.output_sample_rate * 1000
+                            if self._turn_speech_stopped_at is not None:
+                                stopped_delta_ms = (self._turn_first_audio_at - self._turn_speech_stopped_at) * 1000
+                                logger.info(
+                                    "Backend latency: first audio delta %.0f ms after user transcript "
+                                    "(%.0f ms after speech_stopped; first chunk %.0f ms at %s Hz)",
+                                    delta_ms,
+                                    stopped_delta_ms,
+                                    chunk_ms,
+                                    self.output_sample_rate,
+                                )
+                            else:
+                                logger.info(
+                                    "Backend latency: first audio delta %.0f ms after user transcript "
+                                    "(first chunk %.0f ms at %s Hz)",
+                                    delta_ms,
+                                    chunk_ms,
+                                    self.output_sample_rate,
+                                )
                         await self.output_queue.put(
                             (
                                 self.output_sample_rate,

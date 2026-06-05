@@ -359,6 +359,30 @@ async def test_user_speech_events_reset_idle_timer(monkeypatch: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_realtime_logs_backend_latency_breakdown(monkeypatch: Any, caplog: pytest.LogCaptureFixture) -> None:
+    """Latency logs should distinguish VAD, transcript, and first backend audio phases."""
+    caplog.set_level(logging.INFO, logger="reachy_mini_conversation_app.base_realtime")
+
+    await _run_openai_handler_with_events(
+        monkeypatch,
+        [
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+            SimpleNamespace(type="input_audio_buffer.speech_stopped"),
+            SimpleNamespace(type="conversation.item.input_audio_transcription.completed", transcript="hello there"),
+            SimpleNamespace(type="response.created"),
+            SimpleNamespace(type="response.output_audio.delta", delta="AAABAAIAAwA="),
+        ],
+    )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("Turn timing: server VAD speech_stopped" in message for message in messages)
+    assert any("Turn timing: user transcript completed" in message for message in messages)
+    assert any(
+        "Backend latency: first audio delta" in message and "after speech_stopped" in message for message in messages
+    )
+
+
+@pytest.mark.asyncio
 async def test_empty_user_transcript_exits_listening_without_chat_message(monkeypatch: Any) -> None:
     """Blank VAD commits should not leave listening motion frozen."""
     movement_manager = MagicMock()

@@ -2,12 +2,14 @@
 
 import sys
 import asyncio
+import logging
 import threading
 from types import SimpleNamespace
 from typing import Any
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -80,6 +82,55 @@ def test_clear_audio_queue_falls_back_when_backend_is_unknown() -> None:
     audio.clear_output_buffer.assert_called_once()
     assert isinstance(handler.output_queue, asyncio.Queue)
     assert handler.output_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_play_loop_logs_first_robot_playback_chunk_delay(caplog: pytest.LogCaptureFixture) -> None:
+    """Local playback should log the player queue delay for the first audio chunk in a turn."""
+    caplog.set_level(logging.INFO, logger="reachy_mini_conversation_app.console")
+    chunk = np.array([1, -2, 3, -4], dtype=np.int16)
+
+    class Handler:
+        def __init__(self) -> None:
+            self.output_queue: asyncio.Queue[Any] = asyncio.Queue()
+            self._emitted = False
+
+        async def emit(self) -> tuple[int, Any] | None:
+            if not self._emitted:
+                self._emitted = True
+                return (24000, chunk.copy())
+            return None
+
+    audio = SimpleNamespace(
+        _playback_next_pts_ns=1_500_000_000,
+        _get_playback_running_time_ns=lambda: 500_000_000,
+    )
+    media = SimpleNamespace(
+        audio=audio,
+        backend=LOCAL_PLAYER_BACKEND,
+        get_output_audio_samplerate=lambda: 24000,
+        push_audio_sample=MagicMock(),
+    )
+    robot = SimpleNamespace(media=media)
+    handler = Handler()
+    stream = LocalStream(handler, robot)
+
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.01)
+        stream._stop_event.set()
+
+    stopper = asyncio.create_task(stop_soon())
+    try:
+        await asyncio.wait_for(stream.play_loop(), timeout=1.0)
+    finally:
+        await stopper
+
+    media.push_audio_sample.assert_called_once()
+    assert any(
+        "Playback latency: first audio chunk pushed to robot player" in record.getMessage()
+        and "pending_player_audio=1000 ms" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_backend_config_persists_gemini_selection_and_status(

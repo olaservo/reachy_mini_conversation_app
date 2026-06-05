@@ -81,6 +81,26 @@ LEGACY_STARTUP_ENV_NAMES = (
 BACKEND_RETRY_DELAY_SECONDS = 5.0
 
 
+def _estimate_pending_playback_seconds(robot: ReachyMini) -> float:
+    """Best-effort estimate of audio still queued in the local player."""
+    media = getattr(robot, "media", None)
+    audio = getattr(media, "audio", None)
+    if audio is None:
+        return 0.0
+
+    next_pts_ns = getattr(audio, "_playback_next_pts_ns", None)
+    get_running_time_ns = getattr(audio, "_get_playback_running_time_ns", None)
+    if next_pts_ns is None or not callable(get_running_time_ns):
+        return 0.0
+
+    try:
+        pending_ns = int(next_pts_ns) - int(get_running_time_ns())
+    except Exception:
+        return 0.0
+
+    return max(0.0, pending_ns / 1e9)
+
+
 class LocalStream:
     """LocalStream using Reachy Mini's recorder/player."""
 
@@ -114,6 +134,7 @@ class LocalStream:
         self._backend_connection_state = "not_started"
         self._backend_error: str | None = None
         self._backend_retry_delay = BACKEND_RETRY_DELAY_SECONDS
+        self._turn_first_playback_chunk_logged = False
         self._install_handler(handler)
 
     def _install_handler(self, handler: ConversationHandler) -> None:
@@ -891,6 +912,8 @@ class LocalStream:
 
             if isinstance(handler_output, AdditionalOutputs):
                 for msg in handler_output.args:
+                    if msg.get("role") == "user":
+                        self._turn_first_playback_chunk_logged = False
                     content = msg.get("content", "")
                     if isinstance(content, str):
                         logger.info(
@@ -928,6 +951,19 @@ class LocalStream:
                         audio_frame,
                         num_samples,
                     )
+
+                playback_delay_s = _estimate_pending_playback_seconds(self._robot)
+                if not self._turn_first_playback_chunk_logged:
+                    chunk_duration_ms = len(audio_frame) / output_sample_rate * 1000
+                    logger.info(
+                        "Playback latency: first audio chunk pushed to robot player "
+                        "(chunk %.0f ms, backend_rate=%s Hz, player_rate=%s Hz, pending_player_audio=%.0f ms)",
+                        chunk_duration_ms,
+                        input_sample_rate,
+                        output_sample_rate,
+                        playback_delay_s * 1000,
+                    )
+                    self._turn_first_playback_chunk_logged = True
 
                 self._robot.media.push_audio_sample(audio_frame)
 
