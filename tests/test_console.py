@@ -161,8 +161,8 @@ async def test_play_loop_pushes_latency_probe_beep(caplog: pytest.LogCaptureFixt
             return None
 
     audio = SimpleNamespace(
-        _playback_next_pts_ns=1_500_000_000,
-        _get_playback_running_time_ns=lambda: 500_000_000,
+        _playback_next_pts_ns=0,
+        _get_playback_running_time_ns=lambda: 0,
     )
     media = SimpleNamespace(
         audio=audio,
@@ -173,6 +173,7 @@ async def test_play_loop_pushes_latency_probe_beep(caplog: pytest.LogCaptureFixt
     )
     robot = SimpleNamespace(media=media)
     stream = LocalStream(Handler(), robot)
+    stream._probe_beep_gap_s = 0.0
 
     async def stop_soon() -> None:
         await asyncio.sleep(0.01)
@@ -229,9 +230,10 @@ async def test_play_loop_logs_assistant_audio_before_latency_probe_beep(caplog: 
     )
     robot = SimpleNamespace(media=media)
     stream = LocalStream(Handler(), robot)
+    stream._probe_beep_gap_s = 0.0
 
     async def stop_soon() -> None:
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.2)
         stream._stop_event.set()
 
     stopper = asyncio.create_task(stop_soon())
@@ -247,6 +249,7 @@ async def test_play_loop_logs_assistant_audio_before_latency_probe_beep(caplog: 
         and "queued_audio=100 ms" in record.getMessage()
         for record in caplog.records
     )
+    assert any("Latency probe: delaying post-assistant beep" in record.getMessage() for record in caplog.records)
 
 
 def test_latency_probe_beep_detection_logs_recorder_delay(caplog: pytest.LogCaptureFixture) -> None:

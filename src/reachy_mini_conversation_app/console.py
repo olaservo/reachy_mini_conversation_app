@@ -48,6 +48,7 @@ from reachy_mini_conversation_app.config import (
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.audio.latency_probe import (
     POST_ASSISTANT_BEEP_ROLE,
+    POST_ASSISTANT_BEEP_GAP_S,
     POST_ASSISTANT_BEEP_CONTENT,
     make_probe_beep,
     probe_beep_score,
@@ -157,6 +158,8 @@ class LocalStream:
         self._assistant_playback_audio_ms = 0.0
         self._assistant_playback_first_push_at: float | None = None
         self._assistant_playback_last_push_at: float | None = None
+        self._probe_beep_generation = 0
+        self._probe_beep_gap_s = POST_ASSISTANT_BEEP_GAP_S
         self._install_handler(handler)
 
     def _install_handler(self, handler: ConversationHandler) -> None:
@@ -913,6 +916,7 @@ class LocalStream:
         self.handler.output_queue = asyncio.Queue()
         self._reset_assistant_playback_stats()
         self._clear_probe_beep_detection()
+        self._probe_beep_generation += 1
 
     def _reset_assistant_playback_stats(self) -> None:
         self._assistant_playback_chunks = 0
@@ -962,6 +966,16 @@ class LocalStream:
             )
             self._clear_probe_beep_detection()
 
+    def _estimate_post_assistant_beep_delay_s(self, *, now: float, playback_delay_s: float) -> tuple[float, float]:
+        if self._assistant_playback_first_push_at is None:
+            return max(0.0, playback_delay_s), 0.0
+
+        assistant_audio_s = self._assistant_playback_audio_ms / 1000
+        elapsed_playback_s = max(0.0, now - self._assistant_playback_first_push_at)
+        estimated_remaining_s = max(0.0, assistant_audio_s - elapsed_playback_s)
+        estimated_remaining_s = max(estimated_remaining_s, playback_delay_s)
+        return estimated_remaining_s + self._probe_beep_gap_s, estimated_remaining_s
+
     async def record_loop(self) -> None:
         """Read mic frames from the recorder and forward them to the handler."""
         input_sample_rate = self._robot.media.get_input_audio_samplerate()
@@ -1002,25 +1016,56 @@ class LocalStream:
                 await self.handler.receive((input_sample_rate, audio_frame))
             await asyncio.sleep(0)  # avoid busy loop
 
-    def _push_latency_probe_beep(self) -> None:
+    async def _push_latency_probe_beep(self) -> None:
         output_sample_rate = self._robot.media.get_output_audio_samplerate()
         output_channels = self._robot.media.get_output_channels()
         audio_frame = make_probe_beep(output_sample_rate, channels=output_channels)
         playback_delay_s = _estimate_pending_playback_seconds(self._robot)
-        pushed_at = time.perf_counter()
+        queued_at = time.perf_counter()
+        beep_generation = self._probe_beep_generation
         if self._assistant_playback_chunks > 0:
-            first_push_at = self._assistant_playback_first_push_at or pushed_at
-            last_push_at = self._assistant_playback_last_push_at or pushed_at
+            first_push_at = self._assistant_playback_first_push_at or queued_at
+            last_push_at = self._assistant_playback_last_push_at or queued_at
             logger.info(
                 "Latency probe: assistant audio handed to player before beep "
                 "(chunks=%s, queued_audio=%.0f ms, push_span=%.0f ms, since_last_chunk=%.0f ms)",
                 self._assistant_playback_chunks,
                 self._assistant_playback_audio_ms,
                 (last_push_at - first_push_at) * 1000,
-                (pushed_at - last_push_at) * 1000,
+                (queued_at - last_push_at) * 1000,
             )
         else:
             logger.info("Latency probe: no assistant audio chunks tracked before post-assistant beep")
+
+        delay_s, estimated_remaining_s = self._estimate_post_assistant_beep_delay_s(
+            now=queued_at,
+            playback_delay_s=playback_delay_s,
+        )
+        if delay_s > 0:
+            logger.info(
+                "Latency probe: delaying post-assistant beep %.0f ms "
+                "(estimated_remaining_audio=%.0f ms, safety_gap=%.0f ms)",
+                delay_s * 1000,
+                estimated_remaining_s * 1000,
+                self._probe_beep_gap_s * 1000,
+            )
+            delay_until_at = queued_at + delay_s
+            while not self._stop_event.is_set():
+                if beep_generation != self._probe_beep_generation:
+                    logger.info("Latency probe: skipped delayed post-assistant beep after audio queue was cleared")
+                    return
+                remaining_s = delay_until_at - time.perf_counter()
+                if remaining_s <= 0:
+                    break
+                await asyncio.sleep(min(0.1, remaining_s))
+            if self._stop_event.is_set():
+                return
+
+        if beep_generation != self._probe_beep_generation:
+            logger.info("Latency probe: skipped delayed post-assistant beep after audio queue was cleared")
+            return
+
+        pushed_at = time.perf_counter()
         logger.info(
             "Latency probe: pushing post-assistant beep "
             "(chunk %.0f ms, player_rate=%s Hz, channels=%s, pending_player_audio=%.0f ms)",
@@ -1053,7 +1098,7 @@ class LocalStream:
                         msg.get("role") == POST_ASSISTANT_BEEP_ROLE
                         and msg.get("content") == POST_ASSISTANT_BEEP_CONTENT
                     ):
-                        self._push_latency_probe_beep()
+                        await self._push_latency_probe_beep()
                         continue
                     content = msg.get("content", "")
                     if isinstance(content, str):
