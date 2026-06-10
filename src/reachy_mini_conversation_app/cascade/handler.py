@@ -32,6 +32,7 @@ from reachy_mini_conversation_app.cascade.provider_factory import (
     init_asr_provider,
     init_llm_provider,
     init_tts_provider,
+    init_transcript_analysis,
     cascade_system_instructions,
 )
 
@@ -119,6 +120,7 @@ class CascadeHandler(ConversationHandler):
         self.cumulative_cost: float = 0.0
 
         self._speech_output = QueueSpeechOutput(self)
+        self.transcript_manager = init_transcript_analysis(deps)
         self._vad_sm = VADStateMachine(SileroVAD())
         self._vad_buffer: NDArray[np.int16] = np.zeros(0, dtype=np.int16)
         self._turn_task: asyncio.Task[None] | None = None
@@ -255,6 +257,9 @@ class CascadeHandler(ConversationHandler):
                 await self.output_queue.put(AdditionalOutputs({"role": "user", "content": transcript}))
                 self.conversation_history.append({"role": "user", "content": transcript})
 
+                # Live reactions: analyze the final transcript in parallel with the LLM.
+                asyncio.create_task(self.transcript_manager.analyze_final(transcript))
+
                 ctx = PipelineContext(
                     llm=self.llm,
                     tts=self.tts,
@@ -273,4 +278,5 @@ class CascadeHandler(ConversationHandler):
                 logger.exception("Cascade turn failed")
                 self.deps.movement_manager.set_listening(False)
             finally:
+                self.transcript_manager.reset()
                 self._vad_sm.finish_processing()

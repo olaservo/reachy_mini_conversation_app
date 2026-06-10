@@ -10,6 +10,12 @@ from reachy_mini_conversation_app.cascade.asr import ASRProvider
 from reachy_mini_conversation_app.cascade.llm import LLMProvider
 from reachy_mini_conversation_app.cascade.tts import TTSProvider
 from reachy_mini_conversation_app.cascade.config import get_config
+from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
+from reachy_mini_conversation_app.cascade.transcript_analysis import (
+    NoOpTranscriptManager,
+    TranscriptAnalysisManager,
+    get_profile_reactions,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -82,3 +88,12 @@ def init_llm_provider() -> LLMProvider:
 def init_tts_provider() -> TTSProvider:
     """Initialize TTS provider from cascade.yaml config."""
     return init_provider("tts")  # type: ignore[no-any-return]
+
+
+def init_transcript_analysis(deps: ToolDependencies) -> TranscriptAnalysisManager | NoOpTranscriptManager:
+    """Build the transcript analysis manager from the active profile's reactions."""
+    reactions = get_profile_reactions()
+    if not reactions:
+        logger.info("No profile reactions configured, transcript analysis disabled")
+        return NoOpTranscriptManager()
+    return TranscriptAnalysisManager(reactions=reactions, deps=deps)
