@@ -123,6 +123,7 @@ class CascadeHandler(ConversationHandler):
         self._vad_buffer: NDArray[np.int16] = np.zeros(0, dtype=np.int16)
         self._turn_task: asyncio.Task[None] | None = None
         self._processing_lock = asyncio.Lock()
+        self._closed = asyncio.Event()
 
         self.tool_specs = self._build_tool_specs()
         logger.info("CascadeHandler ready (ASR/LLM/TTS configured via cascade.yaml)")
@@ -143,11 +144,18 @@ class CascadeHandler(ConversationHandler):
         )
 
     async def start_up(self) -> None:
-        """Warm up the LLM connection."""
+        """Warm up, then keep the session alive until shutdown.
+
+        The stream manager treats start_up() returning as "session ended", so this
+        must block for the lifetime of the session. receive()/emit() are driven
+        concurrently by the stream's record/play loops.
+        """
         await self.llm.warmup()
+        await self._closed.wait()
 
     async def shutdown(self) -> None:
-        """Cancel any in-flight turn."""
+        """End the session and cancel any in-flight turn."""
+        self._closed.set()
         if self._turn_task and not self._turn_task.done():
             self._turn_task.cancel()
 
