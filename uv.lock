@@ -6793,6 +6793,8 @@ all-vision = [
 cascade = [
     { name = "librosa" },
     { name = "pyyaml" },
+    { name = "torch" },
+    { name = "torchaudio" },
 ]
 cascade-all = [
     { name = "deepgram-sdk" },
@@ -6901,6 +6903,7 @@ requires-dist = [
     { name = "reachy-mini-conversation-app", extras = ["cascade-nemotron"], marker = "extra == 'cascade-all'" },
     { name = "reachy-mini-conversation-app", extras = ["cascade-parakeet"], marker = "extra == 'cascade-all'" },
     { name = "reachy-mini-conversation-app", extras = ["cascade-parakeet-progressive"], marker = "extra == 'cascade-all'" },
+    { name = "reachy-mini-conversation-app", extras = ["cascade-silero-vad"], marker = "extra == 'cascade'" },
     { name = "reachy-mini-conversation-app", extras = ["cascade-silero-vad"], marker = "extra == 'cascade-all'" },
     { name = "reachy-mini-conversation-app", extras = ["cascade-voxtral-mlx"], marker = "extra == 'cascade-all'" },
     { name = "reachy-mini-dances-library" },

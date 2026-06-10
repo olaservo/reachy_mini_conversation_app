@@ -255,7 +255,7 @@ Providers are configured in `cascade.yaml` (`provider:` + a `providers:` catalog
 Each provider's dependencies live behind a `cascade_*` extra (install only what you select):
 
 ```bash
-uv sync --extra cascade --extra cascade_silero_vad          # base + VAD (required)
+uv sync --extra cascade                                     # base + Silero VAD (always required)
 uv sync --extra cascade_deepgram --extra cascade_kokoro     # e.g. Deepgram ASR + Kokoro TTS
 uv sync --extra cascade_all                                 # everything (excludes Apple-Silicon-only extras on other platforms)
 ```

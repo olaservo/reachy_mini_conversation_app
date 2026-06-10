@@ -60,7 +60,9 @@ all_vision = [
 
 # Cascade pipeline (ASR -> LLM -> TTS). Base extra is required to run the cascade backend;
 # provider extras are opt-in per ASR/LLM/TTS provider selected in cascade.yaml.
-cascade = ["librosa>=0.10.0", "pyyaml>=6.0"]
+# Silero VAD (torch + torchaudio) is always loaded by the cascade handler, so the base
+# extra pulls it in; cascade_silero_vad is kept as a standalone alias for clarity.
+cascade = ["reachy_mini_conversation_app[cascade_silero_vad]", "librosa>=0.10.0", "pyyaml>=6.0"]
 cascade_silero_vad = ["torch>=2.0", "torchaudio>=2.0"]
 cascade_parakeet = ["parakeet-mlx>=0.4.0", "ffmpeg-python>=0.2.0"]
 cascade_parakeet_progressive = ["mlx-audio>=0.3.1"]
