@@ -1,0 +1,226 @@
+# Cascade configuration: ASR → LLM → TTS pipeline
+# API keys are in .env file (OPENAI_API_KEY, DEEPGRAM_API_KEY, GEMINI_API_KEY, ELEVENLABS_API_KEY)
+
+asr:
+  provider: whisper_openai  # deepgram, whisper_openai, parakeet_mlx_progressive
+
+  providers:
+    # ========== CLOUD PROVIDERS ==========
+    whisper_openai:
+      module: whisper_openai
+      class: WhisperOpenAIASR
+      streaming: false
+      location: cloud
+      requires: [OPENAI_API_KEY]
+      hardware: null
+      description: "OpenAI Whisper API - high quality cloud batch ASR"
+      # Settings
+      model: whisper-1
+      # Pricing (Feb 2026): $0.006/minute = $0.0001/second
+      cost_per_second: 0.0001
+
+    deepgram:
+      module: deepgram
+      class: DeepgramASR
+      streaming: true
+      location: cloud
+      requires: [DEEPGRAM_API_KEY]
+      hardware: null
+      description: "Deepgram Nova - real-time cloud streaming ASR"
+      # Settings
+      model: nova-2  # or nova-3
+      language: en
+
+    openai_realtime_asr:
+      module: openai_realtime_asr
+      class: OpenAIRealtimeASR
+      streaming: true
+      location: cloud
+      requires: [OPENAI_API_KEY]
+      hardware: null
+      description: "OpenAI Realtime - GPT-4o streaming transcription via WebSocket"
+      # Settings
+      model: gpt-4o-transcribe  # or gpt-4o-mini-transcribe (faster, lower quality)
+      language: en
+      prompt: ""  # Optional: guide transcription style/vocabulary
+      use_server_vad: true  # Enable for real-time partials during speech; both VADs can coexist
+
+    # ========== LOCAL PROVIDERS (Apple Silicon) ==========
+    parakeet_mlx_progressive:
+      module: parakeet_mlx_progressive
+      class: ParakeetMLXProgressiveASR
+      streaming: true
+      location: local
+      requires: []
+      hardware: apple_silicon
+      import_check: mlx_audio
+      install_extra: cascade_parakeet_progressive
+      description: "Parakeet MLX progressive - live transcription with sentence-aware sliding window"
+      # Settings
+      model: mlx-community/parakeet-tdt-0.6b-v3
+      precision: float16
+      max_window_size: 15.0
+      sentence_buffer: 2.0
+
+    voxtral_mlx:
+      module: voxtral_mlx
+      class: VoxtralMLXASR
+      streaming: true
+      location: local
+      requires: []
+      hardware: apple_silicon
+      import_check: mlx_audio
+      install_extra: cascade_voxtral_mlx
+      description: "Voxtral Mini 4B Realtime - multilingual local ASR via MLX"
+      # Settings
+      model: mlx-community/Voxtral-Mini-4B-Realtime-6bit
+      language: en
+      max_tokens: 256
+      transcription_delay_ms: 480
+
+    # ========== LOCAL PROVIDERS (CUDA) ==========
+    parakeet_nemo_progressive:
+      module: parakeet_nemo_progressive
+      class: ParakeetNeMoProgressiveASR
+      streaming: true
+      location: local
+      requires: []
+      hardware: cuda
+      import_check: nemo.collections
+      install_extra: cascade_nemotron
+      description: "Parakeet TDT via NeMo - progressive ASR with sliding window (CUDA)"
+      # Settings
+      model: nvidia/parakeet-tdt-0.6b-v2
+      max_window_size: 15.0
+      sentence_buffer: 2.0
+
+    nemotron:
+      module: nemotron
+      class: NemotronASR
+      streaming: true
+      location: local
+      requires: []
+      hardware: cuda
+      import_check: nemo.collections
+      install_extra: cascade_nemotron
+      description: "NVIDIA Nemotron - cache-aware streaming ASR"
+      # Settings
+      model: nvidia/nemotron-speech-streaming-en-0.6b
+      chunk_size_ms: 560  # 80, 160, 560, or 1120
+
+
+llm:
+  provider: gpt-4o-mini  # gpt-4o-mini, gpt-5.2-chat, gemini-2.5-flash-lite, gemini-3.1-flash-lite
+  temperature: 1.0
+
+  providers:
+
+    gpt-5.2-chat:
+      module: openai
+      class: OpenAILLM
+      location: cloud
+      requires: [ OPENAI_API_KEY ]
+      description: "OpenAI GPT 5.2 Chat"
+      # Settings
+      model: gpt-5.2-chat-latest
+      # Pricing (Feb 2026)
+      input_cost_per_1m: 1.75
+      output_cost_per_1m: 14.00
+
+    gpt-4o-mini:
+      module: openai
+      class: OpenAILLM
+      location: cloud
+      requires: [OPENAI_API_KEY]
+      description: "OpenAI GPT models"
+      # Settings
+      model: gpt-4o-mini
+      # Pricing (Feb 2026)
+      input_cost_per_1m: 0.15
+      output_cost_per_1m: 0.60
+
+    gemini-2.5-flash-lite:
+      module: gemini
+      class: GeminiLLM
+      location: cloud
+      requires: [GEMINI_API_KEY]
+      description: "Google Gemini models"
+      # Settings
+      model: gemini-2.5-flash-lite
+      # Pricing (Feb 2026)
+      input_cost_per_1m: 0.075
+      output_cost_per_1m: 0.30
+
+    gemini-3.1-flash-lite:
+      module: gemini
+      class: GeminiLLM
+      location: cloud
+      requires: [GEMINI_API_KEY]
+      description: "Google Gemini 3.1 Flash Lite - fastest, most cost-efficient Gemini 3 model"
+      # Settings
+      model: gemini-3.1-flash-lite-preview
+      # Pricing (March 2026): $0.25/1M input, $1.50/1M output
+      input_cost_per_1m: 0.25
+      output_cost_per_1m: 1.50
+
+
+tts:
+  provider: tts_openai  # tts_openai, kokoro, elevenlabs
+  trim_silence: true
+
+  providers:
+    tts_openai:
+      module: openai
+      class: OpenAITTS
+      location: cloud
+      requires: [OPENAI_API_KEY]
+      description: "OpenAI TTS API"
+      # Settings
+      voice: alloy
+      model: tts-1  # tts-1 or tts-1-hd
+      # Pricing (Feb 2026): $15/1M chars for tts-1, $30/1M chars for tts-1-hd
+      cost_per_1m_chars: 15.0
+
+    kokoro:
+      module: kokoro
+      class: KokoroTTS
+      location: local
+      requires: []
+      hardware: null
+      import_check: kokoro
+      install_extra: cascade_kokoro
+      description: "Kokoro local TTS - works on any PyTorch platform"
+      # Settings
+      voice: am_adam
+      # No cost for local providers
+
+    elevenlabs:
+      module: elevenlabs
+      class: ElevenLabsTTS
+      location: cloud
+      requires: [ELEVENLABS_API_KEY]
+      description: "ElevenLabs TTS API"
+      # Settings
+      voice_id: pNInz6obpgDQGcFmaJgB
+      model: eleven_flash_v2_5
+      # Pricing (Feb 2026)
+      cost_per_1m_chars: 30.0
+
+    gradium:
+      module: gradium
+      class: GradiumTTS
+      location: cloud
+      requires: [GRADIUM_API_KEY]
+      import_check: gradium
+      install_extra: cascade_gradium
+      description: "Gradium TTS - low-latency streaming voice AI"
+      # Settings
+      voice_id: YTpq7expH9539ERJ  # Emma (US/Feminine)
+      model: default
+      cost_per_1m_chars: 0.0
+
+
+# Transcript analysis: real-time reactions to keywords/entities in user speech
+# Reactions are defined per-profile in profiles/<name>/reactions.yaml
+transcript_analysis:
+  gliner_model: urchade/gliner_small-v2.1  # GLiNER model for entity recognition

@@ -58,6 +58,33 @@ all_vision = [
   "mediapipe==0.10.14",
 ]
 
+# Cascade pipeline (ASR -> LLM -> TTS). Base extra is required to run the cascade backend;
+# provider extras are opt-in per ASR/LLM/TTS provider selected in cascade.yaml.
+cascade = ["librosa>=0.10.0", "pyyaml>=6.0"]
+cascade_silero_vad = ["torch>=2.0", "torchaudio>=2.0"]
+cascade_parakeet = ["parakeet-mlx>=0.4.0", "ffmpeg-python>=0.2.0"]
+cascade_parakeet_progressive = ["mlx-audio>=0.3.1"]
+cascade_voxtral_mlx = ["mlx-audio>=0.3.1"]
+cascade_nemotron = ["nemo_toolkit[asr]>=2.0"]
+cascade_kokoro = ["kokoro>=0.9.4"]
+cascade_elevenlabs = ["elevenlabs>=1.0.0"]
+cascade_deepgram = ["deepgram-sdk>=3.0.0,<4.0.0"]
+cascade_gradium = ["gradium>=0.5.4; python_version>='3.12'"]
+cascade_gliner = ["gliner>=0.2.0"]
+# Gemini LLM uses google-genai, which is already a core dependency — no extra deps needed.
+cascade_all = [
+  "reachy_mini_conversation_app[cascade]",
+  "reachy_mini_conversation_app[cascade_silero_vad]",
+  "reachy_mini_conversation_app[cascade_parakeet]",
+  "reachy_mini_conversation_app[cascade_parakeet_progressive]",
+  "reachy_mini_conversation_app[cascade_voxtral_mlx]",
+  "reachy_mini_conversation_app[cascade_nemotron]",
+  "reachy_mini_conversation_app[cascade_kokoro]",
+  "reachy_mini_conversation_app[cascade_elevenlabs]",
+  "reachy_mini_conversation_app[cascade_deepgram]",
+]
+# Note: cascade_gradium excluded from cascade_all because gradium requires Python >=3.12
+
 [dependency-groups]
 dev = [
   "pytest",
@@ -96,6 +123,7 @@ reachy_mini_conversation_app = [
   "demos/**/*.txt",
   "prompts_library/*.txt",
   "prompts/**/*.txt",
+  "cascade/*.yaml",
 ]
 reachy_talk_data = [
   "profiles/**/*.txt",
