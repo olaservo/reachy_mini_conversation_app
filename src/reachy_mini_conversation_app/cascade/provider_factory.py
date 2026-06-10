@@ -1,0 +1,84 @@
+"""Factory functions for initializing cascade providers (ASR, LLM, TTS)."""
+
+from __future__ import annotations
+import logging
+import importlib
+from typing import Any, Dict
+
+from reachy_mini_conversation_app.prompts import CASCADE_EXTRA_INSTRUCTIONS, get_session_instructions
+from reachy_mini_conversation_app.cascade.asr import ASRProvider
+from reachy_mini_conversation_app.cascade.llm import LLMProvider
+from reachy_mini_conversation_app.cascade.tts import TTSProvider
+from reachy_mini_conversation_app.cascade.config import get_config
+
+
+logger = logging.getLogger(__name__)
+
+
+def init_provider(provider_type: str, extra_kwargs: Dict[str, Any] | None = None) -> Any:
+    """Initialize a provider (ASR/LLM/TTS) from cascade.yaml config.
+
+    Args:
+        provider_type: One of "asr", "llm", "tts"
+        extra_kwargs: Additional kwargs to pass to provider constructor
+
+    Returns:
+        Initialized provider instance
+
+    """
+    config = get_config()
+
+    # All API keys that any provider might need
+    api_key_map = {
+        "OPENAI_API_KEY": config.OPENAI_API_KEY,
+        "DEEPGRAM_API_KEY": config.DEEPGRAM_API_KEY,
+        "GEMINI_API_KEY": config.GEMINI_API_KEY,
+        "ELEVENLABS_API_KEY": config.ELEVENLABS_API_KEY,
+        "GRADIUM_API_KEY": config.GRADIUM_API_KEY,
+    }
+
+    # Get provider name, info, and settings using dynamic attribute access
+    name = getattr(config, f"{provider_type}_provider")
+    info = getattr(config, f"get_{provider_type}_provider_info")(name)
+    kwargs = getattr(config, f"get_{provider_type}_settings")(name)
+
+    # Add API key (validated at config load time)
+    requires = info["requires"]
+    if len(requires) == 1:
+        kwargs["api_key"] = api_key_map[requires[0]]
+    elif requires:
+        raise ValueError(f"Multi-key providers not supported: {requires}")
+
+    # Merge extra kwargs if provided
+    if extra_kwargs:
+        kwargs.update(extra_kwargs)
+
+    # Dynamic import and instantiate
+    module = importlib.import_module(f"reachy_mini_conversation_app.cascade.{provider_type}.{info['module']}")
+    ProviderClass = getattr(module, info["class"])
+
+    # Log with provider-specific details
+    extra_info = f", streaming={info['streaming']}" if "streaming" in info else ""
+    logger.info(f"Initializing {provider_type.upper()}: {name} (location={info['location']}{extra_info})")
+
+    return ProviderClass(**kwargs)
+
+
+def init_asr_provider() -> ASRProvider:
+    """Initialize ASR provider from cascade.yaml config."""
+    return init_provider("asr")  # type: ignore[no-any-return]
+
+
+def cascade_system_instructions() -> str:
+    """Resolve the active profile's instructions plus the cascade-specific speak guidance."""
+    return get_session_instructions() + CASCADE_EXTRA_INSTRUCTIONS
+
+
+def init_llm_provider() -> LLMProvider:
+    """Initialize LLM provider from cascade.yaml config."""
+    return init_provider("llm", {"system_instructions": cascade_system_instructions()})  # type: ignore[no-any-return]
+
+
+def init_tts_provider() -> TTSProvider:
+    """Initialize TTS provider from cascade.yaml config."""
+    return init_provider("tts")  # type: ignore[no-any-return]

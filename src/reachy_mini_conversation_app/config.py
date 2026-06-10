@@ -88,6 +88,7 @@ GEMINI_AVAILABLE_VOICES: list[str] = [
 OPENAI_BACKEND = "openai"
 GEMINI_BACKEND = "gemini"
 HF_BACKEND = "huggingface"
+CASCADE_BACKEND = "cascade"
 DEFAULT_BACKEND_PROVIDER = HF_BACKEND
 HF_REALTIME_CONNECTION_MODE_ENV = "HF_REALTIME_CONNECTION_MODE"
 HF_REALTIME_WS_URL_ENV = "HF_REALTIME_WS_URL"
@@ -117,16 +118,21 @@ DEFAULT_MODEL_NAME_BY_BACKEND = {
     OPENAI_BACKEND: "gpt-realtime-2",
     GEMINI_BACKEND: "gemini-3.1-flash-live-preview",
     HF_BACKEND: HF_DEFAULTS.model_name,
+    # Cascade selects ASR/LLM/TTS in cascade.yaml; this realtime-style model name is unused.
+    CASCADE_BACKEND: "cascade-pipeline",
 }
 BACKEND_LABEL_BY_PROVIDER = {
     OPENAI_BACKEND: "OpenAI Realtime",
     GEMINI_BACKEND: "Gemini Live",
     HF_BACKEND: "Hugging Face",
+    CASCADE_BACKEND: "Cascade (ASR→LLM→TTS)",
 }
 DEFAULT_VOICE_BY_BACKEND = {
     OPENAI_BACKEND: OPENAI_DEFAULT_VOICE,
     GEMINI_BACKEND: "Kore",
     HF_BACKEND: HF_DEFAULTS.voice,
+    # Cascade voice is TTS-provider-scoped; this is only a fallback label.
+    CASCADE_BACKEND: "alloy",
 }
 
 logger = logging.getLogger(__name__)

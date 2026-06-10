@@ -99,6 +99,21 @@ reachy-mini-conversation-app = "reachy_mini_conversation_app.main:main"
 
 [tool.uv]
 exclude-newer = "7 days"
+# The MLX-based cascade ASR extras (mlx-audio) require transformers>=5.5 / protobuf>=6,
+# which is incompatible with the vision extras that pin transformers==5.3.0 and mediapipe
+# (protobuf<5). They target different setups (MLX is Apple-Silicon-local ASR), so declare
+# them mutually exclusive instead of forcing a single resolvable lock.
+conflicts = [
+  [{ extra = "local_vision" }, { extra = "cascade_parakeet_progressive" }],
+  [{ extra = "local_vision" }, { extra = "cascade_voxtral_mlx" }],
+  [{ extra = "local_vision" }, { extra = "cascade_all" }],
+  [{ extra = "all_vision" }, { extra = "cascade_parakeet_progressive" }],
+  [{ extra = "all_vision" }, { extra = "cascade_voxtral_mlx" }],
+  [{ extra = "all_vision" }, { extra = "cascade_all" }],
+  [{ extra = "mediapipe_vision" }, { extra = "cascade_parakeet_progressive" }],
+  [{ extra = "mediapipe_vision" }, { extra = "cascade_voxtral_mlx" }],
+  [{ extra = "mediapipe_vision" }, { extra = "cascade_all" }],
+]
 
 [tool.uv.exclude-newer-package]
 "reachy-mini" = false

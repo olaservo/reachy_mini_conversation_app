@@ -41,6 +41,15 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
     parser.add_argument("--gradio", default=False, action="store_true", help="Open gradio interface")
     parser.add_argument("--debug", default=False, action="store_true", help="Enable debug logging")
     parser.add_argument(
+        "--cascade",
+        default=False,
+        action="store_true",
+        help="Use the cascade backend (ASR→LLM→TTS pipeline) instead of a realtime backend.",
+    )
+    parser.add_argument("--asr-provider", type=str, default=None, help="Override cascade ASR provider (see cascade.yaml).")
+    parser.add_argument("--llm-provider", type=str, default=None, help="Override cascade LLM provider (see cascade.yaml).")
+    parser.add_argument("--tts-provider", type=str, default=None, help="Override cascade TTS provider (see cascade.yaml).")
+    parser.add_argument(
         "--robot-name",
         type=str,
         default=None,

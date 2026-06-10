@@ -61,6 +61,7 @@ def run(
         HF_BACKEND,
         GEMINI_BACKEND,
         OPENAI_BACKEND,
+        CASCADE_BACKEND,
         HF_LOCAL_CONNECTION_MODE,
         config,
         is_gemini_model,
@@ -93,6 +94,18 @@ def run(
             startup_settings = load_startup_settings_into_runtime(instance_path)
         except Exception as e:
             logger.warning("Failed to load startup settings: %s", e)
+
+    # Cascade backend selection via CLI overrides any env/.env value above.
+    if args.cascade:
+        os.environ["BACKEND_PROVIDER"] = CASCADE_BACKEND
+    if args.asr_provider:
+        os.environ["CASCADE_ASR_PROVIDER"] = args.asr_provider
+    if args.llm_provider:
+        os.environ["CASCADE_LLM_PROVIDER"] = args.llm_provider
+    if args.tts_provider:
+        os.environ["CASCADE_TTS_PROVIDER"] = args.tts_provider
+    if args.cascade or args.asr_provider or args.llm_provider or args.tts_provider:
+        refresh_runtime_config_from_env()
 
     if config.BACKEND_PROVIDER == HF_BACKEND:
         logger.info(
@@ -177,6 +190,17 @@ def run(
 
     def build_handler(startup_voice: Optional[str] = None) -> ConversationHandler:
         """Build a realtime handler for the current runtime backend config."""
+        if config.BACKEND_PROVIDER == CASCADE_BACKEND:
+            from reachy_mini_conversation_app.cascade.handler import CascadeHandler
+
+            logger.info("Using Cascade backend (ASR→LLM→TTS pipeline, configured via cascade.yaml)")
+            return CascadeHandler(
+                deps,
+                gradio_mode=args.gradio,
+                instance_path=instance_path,
+                startup_voice=startup_voice,
+            )
+
         if is_gemini_model():
             from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
 
