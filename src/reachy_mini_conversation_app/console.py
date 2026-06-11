@@ -408,13 +408,17 @@ class LocalStream:
 
     async def apply_personality(self, profile: Optional[str]) -> str:
         """Apply a personality through the active handler without rebuilding the backend."""
+        self.clear_audio_queue()
         try:
-            return await self.handler.apply_personality(profile)
+            status = await self.handler.apply_personality(profile)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error("Error applying personality '%s': %s", profile, e)
             return f"Failed to apply personality: {e}"
+        finally:
+            self.clear_audio_queue()
+        return status
 
     async def get_available_voices(self) -> list[str]:
         """Return voices available for the currently selected backend."""

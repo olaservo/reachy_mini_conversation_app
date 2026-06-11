@@ -795,15 +795,23 @@ async def test_apply_personality_propagates_handler_cancellation() -> None:
 
 @pytest.mark.asyncio
 async def test_local_stream_apply_personality_delegates_without_backend_restart() -> None:
-    """LocalStream personality changes should use the active handler in place."""
+    """LocalStream personality changes should stop playback and use the active handler in place."""
+    events: list[str] = []
+
+    async def apply_personality(_profile: str | None) -> str:
+        events.append("apply")
+        return "Applied personality to current realtime session."
+
     handler = MagicMock()
-    handler.apply_personality = AsyncMock(return_value="Applied personality to current realtime session.")
+    handler.apply_personality = AsyncMock(side_effect=apply_personality)
     stream = LocalStream(handler, MagicMock())
+    stream.clear_audio_queue = MagicMock(side_effect=lambda: events.append("clear"))
 
     status = await stream.apply_personality("sorry_bro")
 
     assert status == "Applied personality to current realtime session."
     handler.apply_personality.assert_awaited_once_with("sorry_bro")
+    assert events == ["clear", "apply", "clear"]
     assert not stream._restart_requested.is_set()
 
 
