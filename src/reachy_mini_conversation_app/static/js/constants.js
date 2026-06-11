@@ -24,19 +24,8 @@ export const AVATAR_BY_PROFILE = Object.freeze({
   victorian_butler: "victorian-butler.svg",
 });
 
-/** Default tools for custom profiles; mirrors profiles/default/tools.txt. */
-export const DEFAULT_TOOLS = Object.freeze([
-  "dance",
-  "stop_dance",
-  "play_emotion",
-  "stop_emotion",
-  "camera",
-  "idle_do_nothing",
-  "head_tracking",
-  "move_head",
-]);
-
 export const ORB_STATES = Object.freeze({
+  MUTED: "muted",
   IDLE: "idle",
   CONNECTING: "connecting",
   LISTENING: "listening",
@@ -46,6 +35,7 @@ export const ORB_STATES = Object.freeze({
 });
 
 export const GLOW_BY_STATE = Object.freeze({
+  [ORB_STATES.MUTED]: "#94a3b8",      // paused, waiting for the user
   [ORB_STATES.IDLE]: "#34d399",       // ready / breathing
   [ORB_STATES.CONNECTING]: "#facc15", // negotiating
   [ORB_STATES.LISTENING]: "#22d3ee",  // user speaks

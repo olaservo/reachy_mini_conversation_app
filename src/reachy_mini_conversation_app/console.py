@@ -196,6 +196,7 @@ class LocalStream:
         self._instance_path: Optional[str] = instance_path
         self._settings_initialized = False
         self._asyncio_loop = None
+        self._mic_muted = settings_app is not None  # headless streams have no UI to unmute
         self._active_backend_name = get_backend_choice()
         self._backend_connection_state = "not_started"
         self._backend_error: str | None = None
@@ -675,6 +676,25 @@ class LocalStream:
                 },
             )
 
+        class MicPayload(BaseModel):
+            muted: bool
+
+        # GET /mic -> current mic mute state
+        @self._settings_app.get("/mic")
+        def _mic_state() -> JSONResponse:
+            return JSONResponse({"muted": self._mic_muted})
+
+        # POST /mic -> pause/resume the conversation
+        @self._settings_app.post("/mic")
+        def _set_mic(payload: MicPayload) -> JSONResponse:
+            self._mic_muted = bool(payload.muted)
+            logger.info("Microphone %s via web UI", "muted" if self._mic_muted else "unmuted")
+            if self._mic_muted:
+                loop = self._asyncio_loop
+                if loop is not None and loop.is_running():
+                    loop.call_soon_threadsafe(self.clear_audio_queue)
+            return JSONResponse({"muted": self._mic_muted})
+
         # POST /openai_api_key -> set/persist key
         @self._settings_app.post("/openai_api_key")
         def _set_key(payload: ApiKeyPayload) -> JSONResponse:
@@ -994,7 +1014,7 @@ class LocalStream:
 
         while not self._stop_event.is_set():
             audio_frame = self._robot.media.get_audio_sample()
-            if audio_frame is not None:
+            if audio_frame is not None and not self._mic_muted:
                 await self.handler.receive((input_sample_rate, audio_frame))
             await asyncio.sleep(0)  # avoid busy loop
 
@@ -1018,6 +1038,10 @@ class LocalStream:
                         )
 
             elif isinstance(handler_output, tuple):
+                # Paused conversation stays silent: drop assistant audio (e.g. idle-timer chatter)
+                if self._mic_muted:
+                    continue
+
                 input_sample_rate, audio_data = handler_output
                 output_sample_rate = self._robot.media.get_output_audio_samplerate()
 

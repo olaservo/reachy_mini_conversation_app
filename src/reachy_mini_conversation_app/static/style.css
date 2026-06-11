@@ -924,10 +924,21 @@ button {
   display: grid;
   place-items: center;
   color: var(--glow);
-  pointer-events: none;
+  /* The orb is the mic toggle button (see talk.js). */
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
   /* Subtle scale-on-state-change so transitions feel "alive" without
      forcing a per-state animation everywhere. */
   transition: transform 0.18s ease, filter 0.18s ease;
+}
+
+.convo-orb:active {
+  transform: scale(0.97);
+}
+
+.convo-orb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 6px;
 }
 
 .convo-orb__glow {
@@ -1132,6 +1143,7 @@ button {
    default (covers ``idle``); we never set it to opacity:1 explicitly so
    that any other ``[data-state]`` rule below wins via cascade. */
 .convo-orb[data-state="idle"] .ind-mic,
+.convo-orb[data-state="muted"] .ind-mic-off,
 .convo-orb[data-state="connecting"] .ind-spinner,
 .convo-orb[data-state="listening"] .ind-bars,
 .convo-orb[data-state="thinking"] .ind-thinking,
@@ -1178,6 +1190,11 @@ button {
 .convo-orb[data-state="speaking"] .convo-orb__ring-outer {
   opacity: 0.4;
   animation: orb-ring-out 1.8s ease-out infinite;
+}
+
+/* Muted: perfectly still and dimmed so "paused" reads at a glance. */
+.convo-orb[data-state="muted"] .convo-orb__glow {
+  opacity: 0.25;
 }
 
 /* Error: no animation, just a stronger edge to read as a stop signal. */

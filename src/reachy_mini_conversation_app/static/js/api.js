@@ -52,6 +52,9 @@ export const savePersonality = (payload) =>
 export const applyPersonality = (name, { persist = false } = {}) =>
   request("POST", "/personalities/apply", { body: { name, persist } });
 
+export const getMicState = () => request("GET", "/mic");
+export const setMicMuted = (muted) => request("POST", "/mic", { body: { muted } });
+
 export const listVoices = () => request("GET", "/voices");
 export const getCurrentVoice = () => request("GET", "/voices/current");
 export const applyVoice = (voice) =>

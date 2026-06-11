@@ -23,7 +23,14 @@ const BACKEND_HINTS = Object.freeze({
 });
 
 export async function mountSettingsView({ outlet, signal }) {
-  const backendSection = buildBackendSection();
+  // Backends expose different voice lists, so a save re-syncs voices and status.
+  const backendSection = buildBackendSection({
+    onSaved: () =>
+      Promise.all([
+        refreshStatus({ statusSection, backendSection, signal }),
+        refreshVoices({ voiceSection, signal }),
+      ]),
+  });
   const voiceSection = buildVoiceSection();
   const statusSection = buildStatusSection();
 
@@ -48,7 +55,7 @@ export async function mountSettingsView({ outlet, signal }) {
   ]);
 }
 
-function buildBackendSection() {
+function buildBackendSection({ onSaved } = {}) {
   const backendSelect = h(
     "select",
     { class: "settings-select", name: "backend" },
@@ -114,6 +121,7 @@ function buildBackendSection() {
       const result = await saveBackendConfig(payload);
       status.textContent =
         result?.message || (result?.requires_restart ? "Saved. Restart the app to apply." : "Saved.");
+      await onSaved?.();
     } catch (error) {
       status.textContent = `Failed to save: ${error?.message || error}`;
       status.classList.add("is-error");

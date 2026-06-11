@@ -3,12 +3,12 @@
 import {
   applyPersonality,
   listPersonalities,
+  loadPersonality,
   savePersonality,
 } from "../api.js";
 import {
   AVATAR_BY_PROFILE,
   BUILT_IN_DEFAULT_OPTION,
-  DEFAULT_TOOLS,
   ROUTES,
   avatarFor,
 } from "../constants.js";
@@ -89,10 +89,12 @@ export async function mountHomeView({ outlet, signal, navigate }) {
     status.textContent = `Saving "${created.name}"…`;
     let newName;
     try {
+      // Custom profiles start with the built-in default profile's tool set.
+      const defaults = await loadPersonality(BUILT_IN_DEFAULT_OPTION);
       const saveResult = await savePersonality({
         name: created.name,
         instructions: created.instructions,
-        tools_text: DEFAULT_TOOLS.join("\n"),
+        tools_text: defaults?.tools_text || "",
         voice: "", // falls back to backend default; user can change in Settings
       });
       if (signal.aborted) return;

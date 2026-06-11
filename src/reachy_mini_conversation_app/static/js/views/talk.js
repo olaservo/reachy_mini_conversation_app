@@ -1,9 +1,10 @@
 /**
  * Talk view: conversation orb driven by the SSE activity stream.
- * Audio I/O runs entirely in Python; this view is a read-only status surface.
+ * Audio I/O runs entirely in Python; the orb doubles as the mic toggle.
+ * The conversation starts muted — tapping the orb unmutes/pauses it.
  */
 
-import { listPersonalities } from "../api.js";
+import { getMicState, listPersonalities, setMicMuted } from "../api.js";
 import { BUILT_IN_DEFAULT_OPTION, ORB_STATES } from "../constants.js";
 import { createOrb, mapActivityToState } from "../orb.js";
 import { consumePendingApply } from "../pending-apply.js";
@@ -14,7 +15,8 @@ const SSE_ENDPOINT = "/conversation_events";
 
 /** Human-readable label below the orb for each visual state. */
 const CAPTION_BY_STATE = Object.freeze({
-  [ORB_STATES.IDLE]: "Ready — just speak to Reachy.",
+  [ORB_STATES.MUTED]: "Tap the mic to start the conversation.",
+  [ORB_STATES.IDLE]: "Ready — just speak to Reachy. Tap the mic to pause.",
   [ORB_STATES.CONNECTING]: "Connecting to the conversation event stream…",
   [ORB_STATES.LISTENING]: "Listening…",
   [ORB_STATES.THINKING]: "Thinking…",
@@ -24,6 +26,10 @@ const CAPTION_BY_STATE = Object.freeze({
 
 export async function mountTalkView({ outlet, signal }) {
   const pending = consumePendingApply();
+  const micStatePromise = getMicState();
+  let muted = true;
+  let togglePending = false;
+
   const caption = h("p", { class: "talk__caption" }, CAPTION_BY_STATE[ORB_STATES.CONNECTING]);
   const orb = createOrb({
     initialState: ORB_STATES.CONNECTING,
@@ -31,6 +37,8 @@ export async function mountTalkView({ outlet, signal }) {
       caption.textContent = CAPTION_BY_STATE[state] || "";
     },
   });
+  orb.root.addEventListener("click", onMicTap);
+  syncMicAria();
 
   const view = h(
     "section",
@@ -55,7 +63,7 @@ export async function mountTalkView({ outlet, signal }) {
     }
     if (signal.aborted) return;
     // Reset to the generic CONNECTING caption; SSE ``ready`` will flip
-    // the orb to IDLE on the next tick.
+    // the orb to its resting state on the next tick.
     caption.textContent = CAPTION_BY_STATE[ORB_STATES.CONNECTING];
   } else {
     fetchActivePersonality().then((name) => {
@@ -64,11 +72,20 @@ export async function mountTalkView({ outlet, signal }) {
     });
   }
 
+  try {
+    muted = Boolean((await micStatePromise)?.muted);
+  } catch {
+    // keep the muted default
+  }
+  if (signal.aborted) return;
+  syncMicAria();
+
   const subscription = subscribeConversationEvents({
     onReady: () => {
-      orb.setState(ORB_STATES.IDLE);
+      orb.setState(restingState());
     },
     onActivity: (reason) => {
+      if (muted) return;
       const next = mapActivityToState(reason);
       if (next == null) return;
       orb.setState(next);
@@ -84,6 +101,36 @@ export async function mountTalkView({ outlet, signal }) {
     subscription.close();
     orb.dispose();
   });
+
+  function restingState() {
+    return muted ? ORB_STATES.MUTED : ORB_STATES.IDLE;
+  }
+
+  async function onMicTap() {
+    if (togglePending) return;
+    togglePending = true;
+    try {
+      const data = await setMicMuted(!muted);
+      muted = Boolean(data?.muted);
+    } catch (error) {
+      if (!signal.aborted) {
+        caption.textContent = `Failed to toggle the microphone: ${error?.message || error}`;
+      }
+      return;
+    } finally {
+      togglePending = false;
+    }
+    if (signal.aborted) return;
+    orb.setState(restingState());
+    // setState skips unchanged states, so set the caption explicitly
+    caption.textContent = CAPTION_BY_STATE[restingState()];
+    syncMicAria();
+  }
+
+  function syncMicAria() {
+    orb.root.setAttribute("aria-pressed", String(!muted));
+    orb.root.setAttribute("aria-label", muted ? "Start the conversation" : "Pause the conversation");
+  }
 }
 
 async function fetchActivePersonality() {

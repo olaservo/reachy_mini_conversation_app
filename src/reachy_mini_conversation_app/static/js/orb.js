@@ -2,6 +2,7 @@
  * Conversation orb: SSE-driven state machine → CSS data-state attribute.
  * All indicators are rendered once and toggled via CSS; no DOM replacement on transition.
  * Audio runs entirely in Python; the orb is CSS-animated only (no mic-level reactivity).
+ * The root is a <button> — the talk view uses it as the mic toggle.
  */
 
 import { h } from "./ui.js";
@@ -35,7 +36,7 @@ export function mapActivityToState(reason) {
 // The backend never emits an explicit idle event; this timeout returns the orb to idle.
 const IDLE_FALLBACK_MS = 1500;
 
-/** Build the orb DOM. Returns { root, setState, applyActivity, dispose }. */
+/** Build the orb DOM. Returns { root, setState, dispose }. */
 export function createOrb({ initialState = ORB_STATES.IDLE, onStateChange } = {}) {
   let currentState = initialState;
   let idleTimer = null;
@@ -44,6 +45,7 @@ export function createOrb({ initialState = ORB_STATES.IDLE, onStateChange } = {}
     "span",
     { class: "convo-orb__indicator", "aria-hidden": "true" },
     micIcon(),
+    micOffIcon(),
     spinnerIndicator(),
     barsIndicator(),
     thinkingDotsIndicator(),
@@ -52,8 +54,9 @@ export function createOrb({ initialState = ORB_STATES.IDLE, onStateChange } = {}
   );
 
   const root = h(
-    "div",
+    "button",
     {
+      type: "button",
       class: "convo-orb",
       dataset: { state: currentState },
       "aria-label": "Conversation status",
@@ -95,12 +98,6 @@ export function createOrb({ initialState = ORB_STATES.IDLE, onStateChange } = {}
     }, IDLE_FALLBACK_MS);
   }
 
-  /** Drive the orb from a raw backend activity reason. */
-  function applyActivity(reason) {
-    const next = mapActivityToState(reason);
-    if (next != null) setState(next);
-  }
-
   /** Stop any pending timer. Call before detaching the DOM node. */
   function dispose() {
     if (idleTimer != null) {
@@ -109,7 +106,7 @@ export function createOrb({ initialState = ORB_STATES.IDLE, onStateChange } = {}
     }
   }
 
-  return { root, setState, applyActivity, dispose };
+  return { root, setState, dispose };
 }
 
 // Indicators — stacked in the same grid cell, toggled via CSS data-state rules.
@@ -161,6 +158,20 @@ function micIcon() {
         <path d="M5 10a7 7 0 0 0 14 0"/>
         <line x1="12" y1="19" x2="12" y2="22"/>
         <line x1="8" y1="22" x2="16" y2="22"/>
+      </svg>`,
+  });
+}
+
+function micOffIcon() {
+  return h("span", {
+    class: "ind ind-mic-off",
+    html: `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor" stroke="none"/>
+        <path d="M5 10a7 7 0 0 0 14 0"/>
+        <line x1="12" y1="19" x2="12" y2="22"/>
+        <line x1="8" y1="22" x2="16" y2="22"/>
+        <line x1="4" y1="3" x2="20" y2="21" stroke-width="2"/>
       </svg>`,
   });
 }
