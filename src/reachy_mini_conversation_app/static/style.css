@@ -1,26 +1,6 @@
-/* =============================================================================
- * Modern web UI - styles
- * -----------------------------------------------------------------------------
- * Sectioned single-file stylesheet so the whole visual surface stays grep-able
- * and easy to audit. Each section starts with a banner like this one and is
- * scoped through unique class names (no global element selectors past the
- * reset block).
- *
- * Sections:
- *   1. Tokens & reset
- *   2. App shell (header, outlet, brand, gear)
- *   3. Generic primitives (buttons, status text)
- *   4. Home view (personality grid + cards)
- *   5. Talk view (orb wrapper, caption, back button)
- *   6. Settings view (sections, forms, status grid)
- *   7. Modal (profile-modal)
- *   8. Conversation orb (port of mobile app's orb.css)
- * ========================================================================== */
+/* Sectioned stylesheet, scoped by class name (no global element selectors). */
 
-
-/* ----------------------------------------------------------------------------
- * 1. Tokens & reset
- * -------------------------------------------------------------------------- */
+/* 1. Tokens & reset */
 
 :root {
   --bg: #0e0f12;
@@ -52,7 +32,7 @@
   --transition: 0.25s ease;
 }
 
-/* The desktop app pins the theme via ?theme=, overriding the OS preference. */
+/* ?theme= (set by the desktop app) overrides the OS preference below. */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     --bg: #f6f7fa;
@@ -116,10 +96,7 @@ button {
   font-family: inherit;
 }
 
-
-/* ----------------------------------------------------------------------------
- * 2. App shell
- * -------------------------------------------------------------------------- */
+/* 2. App shell */
 
 .app-shell__header {
   position: sticky;
@@ -153,11 +130,7 @@ button {
   background: var(--bg-elev);
 }
 
-/* Brand mark: a small Reachy disc that mirrors the avatar treatment used
-   on personality cards (well + oversized SVG with antennas spilling
-   above the rim). The disc is intentionally compact so the header stays
-   slim, and the SVG is offset upward so the head sits visually centered
-   inside the disc rather than the body. */
+/* SVG offset upward so the head sits centered in the disc, not the body. */
 .app-shell__brand-mark {
   position: relative;
   display: inline-block;
@@ -186,21 +159,15 @@ button {
   font-size: 0.95rem;
 }
 
-/* Left-side cluster: optional Back button + brand. The wrapper keeps both
-   slots aligned and lets the back button slide in/out via ``hidden``
-   without shifting the brand position. */
+/* Lets the Back button toggle via `hidden` without shifting the brand. */
 .app-shell__lead {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
-/* Personality reminder pinned just below the topbar, top-left of the
-   viewport. Avatar disc on the left, two-row text column on the right,
-   mirroring the mobile app's ``IdentityChipBar`` (avatar + identity
-   stack). Kept outside the header so the topbar layout (lead + gear)
-   stays untouched. Borderless / no background so it reads as an inline
-   label rather than a control. */
+/* Fixed below the topbar, outside the header, so the lead/gear layout
+   stays untouched. Borderless so it reads as a label, not a control. */
 .app-shell__personality {
   position: fixed;
   top: 90px;
@@ -220,9 +187,6 @@ button {
   display: none;
 }
 
-/* Two-row text column: small uppercase label, then the active profile
-   name. Avatar sits to the left now, so the column aligns its rows to
-   the left edge. */
 .app-shell__personality-text {
   display: flex;
   flex-direction: column;
@@ -251,9 +215,7 @@ button {
   max-width: 260px;
 }
 
-/* Avatar disc on the left: same well + oversized SVG treatment as
-   ``.app-shell__brand-mark`` so the surface reads as one family.
-   Larger than the brand mark for visual presence outside the topbar. */
+/* Larger than the brand mark for presence outside the topbar. */
 .app-shell__personality-avatar {
   position: relative;
   display: inline-block;
@@ -278,9 +240,7 @@ button {
   display: block;
 }
 
-/* Shared style for the round icon buttons in the header (back + gear).
-   Factored so both feel like the same control: same disc, same hover,
-   same focus ring, same press feedback. */
+/* Shared by the Back and gear buttons so both read as the same control. */
 .app-shell__icon-btn {
   display: inline-flex;
   align-items: center;
@@ -322,9 +282,7 @@ button {
   outline-offset: 2px;
 }
 
-/* When Settings is open, the gear acts as a toggle that closes back to Home.
-   The accent-tinted background plus the slight rotation make this dual role
-   discoverable without changing the icon itself. */
+/* Accent tint + rotation signal the gear also closes Settings when active. */
 .app-shell__gear.is-active {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
@@ -342,19 +300,14 @@ button {
   max-width: 1080px;
   margin: 0 auto;
   padding: 32px 24px 64px;
-  /* Make the outlet a flex column so views that opt-in (currently the
-     Talk view) can claim the full remaining height with ``flex: 1`` and
-     center their contents vertically. Views that do not opt in (Home,
-     Settings) just sit at the top, sized to their content. */
+  /* Flex column so the Talk view can claim full height via flex:1 and
+     center vertically; other views just sit at the top. */
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-
-/* ----------------------------------------------------------------------------
- * 3. Generic primitives
- * -------------------------------------------------------------------------- */
+/* 3. Generic primitives */
 
 .view-header {
   margin-bottom: 28px;
@@ -461,20 +414,7 @@ button {
   color: var(--text);
 }
 
-
-/* ----------------------------------------------------------------------------
- * 4. Home view - personality grid
- * --------------------------------------------------------------------------
- * The card pattern follows ``PersonalityGrid.tsx`` from the mobile app:
- *   - hairline border via ``box-shadow: inset 0 0 0 1px`` (sharper than a
- *     CSS border at 1dpr/2dpr crossings);
- *   - tinted ``well`` for the avatar disc, with ``overflow: visible`` and
- *     the SVG rendered at 140% so antennas / hats / accessories spill above
- *     the disc rim (the avatars were authored expecting this);
- *   - active state uses a 2px primary inset ring + an 8% primary wash on
- *     the bg + a primary-tinted card name + a discrete check badge in the
- *     top-right corner. No saturated badge pill.
- * -------------------------------------------------------------------------- */
+/* 4. Home view - personality grid */
 
 .view--home .personality-grid {
   display: grid;
@@ -535,10 +475,8 @@ button {
   cursor: not-allowed;
 }
 
-/* Avatar "well": a soft tinted disc the SVG sits inside. ``overflow: visible``
-   is important - the avatars were authored as full-body illustrations
-   anchored on the head, and rely on antennas/hats/etc. spilling above
-   the disc rim to read as characters. */
+/* overflow: visible - avatars are full-body illustrations anchored on the
+   head; antennas/hats spill above the disc rim. */
 .personality-card__avatar {
   position: relative;
   width: 110px;
@@ -556,8 +494,7 @@ button {
   left: 50%;
   top: 50%;
   /* Slight upward bias so the SVG's "head" lands at disc center while
-     the antennas escape above. Mirrors the 140% / -57% ratio we use in
-     the mobile RobotAvatar component. */
+     the antennas escape above. */
   transform: translate(-50%, -57%);
   pointer-events: none;
   user-select: none;
@@ -584,9 +521,8 @@ button {
   color: var(--accent);
 }
 
-/* Active check badge: outlined disc top-right. Echoes the card's primary
-   ring without becoming a heavy filled pill - the wash + ring + tinted
-   name already carry the "selected" signal. */
+/* Outlined, not filled - the wash + ring + tinted name already signal
+   "selected". */
 .personality-card__badge {
   position: absolute;
   top: 10px;
@@ -607,13 +543,10 @@ button {
   height: 12px;
 }
 
-/* Custom card: same shell but dashed treatment + ``+`` glyph, signalling
-   "create something new" rather than "pick an existing thing". */
 .personality-card--custom {
   background: transparent;
   box-shadow: inset 0 0 0 1px transparent;
-  /* Dashed border (true CSS border this time, since dashed insets are
-     not a thing) overrides the inset shadow. */
+  /* Dashed insets aren't a thing, so use a real border to override the shadow. */
   border: 1px dashed var(--border-strong);
 }
 
@@ -639,20 +572,10 @@ button {
   font-size: 0.78rem;
 }
 
+/* 5. Talk view - orb wrapper, caption, back button */
 
-/* ----------------------------------------------------------------------------
- * 5. Talk view - orb wrapper, caption, back button
- * -------------------------------------------------------------------------- */
-
-/* Talk view layout. The Back button no longer lives here - it sits in the
-   shell header (see ``.app-shell__back``) and shows up automatically when
-   this route is active. The view body is therefore just the profile
-   badge + the orb + its caption.
-
-   ``flex: 1`` claims the outlet's remaining vertical space so
-   ``justify-content: center`` can park the orb in the middle of the
-   viewport, regardless of viewport height. The result is the same
-   "stage" feel as ``minimal_conversation``'s circle. */
+/* flex: 1 claims the outlet's remaining height so justify-content: center
+   parks the orb in the middle regardless of viewport height. */
 .view--talk {
   display: flex;
   flex: 1;
@@ -685,10 +608,7 @@ button {
   min-height: 1.4em;
 }
 
-
-/* ----------------------------------------------------------------------------
- * 6. Settings view
- * -------------------------------------------------------------------------- */
+/* 6. Settings view */
 
 .view--settings {
   display: flex;
@@ -806,10 +726,7 @@ button {
   font-weight: 500;
 }
 
-
-/* ----------------------------------------------------------------------------
- * 7. Modal (profile-modal)
- * -------------------------------------------------------------------------- */
+/* 7. Modal (profile-modal) */
 
 .modal-overlay {
   position: fixed;
@@ -912,19 +829,9 @@ button {
   margin-top: 4px;
 }
 
-
-/* ----------------------------------------------------------------------------
- * 8. Conversation orb
- * --------------------------------------------------------------------------
- * Vanilla port of the orb in ``reachy_mini_minimal_conversation`` (its
- * visual reference). Every indicator is mounted statically (see ``orb.js``)
- * and stacked in the same CSS grid cell; the active one is shown via
- * opacity + scale on a per-state selector below.
- *
- * No audio reactivity here: the conversation app routes audio through
- * Python, the browser is a control plane. We drive everything from
- * ``[data-state]`` and the inline ``--glow`` colour set by JS per state.
- * -------------------------------------------------------------------------- */
+/* 8. Conversation orb
+ * Indicators are mounted statically (orb.js) and switched via [data-state]
+ * + the inline --glow colour; Python drives the state, not audio. */
 
 .convo-orb {
   --glow: #34d399;
@@ -942,8 +849,6 @@ button {
   /* The orb is the mic toggle button (see talk.js). */
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  /* Subtle scale-on-state-change so transitions feel "alive" without
-     forcing a per-state animation everywhere. */
   transition: transform 0.18s ease, filter 0.18s ease;
 }
 
@@ -992,9 +897,6 @@ button {
   opacity: 0;
 }
 
-/* The "bead" itself: a richly shaded sphere with a top-left highlight,
-   a primary-tinted edge, an outer halo (32px) and an inner depth shadow
-   (28px). Mirrors the minimal-conversation orb pixel for pixel. */
 .convo-orb__core {
   position: relative;
   width: 72%;
@@ -1016,9 +918,8 @@ button {
   transition: background 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease, transform 0.4s ease;
 }
 
-/* Indicator slot. Every ``.ind`` child is stacked in the same grid cell
-   and toggled via per-state opacity rules below. We never rebuild the
-   indicator subtree on state change. */
+/* Every .ind child stacks in this grid cell; opacity rules below pick
+   the visible one, so the subtree never needs rebuilding. */
 .convo-orb__indicator {
   position: relative;
   width: 44%;
@@ -1028,11 +929,8 @@ button {
   color: var(--glow);
 }
 
-/* Each indicator wrapper fills the whole slot and centers its content.
-   Without this, ``<span>`` defaults to ``display: inline`` and the SVG
-   inside ends up sized against an undefined-width container - which is
-   what caused the mic / voice icons to render off-center. Specific
-   indicators (bars, thinking) override ``display`` to ``flex`` below. */
+/* Without this, <span> defaults to display: inline and the SVG inside
+   sizes against an undefined-width container, rendering off-center. */
 .convo-orb__indicator > .ind {
   grid-area: 1 / 1;
   width: 100%;
@@ -1045,20 +943,16 @@ button {
   pointer-events: none;
 }
 
-/* SVG icons (mic, voice, error) fill 60% of the slot and inherit the
-   parent's centering. ``display: block`` strips the inline baseline gap
-   that would otherwise nudge the icon off-center vertically. */
+/* display: block strips the inline baseline gap that would otherwise
+   nudge the icon off-center vertically. */
 .convo-orb__indicator > .ind > svg {
   width: 60%;
   height: 60%;
   display: block;
 }
 
-/* Spinner: rotating ring gap. The keyframes carry both ``scale(1)``
-   and the rotation so the browser does not interpolate between two
-   different transform functions (which would produce a barely-moving
-   spinner). The ring itself is sized inside the slot via ``place-self``
-   plus an explicit width/height so it stays a clean small disc. */
+/* Keyframes carry both scale(1) and the rotation so the browser doesn't
+   interpolate between two different transform functions. */
 .convo-orb__indicator > .ind-spinner {
   display: block;
   place-self: center;
@@ -1074,10 +968,8 @@ button {
   to   { transform: scale(1) rotate(360deg); }
 }
 
-/* Thinking dots: 3 soft pulsing dots while the model composes a
-   response. Apple-style cadence: each dot scales up + brightens in
-   turn, staggered by ~160ms. The per-dot animation is on the child so
-   the parent's show/hide scale(.85 → 1) composes cleanly. */
+/* Per-dot animation, staggered ~160ms, so it composes cleanly with the
+   parent's show/hide scale(.85 -> 1). */
 .convo-orb__indicator > .ind-thinking {
   display: flex;
   align-items: center;
@@ -1100,10 +992,8 @@ button {
   30%           { transform: scale(1.15); opacity: 1; }
 }
 
-/* Bars: 5 thin pills, centered horizontally and vertically in the slot.
-   Height capped at 42% of the slot so the animated bars (which range
-   from 35% to 100% of this container) never overflow into the core's
-   inner edge. */
+/* Height capped at 42% so bars animating up to 100% of this container
+   never overflow into the core's inner edge. */
 .convo-orb__indicator > .ind-bars {
   display: flex;
   align-items: center;
@@ -1133,8 +1023,6 @@ button {
   50%      { height: 100%; opacity: 1; }
 }
 
-/* Voice wave icon: speaker + two arcs that pulse outward in sequence,
-   so the icon is always visually alive even between syllables. */
 .ind-voice .wave {
   transform-origin: 50% 50%;
   opacity: 0;
@@ -1152,11 +1040,10 @@ button {
   100% { opacity: 0; transform: scale(0.7); }
 }
 
-/* ─── Per-state visibility & ambient animations ──────────────────────── */
+/* Per-state visibility & ambient animations */
 
-/* Show the right indicator for the current state. ``.ind-mic`` is the
-   default (covers ``idle``); we never set it to opacity:1 explicitly so
-   that any other ``[data-state]`` rule below wins via cascade. */
+/* .ind-mic (idle) is never set to opacity:1 explicitly, so any
+   [data-state] rule below wins via cascade. */
 .convo-orb[data-state="idle"] .ind-mic,
 .convo-orb[data-state="muted"] .ind-mic-off,
 .convo-orb[data-state="connecting"] .ind-spinner,
@@ -1168,16 +1055,14 @@ button {
   transform: scale(1);
 }
 
-/* The spinner needs its own active rule because its keyframes already
-   carry ``transform``. Without the ``!important`` the show/hide
-   ``scale(1)`` rule above would fight the rotation. */
+/* !important: without it, the show/hide scale(1) rule above would fight
+   the spinner's own rotation keyframes. */
 .convo-orb[data-state="connecting"] .ind-spinner {
   opacity: 1 !important;
   animation: orb-spin 0.9s linear infinite;
 }
 
-/* Idle: a gentle breath on the inner ring so the orb is not perfectly
-   still. Off in ``connecting`` / ``error`` so they keep their own beat. */
+/* Idle: gentle breath on the inner ring; off in connecting/error. */
 .convo-orb[data-state="idle"] .convo-orb__ring {
   animation: orb-breathe 2.4s ease-in-out infinite;
 }
@@ -1191,14 +1076,12 @@ button {
   opacity: 0.45;
 }
 
-/* Thinking: subtle inner throb on the core, dimmer than speaking so the
-   3-dot indicator stays the focus. */
+/* Thinking: dimmer than speaking so the 3-dot indicator stays the focus. */
 .convo-orb[data-state="thinking"] .convo-orb__core {
   animation: orb-thinking-throb 1.4s ease-in-out infinite;
 }
 
-/* Speaking: the whole core breathes - reads instantly as "the orb is
-   the voice". The outer ring fades in to convey audio radiating out. */
+/* Speaking: outer ring fades in to convey audio radiating out. */
 .convo-orb[data-state="speaking"] .convo-orb__core {
   animation: orb-speak 1.6s ease-in-out infinite;
 }
@@ -1217,7 +1100,7 @@ button {
   border-color: var(--glow);
 }
 
-/* ─── Keyframes ───────────────────────────────────────────────────────── */
+/* Keyframes */
 
 @keyframes orb-breathe {
   0%, 100% { transform: translate(-50%, -50%) scale(1);    opacity: 0.35; }
