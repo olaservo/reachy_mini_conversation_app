@@ -41,7 +41,10 @@ export async function mountHomeView({ outlet, signal, navigate }) {
 
   let personalities;
   try {
-    personalities = await listPersonalities();
+    personalities = await listPersonalitiesUntilReady(signal, () => {
+      clear(grid);
+      grid.appendChild(h("p", { class: "muted" }, "Waiting for Reachy to finish starting…"));
+    });
   } catch (error) {
     if (signal.aborted) return;
     clear(grid);
@@ -168,6 +171,27 @@ function buildCustomCard({ onClick }) {
 
 function stripUserPrefix(name) {
   return name.replace(/^user_personalities\//, "");
+}
+
+const STARTUP_POLL_MS = 2000;
+const STARTUP_DEADLINE_MS = 90000;
+
+/** The web server is up before the API routes register; poll until they exist. */
+async function listPersonalitiesUntilReady(signal, onRetry) {
+  const deadline = Date.now() + STARTUP_DEADLINE_MS;
+  let notified = false;
+  for (;;) {
+    try {
+      return await listPersonalities();
+    } catch (error) {
+      if (signal.aborted || Date.now() >= deadline) throw error;
+      if (!notified) {
+        notified = true;
+        onRetry();
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, STARTUP_POLL_MS));
+  }
 }
 
 function renderError(label, error) {

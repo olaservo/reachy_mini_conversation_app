@@ -91,7 +91,7 @@ export async function mountTalkView({ outlet, signal }) {
       orb.setState(next);
     },
     onError: () => {
-      // EventSource auto-reconnects; we surface the error so callers can show a hint.
+      // The subscription keeps reconnecting, show the error meanwhile.
       orb.setState(ORB_STATES.ERROR);
       caption.textContent = CAPTION_BY_STATE[ORB_STATES.ERROR];
     },
@@ -144,28 +144,45 @@ async function fetchActivePersonality() {
   }
 }
 
+const SSE_RECONNECT_MS = 2000;
+
 function subscribeConversationEvents({ onActivity, onReady, onError } = {}) {
   if (typeof onActivity !== "function") {
     throw new TypeError("subscribeConversationEvents: onActivity is required");
   }
 
-  const source = new EventSource(SSE_ENDPOINT);
+  let source = null;
+  let retryTimer = null;
+  let closed = false;
 
-  source.addEventListener("activity", (ev) => {
-    const reason = (ev.data || "").trim();
-    if (reason) onActivity(reason);
-  });
+  function connect() {
+    source = new EventSource(SSE_ENDPOINT);
 
-  if (typeof onReady === "function") {
-    source.addEventListener("ready", () => onReady());
+    source.addEventListener("activity", (ev) => {
+      const reason = (ev.data || "").trim();
+      if (reason) onActivity(reason);
+    });
+
+    if (typeof onReady === "function") {
+      source.addEventListener("ready", () => onReady());
+    }
+
+    source.addEventListener("error", (err) => {
+      if (typeof onError === "function") onError(err);
+      // EventSource gives up on HTTP errors (e.g. 404 while the backend is
+      // still registering routes); recreate it until the route exists.
+      if (!closed && source.readyState === EventSource.CLOSED) {
+        retryTimer = setTimeout(connect, SSE_RECONNECT_MS);
+      }
+    });
   }
 
-  if (typeof onError === "function") {
-    source.addEventListener("error", (err) => onError(err));
-  }
+  connect();
 
   return {
     close() {
+      closed = true;
+      if (retryTimer != null) clearTimeout(retryTimer);
       source.close();
     },
   };
