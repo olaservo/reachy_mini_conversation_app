@@ -26,6 +26,7 @@ from openai.types.realtime import (
 from websockets.exceptions import ConnectionClosedError
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
 
+from reachy_mini_conversation_app.tools import core_tools
 from reachy_mini_conversation_app.config import (
     config,
     get_default_voice_for_backend,
@@ -497,6 +498,13 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             except asyncio.CancelledError:
                 return
 
+            # Parallel tool calls enqueue duplicate empty requests; coalesce to one.
+            while not kwargs and not self._pending_responses.empty():
+                try:
+                    self._pending_responses.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
             sent = False
             max_retries = 5
             attempts = 0
@@ -664,7 +672,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         ),
                     )
 
-            if send_result_to_model:
+            tool = core_tools.ALL_TOOLS.get(bg_tool.tool_name)
+            # Always surface errors, skip the spoken follow-up for tools that opt out.
+            if send_result_to_model and (bg_tool.error is not None or tool is None or tool.needs_response):
                 await self._safe_response_create()
 
         except self._connection_closed_errors():

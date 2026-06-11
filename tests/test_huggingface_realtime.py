@@ -46,7 +46,7 @@ def _make_usage(
 @pytest.mark.asyncio
 async def test_partial_transcription_uses_latest_snapshot(monkeypatch: Any) -> None:
     """Partial transcription snapshots should replace older snapshots for the same item."""
-    monkeypatch.setattr(hf_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(hf_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(hf_mod, "get_session_voice", lambda default=HF_DEFAULT_VOICE: "Aiden")
     monkeypatch.setattr(hf_mod, "get_active_tool_specs", lambda _: [])
 
@@ -219,7 +219,7 @@ async def test_start_up_hf_gradio_does_not_wait_for_api_key(monkeypatch: Any) ->
 @pytest.mark.asyncio
 async def test_run_realtime_session_uses_default_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
     """Use the backend default speaker when no profile voice is selected for the hf LB."""
-    monkeypatch.setattr(hf_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(hf_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(hf_mod, "get_session_voice", lambda default=HF_DEFAULT_VOICE: default)
     monkeypatch.setattr(hf_mod, "get_active_tool_specs", lambda _: [])
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
@@ -307,7 +307,7 @@ def test_huggingface_session_uses_configured_transcription_language(monkeypatch:
 @pytest.mark.asyncio
 async def test_run_realtime_session_passes_allocated_session_query(monkeypatch: Any) -> None:
     """Hugging Face sessions must forward the allocated session token to the websocket connect call."""
-    monkeypatch.setattr(hf_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(hf_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(hf_mod, "get_session_voice", lambda default=HF_DEFAULT_VOICE: default)
     monkeypatch.setattr(hf_mod, "get_active_tool_specs", lambda _: [])
 
@@ -527,7 +527,7 @@ async def test_build_realtime_client_does_not_send_openai_key_to_hf_allocator(mo
 @pytest.mark.asyncio
 async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
     """Live personality updates should honor the selected Qwen CustomVoice speaker."""
-    monkeypatch.setattr(hf_mod, "get_session_instructions", lambda: "new instructions")
+    monkeypatch.setattr(hf_mod, "get_session_instructions", lambda _instance_path=None: "new instructions")
     monkeypatch.setattr(hf_mod, "get_session_voice", lambda default=HF_DEFAULT_VOICE: "Serena")
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", "https://lb.example.test/session")

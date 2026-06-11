@@ -40,6 +40,7 @@ class ToolDependencies:
     reachy_mini: ReachyMini
     movement_manager: Any  # MovementManager from moves.py
     # Optional deps
+    instance_path: str | Path | None = None
     camera_worker: Any | None = None  # CameraWorker for frame buffering
     vision_processor: Any | None = None
     motion_duration_s: float = 1.0
@@ -52,9 +53,13 @@ class Tool(abc.ABC):
       - name: str
       - description: str
       - parameters_schema: Dict[str, Any]  # JSON Schema
+
+    Tools may override:
+      - needs_response: bool = True  # set False to skip the spoken follow-up after this tool runs
     """
 
     _auto_register: ClassVar[bool] = True
+    needs_response: ClassVar[bool] = True
 
     name: str
     description: str
