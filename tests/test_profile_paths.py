@@ -69,7 +69,7 @@ def test_profile_name_resolves_directly_to_storage_dir() -> None:
     assert (profile_dir / "instructions.txt").is_file()
 
 
-def test_prompts_load_from_compact_builtin_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prompts_load_from_compact_builtin_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Prompt loading should read compact built-in profile instructions directly."""
     monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "mad_scientist_assistant")
     monkeypatch.setattr(config, "PROFILES_DIRECTORY", DEFAULT_PROFILES_DIRECTORY)
@@ -80,7 +80,7 @@ def test_prompts_load_from_compact_builtin_profile(monkeypatch: pytest.MonkeyPat
         .strip()
     )
 
-    assert prompts_mod.get_session_instructions() == expected
+    assert prompts_mod.get_session_instructions(instance_path=tmp_path) == expected
     assert read_instructions_for("mad_scientist_assistant") == expected
 
 
@@ -107,7 +107,7 @@ def test_headless_profile_write_defaults_voice_at_call_time(
     """New headless profiles should use the currently selected backend default voice."""
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "gemini")
     monkeypatch.setattr(config, "MODEL_NAME", "gemini-3.1-flash-live-preview")
-    monkeypatch.setattr(headless_mod, "_profiles_root", lambda: tmp_path)
+    monkeypatch.setattr(headless_mod, "DEFAULT_PROFILES_DIRECTORY", tmp_path)
 
     headless_mod._write_profile("runtime_voice_default", "test instructions", "")
 

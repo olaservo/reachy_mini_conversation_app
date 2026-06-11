@@ -23,6 +23,15 @@ from reachy_mini_conversation_app.utils import (
 def main() -> None:
     """Entrypoint for the Reachy Mini conversation app."""
     args, _ = parse_args()
+    if args.command == "tool-spaces":
+        from reachy_mini_conversation_app.tool_spaces import handle_tool_spaces_command
+
+        logger = setup_logger(args.debug)
+        try:
+            raise SystemExit(handle_tool_spaces_command(args))
+        except Exception as exc:
+            logger.error("tool-spaces command failed: %s", exc)
+            raise SystemExit(1) from exc
     run(args)
 
 
@@ -87,8 +96,14 @@ def run(
         )
 
     from reachy_mini_conversation_app.console import LocalStream
-    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
-    from reachy_mini_conversation_app.audio.head_wobbler import HeadWobbler
+    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
+    from reachy_mini_conversation_app.conversation_handler import ConversationHandler
+
+    try:
+        initialize_tools(instance_path=instance_path)
+    except Exception as e:
+        logger.error("Failed to initialize tools: %s", e)
+        sys.exit(1)
 
     if args.no_camera and args.head_tracker is not None:
         logger.warning("Head tracking disabled: --no-camera flag is set. Remove --no-camera to enable head tracking.")
@@ -128,58 +143,61 @@ def run(
         camera_worker=camera_worker,
     )
 
-    head_wobbler = HeadWobbler(set_speech_offsets=movement_manager.set_speech_offsets)
-
     deps = ToolDependencies(
         reachy_mini=robot,
         movement_manager=movement_manager,
+        instance_path=instance_path,
         camera_worker=camera_worker,
         vision_processor=vision_processor,
-        head_wobbler=head_wobbler,
     )
-    if is_gemini_model():
-        from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
 
-        logger.info(
-            "Using %s via GeminiLiveHandler",
-            get_backend_label(config.BACKEND_PROVIDER),
-        )
-        handler = GeminiLiveHandler(
-            deps,
-            instance_path=instance_path,
-            startup_voice=startup_settings.voice,
-        )
-    elif config.BACKEND_PROVIDER == HF_BACKEND:
-        from reachy_mini_conversation_app.huggingface_realtime import HuggingFaceRealtimeHandler
+    def build_handler(startup_voice: Optional[str] = None) -> ConversationHandler:
+        """Build a realtime handler for the current runtime backend config."""
+        if is_gemini_model():
+            from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
 
-        hf_connection_selection = get_hf_connection_selection()
-        transport_label = (
-            "Hugging Face direct websocket"
-            if hf_connection_selection.mode == HF_LOCAL_CONNECTION_MODE and hf_connection_selection.has_target
-            else "Hugging Face session proxy"
-        )
-        logger.info(
-            "Using %s via Hugging Face realtime handler (%s)",
-            get_backend_label(config.BACKEND_PROVIDER),
-            transport_label,
-        )
-        handler = HuggingFaceRealtimeHandler(
-            deps,
-            instance_path=instance_path,
-            startup_voice=startup_settings.voice,
-        )  # type: ignore[assignment]
-    else:
+            logger.info(
+                "Using %s via GeminiLiveHandler",
+                get_backend_label(config.BACKEND_PROVIDER),
+            )
+            return GeminiLiveHandler(
+                deps,
+                instance_path=instance_path,
+                startup_voice=startup_voice,
+            )
+        if config.BACKEND_PROVIDER == HF_BACKEND:
+            from reachy_mini_conversation_app.huggingface_realtime import HuggingFaceRealtimeHandler
+
+            hf_connection_selection = get_hf_connection_selection()
+            transport_label = (
+                "Hugging Face direct websocket"
+                if hf_connection_selection.mode == HF_LOCAL_CONNECTION_MODE and hf_connection_selection.has_target
+                else "Hugging Face session proxy"
+            )
+            logger.info(
+                "Using %s via Hugging Face realtime handler (%s)",
+                get_backend_label(config.BACKEND_PROVIDER),
+                transport_label,
+            )
+            return HuggingFaceRealtimeHandler(
+                deps,
+                instance_path=instance_path,
+                startup_voice=startup_voice,
+            )
+
         from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
 
         logger.info(
             "Using %s via OpenAI realtime handler (OpenAI Realtime API)",
             get_backend_label(config.BACKEND_PROVIDER),
         )
-        handler = OpenaiRealtimeHandler(
+        return OpenaiRealtimeHandler(
             deps,
             instance_path=instance_path,
-            startup_voice=startup_settings.voice,
-        )  # type: ignore[assignment]
+            startup_voice=startup_voice,
+        )
+
+    handler = build_handler(startup_settings.voice)
 
     stream_manager: LocalStream | None = None
     own_ui_server = None
@@ -193,6 +211,8 @@ def run(
         robot,
         settings_app=effective_settings_app,
         instance_path=instance_path,
+        handler_factory=build_handler,
+        startup_voice=startup_settings.voice,
     )
 
     if args.ui and settings_app is None and effective_settings_app is not None:
@@ -211,7 +231,10 @@ def run(
 
     # Each async service → its own thread/loop
     movement_manager.start()
-    head_wobbler.start()
+    # Audio-reactive head motion is driven by the daemon's wobbler, which
+    # taps the media pipeline at push_audio_sample. The console stream pushes
+    # assistant audio through that pipeline directly.
+    robot.enable_wobbling()
     if camera_worker:
         camera_worker.start()
 
@@ -238,7 +261,10 @@ def run(
             own_ui_server.should_exit = True
 
         movement_manager.stop()
-        head_wobbler.stop()
+        try:
+            robot.disable_wobbling()
+        except Exception as e:
+            logger.debug(f"Error disabling wobbling during shutdown: {e}")
         if camera_worker:
             camera_worker.stop()
 

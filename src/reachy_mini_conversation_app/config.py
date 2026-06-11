@@ -45,7 +45,7 @@ DEFAULT_PROFILES_DIRECTORY = _resolve_default_profiles_directory()
 
 # Full list of voices supported by the OpenAI Realtime / TTS API.
 # Source: https://developers.openai.com/api/docs/guides/text-to-speech/#voice-options
-# "marin" and "cedar" are recommended for gpt-realtime.
+# "marin" and "cedar" are recommended for gpt-realtime-2.
 AVAILABLE_VOICES: list[str] = [
     "alloy",
     "ash",
@@ -91,6 +91,7 @@ HF_BACKEND = "huggingface"
 DEFAULT_BACKEND_PROVIDER = HF_BACKEND
 HF_REALTIME_CONNECTION_MODE_ENV = "HF_REALTIME_CONNECTION_MODE"
 HF_REALTIME_WS_URL_ENV = "HF_REALTIME_WS_URL"
+REALTIME_TRANSCRIPTION_LANGUAGE_ENV = "REALTIME_TRANSCRIPTION_LANGUAGE"
 HF_LOCAL_CONNECTION_MODE = "local"
 HF_DEPLOYED_CONNECTION_MODE = "deployed"
 HF_REALTIME_SESSION_PROXY_URL = "https://pollen-robotics-reachy-mini-realtime-url.hf.space/session"
@@ -113,7 +114,7 @@ class HFBackendDefaults:
 
 HF_DEFAULTS = HFBackendDefaults()
 DEFAULT_MODEL_NAME_BY_BACKEND = {
-    OPENAI_BACKEND: "gpt-realtime",
+    OPENAI_BACKEND: "gpt-realtime-2",
     GEMINI_BACKEND: "gemini-3.1-flash-live-preview",
     HF_BACKEND: HF_DEFAULTS.model_name,
 }
@@ -209,6 +210,12 @@ def _normalize_hf_connection_mode(value: str | None) -> str | None:
         )
         return None
     return candidate
+
+
+def _normalize_transcription_language(value: str | None) -> str:
+    """Return the configured realtime transcription language."""
+    candidate = (value or "").strip()
+    return candidate or "en"
 
 
 @dataclass(frozen=True)
@@ -322,10 +329,10 @@ if LOCKED_PROFILE is not None:
     _profile_path = _profiles_dir / LOCKED_PROFILE
     _instructions_file = _profile_path / "instructions.txt"
     if not _profile_path.is_dir():
-        print(f"Error: LOCKED_PROFILE '{LOCKED_PROFILE}' does not exist in {_profiles_dir}", file=sys.stderr)
+        logger.critical("LOCKED_PROFILE %r does not exist in %s", LOCKED_PROFILE, _profiles_dir)
         sys.exit(1)
     if not _instructions_file.is_file():
-        print(f"Error: LOCKED_PROFILE '{LOCKED_PROFILE}' has no instructions.txt", file=sys.stderr)
+        logger.critical("LOCKED_PROFILE %r has no instructions.txt", LOCKED_PROFILE)
         sys.exit(1)
 
 _skip_dotenv = _env_flag("REACHY_MINI_SKIP_DOTENV", default=False)
@@ -363,6 +370,7 @@ class Config:
     # Deliberately ignore HF_REALTIME_SESSION_URL from the environment; the app-managed proxy is HF_DEFAULTS.session_url.
     HF_REALTIME_SESSION_URL = HF_DEFAULTS.session_url
     HF_REALTIME_WS_URL = os.getenv(HF_REALTIME_WS_URL_ENV)
+    REALTIME_TRANSCRIPTION_LANGUAGE = _normalize_transcription_language(os.getenv(REALTIME_TRANSCRIPTION_LANGUAGE_ENV))
     HF_HOME = os.getenv("HF_HOME", "./cache")
     LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     HF_TOKEN = os.getenv("HF_TOKEN")  # Optional, falls back to hf auth login if not set
@@ -466,6 +474,9 @@ def refresh_runtime_config_from_env() -> None:
     # Deliberately ignore HF_REALTIME_SESSION_URL from the environment; the app-managed proxy is HF_DEFAULTS.session_url.
     config.HF_REALTIME_SESSION_URL = HF_DEFAULTS.session_url
     config.HF_REALTIME_WS_URL = os.getenv(HF_REALTIME_WS_URL_ENV)
+    config.REALTIME_TRANSCRIPTION_LANGUAGE = _normalize_transcription_language(
+        os.getenv(REALTIME_TRANSCRIPTION_LANGUAGE_ENV)
+    )
     config.HF_HOME = os.getenv("HF_HOME", "./cache")
     config.LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     config.HF_TOKEN = os.getenv("HF_TOKEN")
@@ -556,15 +567,13 @@ def set_custom_profile(profile: str | None) -> None:
         return
     try:
         config.REACHY_MINI_CUSTOM_PROFILE = profile
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to update config profile: %s", e)
     try:
-        import os as _os
-
         if profile:
-            _os.environ["REACHY_MINI_CUSTOM_PROFILE"] = profile
+            os.environ["REACHY_MINI_CUSTOM_PROFILE"] = profile
         else:
             # Remove to reflect default
-            _os.environ.pop("REACHY_MINI_CUSTOM_PROFILE", None)
-    except Exception:
-        pass
+            os.environ.pop("REACHY_MINI_CUSTOM_PROFILE", None)
+    except Exception as e:
+        logger.warning("Failed to sync profile to environment: %s", e)

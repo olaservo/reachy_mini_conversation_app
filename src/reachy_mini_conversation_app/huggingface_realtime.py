@@ -73,7 +73,7 @@ class HuggingFaceRealtimeHandler(BaseRealtimeHandler):
 
     def _get_session_instructions(self) -> str:
         """Return Hugging Face session instructions."""
-        return get_session_instructions()
+        return get_session_instructions(self.instance_path)
 
     def _get_session_voice(self, default: str | None = None) -> str:
         """Return the configured Hugging Face session voice."""
@@ -93,7 +93,10 @@ class HuggingFaceRealtimeHandler(BaseRealtimeHandler):
                     # The OpenAI SDK type only includes 24 kHz PCM, but the HF
                     # compatible server uses rate=None for native 16 kHz mode.
                     format=_native_rate_audio_pcm(),  # type: ignore[typeddict-item]
-                    transcription=AudioTranscriptionParam(model="gpt-4o-transcribe", language="en"),
+                    transcription=AudioTranscriptionParam(
+                        model="gpt-4o-transcribe",
+                        language=config.REALTIME_TRANSCRIPTION_LANGUAGE,
+                    ),
                     turn_detection=ServerVad(type="server_vad", interrupt_response=True),
                 ),
                 output=RealtimeAudioConfigOutputParam(
