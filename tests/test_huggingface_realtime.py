@@ -521,7 +521,7 @@ async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(m
     handler.connection = FakeConnection()
     monkeypatch.setattr(handler, "_restart_session", AsyncMock(return_value=None))
 
-    result = await handler.apply_personality("example")
+    result = await handler.apply_personality("mars_rover")
 
     assert "restarted realtime session" in result.lower()
     session = captured_update["session"]

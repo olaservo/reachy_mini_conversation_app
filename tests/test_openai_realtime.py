@@ -411,7 +411,7 @@ async def test_apply_personality_preserves_manual_voice_override(monkeypatch: An
     restart = AsyncMock()
     monkeypatch.setattr(handler, "_restart_session", restart)
 
-    status = await handler.apply_personality("example")
+    status = await handler.apply_personality("mars_rover")
 
     assert status == "Applied personality and restarted realtime session."
     assert handler.get_current_voice() == "marin"

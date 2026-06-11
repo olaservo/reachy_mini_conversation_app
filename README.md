@@ -270,7 +270,7 @@ Write plain-text prompts in `instructions.txt`. To reuse shared prompt pieces, a
 [passion_for_lobster_jokes]
 [identities/witty_identity]
 ```
-Each placeholder pulls the matching file under `src/reachy_mini_conversation_app/prompts/` (nested paths allowed). See `profiles/example/` for a reference layout.
+Each placeholder pulls the matching file under `src/reachy_mini_conversation_app/prompts/` (nested paths allowed).
 
 **Enabling tools:**
 
@@ -288,7 +288,7 @@ Installed public Hugging Face Space tools can also be enabled here after you add
 **Custom tools:**
 
 On top of built-in tools found in the core library, you can implement custom tools specific to your profile by adding Python files in the profile folder.
-Custom tools must subclass `reachy_mini_conversation_app.tools.core_tools.Tool` (see `profiles/example/sweep_look.py`).
+Custom tools must subclass `reachy_mini_conversation_app.tools.core_tools.Tool` (see that module for the interface).
 
 **Edit personalities from the UI:**
 
