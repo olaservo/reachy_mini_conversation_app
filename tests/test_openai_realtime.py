@@ -400,9 +400,21 @@ async def test_empty_audio_buffer_error_exits_listening_without_chat_error(monke
 
 @pytest.mark.asyncio
 async def test_apply_personality_preserves_manual_voice_override(monkeypatch: Any) -> None:
-    """Applying a profile should not discard a voice manually selected in the current session."""
+    """Applying a profile should update tools without discarding a manual voice."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "cedar")
+    monkeypatch.setattr(
+        rt_mod,
+        "get_active_tool_specs",
+        lambda _deps: [
+            {
+                "type": "function",
+                "name": "remember",
+                "description": "Remember user details.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ],
+    )
     monkeypatch.setattr("reachy_mini_conversation_app.config.set_custom_profile", lambda _profile: None)
 
     handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
@@ -419,6 +431,7 @@ async def test_apply_personality_preserves_manual_voice_override(monkeypatch: An
     restart.assert_not_awaited()
     session = update.await_args.kwargs["session"]
     assert session["audio"]["output"]["voice"] == "marin"
+    assert [tool["name"] for tool in session["tools"]] == ["remember"]
 
 
 def test_handler_uses_startup_voice_at_startup(monkeypatch: Any) -> None:

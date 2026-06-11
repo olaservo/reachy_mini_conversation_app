@@ -324,8 +324,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             )
 
             try:
-                instructions = self._get_session_instructions()
-                voice = self.get_current_voice()
+                session_config = self._get_session_config(self._get_active_tool_specs())
             except BaseException as e:  # catch SystemExit from prompt loader without crashing
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
@@ -333,15 +332,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             if self.connection is not None:
                 try:
                     await self.connection.session.update(
-                        session=RealtimeSessionCreateRequestParam(
-                            type="realtime",
-                            instructions=instructions,
-                            audio=RealtimeAudioConfigParam(
-                                output=RealtimeAudioConfigOutputParam(
-                                    voice=voice,
-                                ),
-                            ),
-                        ),
+                        session=session_config,
                     )
                     logger.info("Applied personality via live update: %s", profile or "built-in default")
                     return "Applied personality to current realtime session."

@@ -526,9 +526,21 @@ async def test_build_realtime_client_does_not_send_openai_key_to_hf_allocator(mo
 
 @pytest.mark.asyncio
 async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
-    """Live personality updates should honor the selected Qwen CustomVoice speaker."""
+    """Live personality updates should honor the selected voice and active tools."""
     monkeypatch.setattr(hf_mod, "get_session_instructions", lambda _instance_path=None: "new instructions")
     monkeypatch.setattr(hf_mod, "get_session_voice", lambda default=HF_DEFAULT_VOICE: "Serena")
+    monkeypatch.setattr(
+        hf_mod,
+        "get_active_tool_specs",
+        lambda _deps: [
+            {
+                "type": "function",
+                "name": "remember",
+                "description": "Remember user details.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ],
+    )
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", "https://lb.example.test/session")
 
@@ -553,6 +565,7 @@ async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(m
     session = captured_update["session"]
     assert session["instructions"] == "new instructions"
     assert session["audio"]["output"]["voice"] == "Serena"
+    assert [tool["name"] for tool in session["tools"]] == ["remember"]
 
 
 @pytest.mark.asyncio
