@@ -669,6 +669,11 @@ class LocalStream:
                 await self._sleep_or_restart_requested(0.5)
                 continue
 
+            if self._backend_connected():
+                self._set_backend_connection_state("connected")
+                await self._sleep_or_restart_requested(0.5)
+                continue
+
             self._set_backend_connection_state("connecting")
             try:
                 await self.handler.start_up()
@@ -686,6 +691,14 @@ class LocalStream:
             else:
                 if self._stop_event.is_set():
                     return
+                if self._backend_connected():
+                    self._set_backend_connection_state("connected")
+                    logger.warning(
+                        "%s backend startup returned while the handler is still connected; suppressing retry.",
+                        active_backend,
+                    )
+                    await self._sleep_or_restart_requested(0.5)
+                    continue
                 self._set_backend_connection_state("disconnected")
                 if self._restart_requested.is_set():
                     logger.info("%s backend stopped for requested restart.", active_backend)

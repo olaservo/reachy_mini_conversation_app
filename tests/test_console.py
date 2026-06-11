@@ -511,6 +511,55 @@ def test_backend_startup_failure_is_recorded_without_raising(
 
 
 @pytest.mark.asyncio
+async def test_startup_loop_does_not_retry_when_handler_returned_connected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If a handler returns while still connected, the supervisor must not open a duplicate backend session."""
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
+    monkeypatch.setattr(config, "HF_REALTIME_WS_URL", "ws://localhost:8765/v1/realtime")
+    monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "local")
+
+    class ConnectedReturningHandler:
+        def __init__(self) -> None:
+            self.connection = None
+            self.session = None
+            self.output_queue = asyncio.Queue()
+            self.start_calls = 0
+
+        async def start_up(self) -> None:
+            self.start_calls += 1
+            self.connection = object()
+
+        async def shutdown(self) -> None:
+            self.connection = None
+
+        async def receive(self, _frame: Any) -> None:
+            return None
+
+        async def emit(self) -> None:
+            return None
+
+    handler = ConnectedReturningHandler()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(handler, robot, handler_factory=lambda _voice: handler)
+    stream._backend_retry_delay = 0.01
+
+    startup_task = asyncio.create_task(stream._run_handler_startup_loop())
+    try:
+        await _wait_until(lambda: handler.start_calls == 1)
+        await asyncio.sleep(0.05)
+
+        assert handler.start_calls == 1
+        assert stream._backend_connected() is True
+        assert stream._backend_connection_state == "connected"
+    finally:
+        stream._stop_event.set()
+        startup_task.cancel()
+        try:
+            await startup_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
 async def test_startup_loop_rebuilds_handler_for_backend_change(monkeypatch: pytest.MonkeyPatch) -> None:
     """LocalStream should own backend swaps by shutting down and rebuilding the handler."""
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
