@@ -1,3 +1,4 @@
+import os
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -560,6 +561,24 @@ async def test_apply_personality_restarts_hf_session_without_reallocating_endpoi
 
 
 @pytest.mark.asyncio
+async def test_apply_personality_rolls_back_profile_when_resolution_fails(monkeypatch: Any) -> None:
+    """A broken profile should not remain selected after validation fails."""
+    previous_profile = "previous"
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", previous_profile)
+    monkeypatch.setenv("REACHY_MINI_CUSTOM_PROFILE", previous_profile)
+
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    monkeypatch.setattr(handler, "_get_active_tool_specs", lambda: [])
+    monkeypatch.setattr(handler, "_get_session_config", MagicMock(side_effect=RuntimeError("bad profile")))
+
+    result = await handler.apply_personality("broken")
+
+    assert result == "Failed to apply personality: bad profile"
+    assert config.REACHY_MINI_CUSTOM_PROFILE == previous_profile
+    assert os.environ["REACHY_MINI_CUSTOM_PROFILE"] == previous_profile
+
+
+@pytest.mark.asyncio
 async def test_restart_session_can_reuse_hf_allocated_endpoint(monkeypatch: Any) -> None:
     """A requested same-endpoint restart must not call the HF session allocator or exit startup."""
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
@@ -611,6 +630,34 @@ async def test_restart_session_can_reuse_hf_allocated_endpoint(monkeypatch: Any)
 
     keep_session_open.set()
     await asyncio.wait_for(startup_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_restart_session_clears_pending_flags_when_client_is_missing() -> None:
+    """A failed early restart should not poison the next natural session exit."""
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler._session_restart_requested = True
+    handler._session_restart_refresh_client = True
+
+    await handler._restart_session(refresh_client=False)
+
+    assert handler._session_restart_requested is False
+    assert handler._session_restart_refresh_client is None
+
+
+@pytest.mark.asyncio
+async def test_restart_session_does_not_queue_hidden_restart_without_connection() -> None:
+    """No active websocket means the next session startup can use current config normally."""
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler.client = MagicMock()
+    handler.connection = None
+    handler._session_restart_requested = True
+    handler._session_restart_refresh_client = True
+
+    await handler._restart_session(refresh_client=False)
+
+    assert handler._session_restart_requested is False
+    assert handler._session_restart_refresh_client is None
 
 
 @pytest.mark.asyncio

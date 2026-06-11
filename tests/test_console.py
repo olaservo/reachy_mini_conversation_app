@@ -737,6 +737,41 @@ def test_headless_personality_routes_persist_startup_with_voice_override() -> No
         loop.close()
 
 
+def test_headless_personality_routes_do_not_persist_failed_apply() -> None:
+    """A failed personality apply should not be written to startup settings."""
+    app = FastAPI()
+    handler = MagicMock()
+    handler.apply_personality = AsyncMock(return_value="Failed to apply personality: bad profile")
+    handler.get_current_voice = MagicMock(return_value="shimmer")
+    persist_personality = MagicMock()
+
+    loop = asyncio.new_event_loop()
+    started = threading.Event()
+
+    def _run_loop() -> None:
+        asyncio.set_event_loop(loop)
+        started.set()
+        loop.run_forever()
+
+    thread = threading.Thread(target=_run_loop, daemon=True)
+    thread.start()
+    started.wait(timeout=1.0)
+
+    try:
+        mount_personality_routes(app, handler, lambda: loop, persist_personality=persist_personality)
+
+        response = TestClient(app).post("/personalities/apply?name=broken&persist=1")
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is False
+        handler.apply_personality.assert_awaited_once_with("broken")
+        persist_personality.assert_not_called()
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=1.0)
+        loop.close()
+
+
 def test_headless_personality_routes_can_use_stream_callbacks() -> None:
     """Headless personality routes can delegate apply/restart ownership to LocalStream."""
     app = FastAPI()

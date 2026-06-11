@@ -322,6 +322,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             from reachy_mini_conversation_app.config import config as _config
             from reachy_mini_conversation_app.config import set_custom_profile
 
+            previous_profile = getattr(_config, "REACHY_MINI_CUSTOM_PROFILE", None)
             set_custom_profile(profile)
             logger.info(
                 "Set custom profile to %r (config=%r)", profile, getattr(_config, "REACHY_MINI_CUSTOM_PROFILE", None)
@@ -331,6 +332,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 tool_specs = self._get_active_tool_specs()
                 _ = self._get_session_config(tool_specs)
             except BaseException as e:  # catch SystemExit from prompt loader without crashing
+                set_custom_profile(previous_profile)
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
 
@@ -456,6 +458,21 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
     async def _restart_session(self, *, refresh_client: bool | None = None) -> None:
         """Force-close the current session and wait for the startup loop to reconnect."""
         try:
+            if getattr(self, "client", None) is None:
+                self._session_restart_requested = False
+                self._session_restart_refresh_client = None
+                logger.warning("Cannot restart: realtime client not initialized yet.")
+                return
+
+            if self.connection is None:
+                # No active websocket means there is nothing to close and no
+                # startup loop exit to consume a restart request. The current
+                # config will be used by the next normal session startup.
+                self._session_restart_requested = False
+                self._session_restart_refresh_client = None
+                logger.info("No active realtime connection to restart.")
+                return
+
             self._session_restart_requested = True
             self._session_restart_refresh_client = refresh_client
             try:
@@ -463,22 +480,16 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             except Exception:
                 pass
 
-            if self.connection is not None:
-                try:
-                    await self.connection.close()
-                except Exception:
-                    pass
-                finally:
-                    self.connection = None
-                try:
-                    await asyncio.wait_for(self._realtime_session_finished_event.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    logger.warning("Timed out waiting for old realtime session cleanup; reconnecting anyway.")
-
-            # Ensure we have a client (start_up must have run once)
-            if getattr(self, "client", None) is None:
-                logger.warning("Cannot restart: realtime client not initialized yet.")
-                return
+            try:
+                await self.connection.close()
+            except Exception:
+                pass
+            finally:
+                self.connection = None
+            try:
+                await asyncio.wait_for(self._realtime_session_finished_event.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timed out waiting for old realtime session cleanup; reconnecting anyway.")
 
             try:
                 await asyncio.wait_for(self._connected_event.wait(), timeout=5.0)

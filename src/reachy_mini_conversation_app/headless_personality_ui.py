@@ -270,14 +270,15 @@ def mount_personality_routes(
             logger.info("Headless apply: requested name=%r", sel_name)
             fut = asyncio.run_coroutine_threadsafe(_do_apply(), loop)
             status, voice_override = fut.result(timeout=10)
+            apply_ok = not status.lower().startswith("failed")
             persisted_choice = _startup_choice()
-            if persist_flag and persist_personality is not None:
+            if apply_ok and persist_flag and persist_personality is not None:
                 try:
                     persist_personality(None if sel_name == DEFAULT_OPTION else sel_name, voice_override)
                     persisted_choice = _startup_choice()
                 except Exception as e:
                     logger.warning("Failed to persist startup personality: %s", e)
-            return {"ok": True, "status": status, "startup": persisted_choice}
+            return {"ok": apply_ok, "status": status, "startup": persisted_choice}
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)  # type: ignore
 
