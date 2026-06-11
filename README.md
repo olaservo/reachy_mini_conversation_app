@@ -294,7 +294,7 @@ Custom tools must subclass `reachy_mini_conversation_app.tools.core_tools.Tool` 
 
 When running with `--ui`, the Home view lists available profiles (folders under `profiles/`) plus the built-in default:
 - Tap a card to apply that personality and start talking.
-- Tap "Custom" to create a new personality by entering a name and instructions. It stores files under `profiles/<name>/` and copies `tools.txt` from the `default` profile.
+- Tap "Custom" to create a new personality by entering a name and instructions. It copies `tools.txt` from the `default` profile and stores the files under `user_personalities/<name>/` in the app instance directory (next to `.env`/`startup_settings.json`).
 
 Note: applying a personality updates the conversation instructions. Tool sets are loaded at startup from `tools.txt` and are not hot‑reloaded.
 

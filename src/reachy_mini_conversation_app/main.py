@@ -51,6 +51,7 @@ def run(
         config,
         is_gemini_model,
         get_backend_label,
+        set_instance_path,
         get_hf_connection_selection,
         refresh_runtime_config_from_env,
     )
@@ -61,6 +62,7 @@ def run(
 
     logger = setup_logger(args.debug)
     logger.info("Starting Reachy Mini Conversation App")
+    set_instance_path(instance_path)
     startup_settings = StartupSettings()
 
     if instance_path is not None:

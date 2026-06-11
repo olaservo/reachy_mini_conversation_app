@@ -12,6 +12,7 @@ from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, conf
 from reachy_mini_conversation_app.personality import (
     DEFAULT_OPTION,
     read_tools_for,
+    list_personalities,
     resolve_profile_dir,
     read_instructions_for,
 )
@@ -107,12 +108,24 @@ def test_headless_profile_write_defaults_voice_at_call_time(
     """New headless profiles should use the currently selected backend default voice."""
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "gemini")
     monkeypatch.setattr(config, "MODEL_NAME", "gemini-3.1-flash-live-preview")
-    monkeypatch.setattr(headless_mod, "DEFAULT_PROFILES_DIRECTORY", tmp_path)
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
 
     headless_mod._write_profile("runtime_voice_default", "test instructions", "")
 
     voice_file = tmp_path / "user_personalities" / "runtime_voice_default" / "voice.txt"
     assert voice_file.read_text(encoding="utf-8") == "Kore\n"
+
+
+def test_user_profile_round_trips_through_instance_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """UI-created profiles persist in the writable instance dir and load back from it."""
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "user_personalities/zen_master")
+
+    headless_mod._write_profile("zen_master", "Be calm.", "")
+
+    assert (tmp_path / "user_personalities" / "zen_master" / "instructions.txt").is_file()
+    assert "user_personalities/zen_master" in list_personalities()
+    assert prompts_mod.get_session_instructions(instance_path=tmp_path) == "Be calm."
 
 
 def test_packaged_profiles_win_outside_source_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

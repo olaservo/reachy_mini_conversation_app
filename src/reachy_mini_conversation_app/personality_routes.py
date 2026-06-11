@@ -133,19 +133,19 @@ def mount_personality_routes(
             else get_default_voice_for_backend()
         )
 
-        name_s = _sanitize_name(name)
-        if not name_s:
+        sanitized_name = _sanitize_name(name)
+        if not sanitized_name:
             return JSONResponse({"ok": False, "error": "invalid_name"}, status_code=400)  # type: ignore
         try:
             logger.info(
                 "save: name=%r voice=%r instr_len=%d tools_len=%d",
-                name_s,
+                sanitized_name,
                 voice,
                 len(instructions),
                 len(tools_text),
             )
-            _write_profile(name_s, instructions, tools_text, voice or get_default_voice_for_backend())
-            value = f"user_personalities/{name_s}"
+            _write_profile(sanitized_name, instructions, tools_text, voice or get_default_voice_for_backend())
+            value = f"user_personalities/{sanitized_name}"
             choices = [DEFAULT_OPTION, *list_personalities()]
             return {"ok": True, "value": value, "choices": choices}
         except Exception as e:

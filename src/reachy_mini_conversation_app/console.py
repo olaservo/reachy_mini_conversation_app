@@ -560,8 +560,19 @@ class LocalStream:
                 resolved_voice,
             )
         self._voice_override = resolved_voice
+        self._persist_voice_override(resolved_voice)
         await self.request_backend_restart("voice_changed")
         return f"Voice changed to {resolved_voice}."
+
+    def _persist_voice_override(self, voice: str) -> None:
+        """Persist the chosen voice as the startup voice, keeping the startup profile."""
+        if not self._instance_path:
+            return
+        try:
+            existing = read_startup_settings(self._instance_path)
+            write_startup_settings(self._instance_path, profile=existing.profile, voice=voice)
+        except Exception as e:
+            logger.warning("Failed to persist startup voice: %s", e)
 
     def _init_settings_ui_if_needed(self) -> None:
         """Attach minimal settings UI to the settings app.
@@ -892,7 +903,7 @@ class LocalStream:
                         change_voice=self.change_voice,
                     )
             except Exception:
-                pass
+                logger.exception("Failed to mount personality routes; the personality UI will be unavailable")
             self._tasks = [
                 asyncio.create_task(self._run_handler_startup_loop(), name="realtime-handler"),
                 asyncio.create_task(self.record_loop(), name="stream-record-loop"),
