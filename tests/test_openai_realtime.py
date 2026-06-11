@@ -414,9 +414,9 @@ async def test_apply_personality_preserves_manual_voice_override(monkeypatch: An
 
     status = await handler.apply_personality("example")
 
-    assert status == "Applied personality and restarted realtime session."
+    assert status == "Applied personality to current realtime session."
     assert handler.get_current_voice() == "marin"
-    restart.assert_awaited_once()
+    restart.assert_not_awaited()
     session = update.await_args.kwargs["session"]
     assert session["audio"]["output"]["voice"] == "marin"
 

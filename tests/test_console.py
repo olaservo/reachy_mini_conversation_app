@@ -656,7 +656,7 @@ def test_headless_personality_routes_persist_startup_with_voice_override() -> No
     """Saving a startup personality should persist the active manual voice override."""
     app = FastAPI()
     handler = MagicMock()
-    handler.apply_personality = AsyncMock(return_value="Applied personality and restarted realtime session.")
+    handler.apply_personality = AsyncMock(return_value="Applied personality to current realtime session.")
     handler.get_current_voice = MagicMock(return_value="shimmer")
     persist_personality = MagicMock()
 
@@ -693,7 +693,7 @@ def test_headless_personality_routes_can_use_stream_callbacks() -> None:
     app = FastAPI()
     handler = MagicMock()
     handler.apply_personality = AsyncMock(return_value="handler should not be called")
-    apply_personality = AsyncMock(return_value="Applied personality and restarting backend.")
+    apply_personality = AsyncMock(return_value="Applied personality to current realtime session.")
     get_current_voice = MagicMock(return_value="cedar")
 
     loop = asyncio.new_event_loop()
@@ -720,7 +720,7 @@ def test_headless_personality_routes_can_use_stream_callbacks() -> None:
         response = TestClient(app).post("/personalities/apply?name=sorry_bro")
 
         assert response.status_code == 200
-        assert response.json()["status"] == "Applied personality and restarting backend."
+        assert response.json()["status"] == "Applied personality to current realtime session."
         apply_personality.assert_awaited_once_with("sorry_bro")
         handler.apply_personality.assert_not_awaited()
     finally:
@@ -730,21 +730,48 @@ def test_headless_personality_routes_can_use_stream_callbacks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_personality_propagates_restart_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Cancellation during backend restart should not be converted into a status string."""
-    monkeypatch.setattr("reachy_mini_conversation_app.config.set_custom_profile", lambda _profile: None)
-    monkeypatch.setattr("reachy_mini_conversation_app.prompts.get_session_instructions", lambda: "instructions")
-    monkeypatch.setattr("reachy_mini_conversation_app.prompts.get_session_voice", lambda default: default)
+async def test_apply_personality_propagates_handler_cancellation() -> None:
+    """Cancellation during handler personality updates should not be converted into a status string."""
+    handler = MagicMock()
 
-    stream = LocalStream(MagicMock(), MagicMock())
-
-    async def cancel_restart(_reason: str) -> None:
+    async def cancel_apply(_profile: str | None) -> str:
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(stream, "request_backend_restart", cancel_restart)
+    handler.apply_personality = cancel_apply
+    stream = LocalStream(handler, MagicMock())
 
     with pytest.raises(asyncio.CancelledError):
         await stream.apply_personality("sorry_bro")
+
+
+@pytest.mark.asyncio
+async def test_local_stream_apply_personality_delegates_without_backend_restart() -> None:
+    """LocalStream personality changes should use the active handler in place."""
+    handler = MagicMock()
+    handler.apply_personality = AsyncMock(return_value="Applied personality to current realtime session.")
+    stream = LocalStream(handler, MagicMock())
+
+    status = await stream.apply_personality("sorry_bro")
+
+    assert status == "Applied personality to current realtime session."
+    handler.apply_personality.assert_awaited_once_with("sorry_bro")
+    assert not stream._restart_requested.is_set()
+
+
+@pytest.mark.asyncio
+async def test_local_stream_change_voice_delegates_without_backend_restart() -> None:
+    """LocalStream voice changes should update the active handler without rebuilding it."""
+    handler = MagicMock()
+    handler.change_voice = AsyncMock(return_value="Voice changed to Serena.")
+    handler.get_current_voice = MagicMock(return_value="Serena")
+    stream = LocalStream(handler, MagicMock())
+
+    status = await stream.change_voice("Serena")
+
+    assert status == "Voice changed to Serena."
+    handler.change_voice.assert_awaited_once_with("Serena")
+    assert stream._voice_override == "Serena"
+    assert not stream._restart_requested.is_set()
 
 
 def test_local_stream_persist_personality_stores_voice_override(tmp_path) -> None:

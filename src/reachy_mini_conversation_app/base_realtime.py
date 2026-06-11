@@ -273,16 +273,25 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         )
 
     async def change_voice(self, voice: str) -> str:
-        """Change only the voice and restart the session."""
+        """Change only the voice, updating the active session when possible."""
         default_voice = get_default_voice_for_backend(self.BACKEND_PROVIDER)
         resolved_voice = self._resolve_backend_voice(voice, source="requested voice", fallback=default_voice)
         self._voice_override = resolved_voice
-        if getattr(self, "client", None) is not None:
+        if self.connection is not None:
             try:
-                await self._restart_session()
+                await self.connection.session.update(
+                    session=RealtimeSessionCreateRequestParam(
+                        type="realtime",
+                        audio=RealtimeAudioConfigParam(
+                            output=RealtimeAudioConfigOutputParam(
+                                voice=resolved_voice,
+                            ),
+                        ),
+                    ),
+                )
                 return f"Voice changed to {resolved_voice}."
             except Exception as e:
-                logger.warning("Failed to restart session for voice change: %s", e)
+                logger.warning("Failed to update live session for voice change: %s", e)
                 return "Voice change failed. Will take effect on next connection."
         return "Voice changed. Will take effect on next connection."
 
@@ -318,7 +327,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
 
-            # Attempt a live update first, then force a full restart to ensure it sticks
             if self.connection is not None:
                 try:
                     await self.connection.session.update(
@@ -333,15 +341,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         ),
                     )
                     logger.info("Applied personality via live update: %s", profile or "built-in default")
+                    return "Applied personality to current realtime session."
                 except Exception as e:
-                    logger.warning("Live update failed; will restart session: %s", e)
-
-                # Force a real restart to guarantee the new instructions/voice
-                try:
-                    await self._restart_session()
-                    return "Applied personality and restarted realtime session."
-                except Exception as e:
-                    logger.warning("Failed to restart session after apply: %s", e)
+                    logger.warning("Live update failed for personality change: %s", e)
                     return "Applied personality. Will take effect on next connection."
             else:
                 logger.info(

@@ -543,13 +543,43 @@ async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(m
 
     handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
     handler.connection = FakeConnection()
-    monkeypatch.setattr(handler, "_restart_session", AsyncMock(return_value=None))
+    restart = AsyncMock(return_value=None)
+    monkeypatch.setattr(handler, "_restart_session", restart)
 
     result = await handler.apply_personality("example")
 
-    assert "restarted realtime session" in result.lower()
+    assert result == "Applied personality to current realtime session."
+    restart.assert_not_awaited()
     session = captured_update["session"]
     assert session["instructions"] == "new instructions"
+    assert session["audio"]["output"]["voice"] == "Serena"
+
+
+@pytest.mark.asyncio
+async def test_change_voice_updates_live_hf_session_without_restart(monkeypatch: Any) -> None:
+    """Changing Hugging Face voice should update the active session in place."""
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
+
+    captured_update: dict[str, Any] = {}
+
+    class FakeSession:
+        async def update(self, **kwargs: Any) -> None:
+            captured_update.update(kwargs)
+
+    class FakeConnection:
+        session = FakeSession()
+
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler.connection = FakeConnection()
+    restart = AsyncMock(return_value=None)
+    monkeypatch.setattr(handler, "_restart_session", restart)
+
+    result = await handler.change_voice("Serena")
+
+    assert result == "Voice changed to Serena."
+    assert handler.get_current_voice() == "Serena"
+    restart.assert_not_awaited()
+    session = captured_update["session"]
     assert session["audio"]["output"]["voice"] == "Serena"
 
 
