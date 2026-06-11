@@ -11,6 +11,7 @@ import logging
 from typing import Any, Callable, Optional, Awaitable
 
 from fastapi import Query, FastAPI, Request
+from pydantic import BaseModel
 
 from .config import (
     LOCKED_PROFILE,
@@ -34,6 +35,17 @@ from .conversation_handler import ConversationHandler
 logger = logging.getLogger(__name__)
 
 
+class ApplyPayload(BaseModel):
+    """Body of POST /personalities/apply.
+
+    Module-level: under postponed annotations, FastAPI can't resolve a
+    function-local model and silently treats it as a query param.
+    """
+
+    name: str
+    persist: bool = False
+
+
 def mount_personality_routes(
     app: FastAPI,
     handler: ConversationHandler,
@@ -47,15 +59,7 @@ def mount_personality_routes(
     change_voice: Callable[[str], Awaitable[str]] | None = None,
 ) -> None:
     """Register personality management endpoints on a FastAPI app."""
-    try:
-        from pydantic import BaseModel
-        from fastapi.responses import JSONResponse
-    except Exception:  # pragma: no cover - only when settings app not available
-        return
-
-    class ApplyPayload(BaseModel):
-        name: str
-        persist: Optional[bool] = False
+    from fastapi.responses import JSONResponse
 
     def _startup_choice() -> Any:
         """Return the persisted startup personality or default."""
@@ -148,12 +152,7 @@ def mount_personality_routes(
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)  # type: ignore
 
     @app.post("/personalities/apply")
-    async def _apply(
-        request: Request,
-        payload: ApplyPayload | None = None,
-        name: str | None = None,
-        persist: Optional[bool] = None,
-    ) -> dict:  # type: ignore
+    async def _apply(payload: ApplyPayload) -> dict:  # type: ignore
         if LOCKED_PROFILE is not None:
             return JSONResponse(
                 {"ok": False, "error": "profile_locked", "locked_to": LOCKED_PROFILE},
@@ -163,31 +162,8 @@ def mount_personality_routes(
         if loop is None:
             return JSONResponse({"ok": False, "error": "loop_unavailable"}, status_code=503)  # type: ignore
 
-        # Accept both JSON payload and query param for convenience
-        sel_name: Optional[str] = None
-        persist_flag = bool(persist) if persist is not None else False
-        if payload and getattr(payload, "name", None):
-            sel_name = payload.name
-            persist_flag = bool(getattr(payload, "persist", False))
-        elif name:
-            sel_name = name
-        else:
-            try:
-                body = await request.json()
-                if isinstance(body, dict) and body.get("name"):
-                    sel_name = str(body.get("name"))
-                if isinstance(body, dict) and "persist" in body:
-                    persist_flag = bool(body.get("persist"))
-            except Exception:
-                sel_name = None
-        try:
-            q_persist = request.query_params.get("persist")
-            if q_persist is not None:
-                persist_flag = str(q_persist).lower() in {"1", "true", "yes", "on"}
-        except Exception:
-            pass
-        if not sel_name:
-            sel_name = DEFAULT_OPTION
+        sel_name = payload.name or DEFAULT_OPTION
+        persist_flag = bool(payload.persist)
 
         async def _do_apply() -> tuple[str, Optional[str]]:
             sel = None if sel_name == DEFAULT_OPTION else sel_name
@@ -235,25 +211,13 @@ def mount_personality_routes(
             return get_available_voices_for_backend()
 
     @app.get("/voices/current")
-    async def _current_voice() -> dict[str, str]:
-        loop = get_loop()
-        fallback_voice = get_default_voice_for_backend()
-        if loop is None:
-            return {"voice": fallback_voice}
-
-        def _get_current() -> str:
-            try:
-                if get_current_voice is not None:
-                    return get_current_voice()
-                return handler.get_current_voice()
-            except Exception:
-                return fallback_voice
-
+    def _current_voice() -> dict[str, str]:
         try:
-            fut = asyncio.run_coroutine_threadsafe(asyncio.to_thread(_get_current), loop)
-            return {"voice": fut.result(timeout=10)}
+            if get_current_voice is not None:
+                return {"voice": get_current_voice()}
+            return {"voice": handler.get_current_voice()}
         except Exception:
-            return {"voice": fallback_voice}
+            return {"voice": get_default_voice_for_backend()}
 
     @app.post("/voices/apply")
     async def _apply_voice(request: Request, voice: str | None = Query(None)) -> dict:  # type: ignore

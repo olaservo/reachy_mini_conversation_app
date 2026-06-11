@@ -39,6 +39,28 @@ async function request(method, url, { body, timeoutMs = DEFAULT_TIMEOUT_MS } = {
   }
 }
 
+const STARTUP_POLL_MS = 2000;
+const STARTUP_DEADLINE_MS = 90000;
+
+/** Retry a request while the backend is still registering its routes at startup. */
+export async function untilReady(requestFn, signal, onRetry) {
+  const deadline = Date.now() + STARTUP_DEADLINE_MS;
+  let notified = false;
+  for (;;) {
+    try {
+      return await requestFn();
+    } catch (error) {
+      if (signal.aborted || Date.now() >= deadline) throw error;
+      if (!notified) {
+        notified = true;
+        onRetry?.();
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, STARTUP_POLL_MS));
+    if (signal.aborted) throw new Error("view unmounted");
+  }
+}
+
 export const getStatus = () => request("GET", "/status");
 
 export const saveBackendConfig = (payload) =>

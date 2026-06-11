@@ -6,6 +6,7 @@ import {
   getStatus,
   listVoices,
   saveBackendConfig,
+  untilReady,
 } from "../api.js";
 import { BACKENDS } from "../constants.js";
 import { $, h } from "../ui.js";
@@ -232,7 +233,7 @@ function statusRow(label, value, tone) {
 
 async function refreshStatus({ statusSection, backendSection, signal }) {
   try {
-    const payload = await getStatus();
+    const payload = await untilReady(getStatus, signal);
     if (signal.aborted) return;
     statusSection.render(payload);
     backendSection.setActiveBackend(payload.backend_provider);
@@ -245,7 +246,7 @@ async function refreshVoices({ voiceSection, signal }) {
   let voices = [];
   let current = "";
   try {
-    voices = await listVoices();
+    voices = await untilReady(listVoices, signal);
   } catch {
     voices = [];
   }

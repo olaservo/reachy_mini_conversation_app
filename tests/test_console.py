@@ -718,7 +718,7 @@ def test_personality_routes_persist_startup_with_voice_override() -> None:
         mount_personality_routes(app, handler, lambda: loop, persist_personality=persist_personality)
 
         client = TestClient(app)
-        response = client.post("/personalities/apply?name=sorry_bro&persist=1")
+        response = client.post("/personalities/apply", json={"name": "sorry_bro", "persist": True})
 
         assert response.status_code == 200
         assert response.json()["ok"] is True
@@ -759,7 +759,7 @@ def test_headless_personality_routes_can_use_stream_callbacks() -> None:
             get_current_voice=get_current_voice,
         )
 
-        response = TestClient(app).post("/personalities/apply?name=sorry_bro")
+        response = TestClient(app).post("/personalities/apply", json={"name": "sorry_bro"})
 
         assert response.status_code == 200
         assert response.json()["status"] == "Applied personality and restarting backend."
