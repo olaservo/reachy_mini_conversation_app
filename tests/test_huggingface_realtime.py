@@ -545,13 +545,22 @@ async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(m
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", "https://lb.example.test/session")
 
     captured_update: dict[str, Any] = {}
+    captured_items: list[dict[str, Any]] = []
 
     class FakeSession:
         async def update(self, **kwargs: Any) -> None:
             captured_update.update(kwargs)
 
+    class FakeItem:
+        async def create(self, **kwargs: Any) -> None:
+            captured_items.append(kwargs)
+
+    class FakeConversation:
+        item = FakeItem()
+
     class FakeConnection:
         session = FakeSession()
+        conversation = FakeConversation()
 
     handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
     handler.connection = FakeConnection()
@@ -563,9 +572,16 @@ async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(m
     assert result == "Applied personality to current realtime session."
     restart.assert_not_awaited()
     session = captured_update["session"]
-    assert session["instructions"] == "new instructions"
+    assert session["instructions"].startswith("new instructions")
+    assert "previous visual observations" in session["instructions"]
     assert session["audio"]["output"]["voice"] == "Serena"
     assert [tool["name"] for tool in session["tools"]] == ["remember"]
+    assert len(captured_items) == 1
+    notice_item = captured_items[0]["item"]
+    assert notice_item["role"] == "system"
+    notice_text = notice_item["content"][0]["text"]
+    assert "currently available tools are: remember" in notice_text
+    assert "If camera is not in that list" in notice_text
 
 
 @pytest.mark.asyncio

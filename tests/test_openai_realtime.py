@@ -419,7 +419,11 @@ async def test_apply_personality_preserves_manual_voice_override(monkeypatch: An
 
     handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
     update = AsyncMock()
-    handler.connection = SimpleNamespace(session=SimpleNamespace(update=update))
+    item_create = AsyncMock()
+    handler.connection = SimpleNamespace(
+        session=SimpleNamespace(update=update),
+        conversation=SimpleNamespace(item=SimpleNamespace(create=item_create)),
+    )
     handler._voice_override = "marin"
     restart = AsyncMock()
     monkeypatch.setattr(handler, "_restart_session", restart)
@@ -432,6 +436,7 @@ async def test_apply_personality_preserves_manual_voice_override(monkeypatch: An
     session = update.await_args.kwargs["session"]
     assert session["audio"]["output"]["voice"] == "marin"
     assert [tool["name"] for tool in session["tools"]] == ["remember"]
+    item_create.assert_awaited_once()
 
 
 def test_handler_uses_startup_voice_at_startup(monkeypatch: Any) -> None:

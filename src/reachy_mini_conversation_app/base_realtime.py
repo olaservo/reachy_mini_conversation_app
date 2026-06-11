@@ -232,6 +232,48 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
     def _get_session_config(self, tool_specs: list[dict[str, Any]]) -> RealtimeSessionCreateRequestParam:
         """Return the backend-specific realtime session config."""
 
+    @staticmethod
+    def _build_personality_change_notice(tool_specs: list[dict[str, Any]]) -> str:
+        """Return a system notice that bounds retained backend history after profile changes."""
+        tool_names = sorted(spec["name"] for spec in tool_specs if isinstance(spec.get("name"), str))
+        tools_text = ", ".join(tool_names) if tool_names else "none"
+        return (
+            "The active personality and tool configuration just changed. Treat this as a new conversation context. "
+            "Do not rely on previous tool availability, previous camera images, or previous visual observations. "
+            f"The currently available tools are: {tools_text}. "
+            "If camera is not in that list, you cannot see the user, inspect images, or answer visual questions."
+        )
+
+    def _append_personality_change_notice_to_session(
+        self,
+        session_config: RealtimeSessionCreateRequestParam,
+        tool_specs: list[dict[str, Any]],
+    ) -> None:
+        """Make the profile-change boundary part of the live session instructions."""
+        notice = self._build_personality_change_notice(tool_specs)
+        instructions = session_config.get("instructions")
+        if isinstance(instructions, str) and instructions.strip():
+            session_config["instructions"] = f"{instructions}\n\n{notice}"
+        else:
+            session_config["instructions"] = notice
+
+    async def _add_personality_change_notice(self, tool_specs: list[dict[str, Any]]) -> None:
+        """Inject a system boundary so backends with retained history drop stale tool assumptions."""
+        if self.connection is None:
+            return
+
+        notice = self._build_personality_change_notice(tool_specs)
+        try:
+            await self.connection.conversation.item.create(
+                item={
+                    "type": "message",
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": notice}],
+                },
+            )
+        except Exception as e:
+            logger.warning("Failed to add personality change boundary: %s", e)
+
     async def _cancel_partial_transcript_task(self) -> None:
         if self.partial_transcript_task and not self.partial_transcript_task.done():
             self.partial_transcript_task.cancel()
@@ -324,7 +366,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             )
 
             try:
-                session_config = self._get_session_config(self._get_active_tool_specs())
+                tool_specs = self._get_active_tool_specs()
+                session_config = self._get_session_config(tool_specs)
+                self._append_personality_change_notice_to_session(session_config, tool_specs)
             except BaseException as e:  # catch SystemExit from prompt loader without crashing
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
@@ -334,6 +378,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     await self.connection.session.update(
                         session=session_config,
                     )
+                    await self._add_personality_change_notice(tool_specs)
                     logger.info("Applied personality via live update: %s", profile or "built-in default")
                     return "Applied personality to current realtime session."
                 except Exception as e:
