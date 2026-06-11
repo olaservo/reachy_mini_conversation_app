@@ -561,38 +561,56 @@ async def test_apply_personality_restarts_hf_session_without_reallocating_endpoi
 
 @pytest.mark.asyncio
 async def test_restart_session_can_reuse_hf_allocated_endpoint(monkeypatch: Any) -> None:
-    """A requested same-endpoint restart must not call the HF session allocator."""
+    """A requested same-endpoint restart must not call the HF session allocator or exit startup."""
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
 
     handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
     fake_client = MagicMock()
-    fake_connection = MagicMock()
-    fake_connection.close = AsyncMock()
-    handler.client = fake_client
-    handler.connection = fake_connection
 
-    build_realtime_client = AsyncMock(side_effect=AssertionError("allocator should not be called"))
+    build_realtime_client = AsyncMock(return_value=fake_client)
     monkeypatch.setattr(handler, "_build_realtime_client", build_realtime_client)
 
-    session_started = asyncio.Event()
+    first_session_connected = asyncio.Event()
+    first_session_closed = asyncio.Event()
+    second_session_connected = asyncio.Event()
     keep_session_open = asyncio.Event()
+    first_connection = MagicMock()
+
+    async def close_first_connection() -> None:
+        first_session_closed.set()
+
+    first_connection.close = AsyncMock(side_effect=close_first_connection)
+    run_count = 0
 
     async def fake_run_realtime_session() -> None:
-        session_started.set()
+        nonlocal run_count
+        run_count += 1
+        handler._realtime_session_finished_event.clear()
         handler._connected_event.set()
-        await keep_session_open.wait()
+        if run_count == 1:
+            handler.connection = first_connection
+            first_session_connected.set()
+            await first_session_closed.wait()
+        else:
+            second_session_connected.set()
+            await keep_session_open.wait()
+        handler._realtime_session_finished_event.set()
 
     monkeypatch.setattr(handler, "_run_realtime_session", fake_run_realtime_session)
 
+    startup_task = asyncio.create_task(handler.start_up())
+    await asyncio.wait_for(first_session_connected.wait(), timeout=1.0)
+
     await handler._restart_session(refresh_client=False)
 
-    fake_connection.close.assert_awaited_once()
-    build_realtime_client.assert_not_awaited()
+    first_connection.close.assert_awaited_once()
+    build_realtime_client.assert_awaited_once()
     assert handler.client is fake_client
-    assert session_started.is_set()
+    assert second_session_connected.is_set()
+    assert not startup_task.done()
 
     keep_session_open.set()
-    await asyncio.sleep(0)
+    await asyncio.wait_for(startup_task, timeout=1.0)
 
 
 @pytest.mark.asyncio

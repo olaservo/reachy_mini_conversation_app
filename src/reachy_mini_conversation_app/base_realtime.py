@@ -149,7 +149,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._connected_event: asyncio.Event = asyncio.Event()
         self._realtime_session_finished_event: asyncio.Event = asyncio.Event()
         self._realtime_session_finished_event.set()
-        self._session_generation = 0
+        self._session_restart_requested = False
+        self._session_restart_refresh_client: bool | None = None
 
         # Background tool manager
         self.tool_manager = BackgroundToolManager()
@@ -401,16 +402,21 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         """Start the handler with minimal retries on unexpected websocket closure."""
         await self._prepare_startup_credentials()
         self.client = await self._build_realtime_client()
-        self._session_generation += 1
-        session_generation = self._session_generation
 
         max_attempts = 3
-        for attempt in range(1, max_attempts + 1):
+        attempt = 1
+        while attempt <= max_attempts:
             try:
                 await self._run_realtime_session()
-                # Normal exit from the session, stop retrying
+                if await self._consume_session_restart_request():
+                    attempt = 1
+                    continue
+                # Normal exit from the session, stop retrying.
                 return
             except self._connection_closed_errors() as e:
+                if await self._consume_session_restart_request():
+                    attempt = 1
+                    continue
                 # Abrupt close (e.g., "no close frame received or sent") → retry
                 logger.warning("Realtime websocket closed unexpectedly (attempt %d/%d): %s", attempt, max_attempts, e)
                 if attempt < max_attempts:
@@ -422,41 +428,41 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     delay = base_delay + jitter
                     logger.info("Retrying in %.1f seconds...", delay)
                     await asyncio.sleep(delay)
+                    attempt += 1
                     continue
                 raise
             finally:
                 # never keep a stale reference
-                if session_generation == self._session_generation:
-                    self.connection = None
-                    try:
-                        self._connected_event.clear()
-                    except Exception:
-                        pass
-
-    async def _run_realtime_session_for_generation(self, session_generation: int) -> None:
-        """Run a reconnect task and clean up only if it is still current."""
-        try:
-            await self._run_realtime_session()
-        except self._connection_closed_errors() as e:
-            logger.warning("Realtime websocket closed after restart: %s", e)
-        except Exception:
-            logger.exception("Realtime session restart task failed")
-        finally:
-            if session_generation == self._session_generation:
                 self.connection = None
                 try:
                     self._connected_event.clear()
                 except Exception:
                     pass
 
-    async def _restart_session(self, *, refresh_client: bool | None = None) -> None:
-        """Force-close the current session and start a fresh one in background.
+    async def _consume_session_restart_request(self) -> bool:
+        """Return whether the active startup loop should reconnect intentionally."""
+        if not self._session_restart_requested:
+            return False
 
-        Does not block the caller while the new session is establishing.
-        """
+        refresh_client = self._session_restart_refresh_client
+        self._session_restart_requested = False
+        self._session_restart_refresh_client = None
+        if refresh_client is None:
+            refresh_client = self.REFRESH_CLIENT_ON_RECONNECT
+        if refresh_client:
+            self.client = await self._build_realtime_client()
+        return True
+
+    async def _restart_session(self, *, refresh_client: bool | None = None) -> None:
+        """Force-close the current session and wait for the startup loop to reconnect."""
         try:
-            self._session_generation += 1
-            session_generation = self._session_generation
+            self._session_restart_requested = True
+            self._session_restart_refresh_client = refresh_client
+            try:
+                self._connected_event.clear()
+            except Exception:
+                pass
+
             if self.connection is not None:
                 try:
                     await self.connection.close()
@@ -474,19 +480,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 logger.warning("Cannot restart: realtime client not initialized yet.")
                 return
 
-            # Fire-and-forget new session and wait briefly for connection
-            try:
-                self._connected_event.clear()
-            except Exception:
-                pass
-            if refresh_client is None:
-                refresh_client = self.REFRESH_CLIENT_ON_RECONNECT
-            if refresh_client:
-                self.client = await self._build_realtime_client()
-            asyncio.create_task(
-                self._run_realtime_session_for_generation(session_generation),
-                name="realtime-session-restart",
-            )
             try:
                 await asyncio.wait_for(self._connected_event.wait(), timeout=5.0)
                 logger.info("Realtime session restarted and connected.")
