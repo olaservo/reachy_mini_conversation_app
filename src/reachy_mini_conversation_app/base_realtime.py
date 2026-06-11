@@ -275,7 +275,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
     async def change_voice(self, voice: str) -> str:
         """Change only the voice, updating the active session when possible."""
         default_voice = get_default_voice_for_backend(self.BACKEND_PROVIDER)
-        resolved_voice = self._resolve_backend_voice(voice, source="requested voice", fallback=default_voice)
+        resolved_voice = self._resolve_backend_voice(voice, source="requested voice", fallback=default_voice) or default_voice
         self._voice_override = resolved_voice
         if self.connection is not None:
             try:
