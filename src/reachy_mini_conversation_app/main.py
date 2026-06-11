@@ -218,9 +218,7 @@ def run(
     if args.ui and settings_app is None and effective_settings_app is not None:
         import uvicorn
 
-        # Register routes now so uvicorn serves them from the first request.
-        # launch() will call _init_settings_ui_if_needed() again but the
-        # _settings_initialized guard makes it a no-op.
+        # Routes must exist before uvicorn starts serving, launch() repeats this as a no-op.
         stream_manager._init_settings_ui_if_needed()
 
         own_ui_server = uvicorn.Server(

@@ -1,11 +1,6 @@
 /**
- * Cross-view hand-off for an in-flight personality apply.
- *
- * Set by ``home.js`` right before it navigates to ``/talk``, then awaited
- * (and cleared) by ``talk.js`` so the orb can stay in CONNECTING with a
- * dedicated caption until the backend acknowledges the switch. Keeping
- * this state at the module scope avoids polluting ``window`` and survives
- * the AbortController teardown between views.
+ * Cross-view hand-off for an in-flight personality apply: set by home.js
+ * before navigating to /talk, consumed by talk.js to drive its caption.
  */
 
 let pending = null;
@@ -21,11 +16,7 @@ export function setPendingApply(entry) {
     return;
   }
   pending = entry;
-  // Attach a no-op catch on a derived chain so a rejected apply never
-  // becomes an ``unhandledrejection`` if the consumer (talk view) is
-  // never mounted - e.g. the user navigates away before /talk loads.
-  // The original ``entry.promise`` is untouched so ``consumePendingApply``
-  // callers can still ``await`` and observe the rejection themselves.
+  // Avoid an unhandledrejection if /talk never mounts to consume this.
   entry.promise.catch(() => {});
 }
 

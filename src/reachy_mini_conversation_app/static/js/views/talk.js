@@ -48,9 +48,6 @@ export async function mountTalkView({ outlet, signal }) {
   );
   outlet.replaceChildren(view);
 
-  // While the apply is in flight, show a context-aware caption but keep
-  // the orb visually in CONNECTING. When there is no pending apply (deep
-  // link to /talk), refresh the header badge from the backend instead.
   if (pending) {
     caption.textContent = `Applying "${prettifyProfileName(pending.name)}"…`;
     try {
@@ -62,10 +59,10 @@ export async function mountTalkView({ outlet, signal }) {
       return;
     }
     if (signal.aborted) return;
-    // Reset to the generic CONNECTING caption; SSE ``ready`` will flip
-    // the orb to its resting state on the next tick.
+    // SSE "ready" will flip the orb to its resting state next tick.
     caption.textContent = CAPTION_BY_STATE[ORB_STATES.CONNECTING];
   } else {
+    // Deep link to /talk with no pending apply: refresh the header badge.
     fetchActivePersonality().then((name) => {
       if (signal.aborted) return;
       if (name) setPersonality(name);

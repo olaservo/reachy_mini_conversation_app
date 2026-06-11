@@ -1,8 +1,6 @@
 /**
  * Conversation orb: SSE-driven state machine → CSS data-state attribute.
- * All indicators are rendered once and toggled via CSS; no DOM replacement on transition.
- * Audio runs entirely in Python; the orb is CSS-animated only (no mic-level reactivity).
- * The root is a <button> — the talk view uses it as the mic toggle.
+ * The root is a <button> - the talk view uses it as the mic toggle.
  */
 
 import { h } from "./ui.js";

@@ -218,7 +218,6 @@ class LocalStream:
         if callable(setter):
             setter(self._event_bus.publish)
 
-    # ---- Settings UI ----
     def _read_env_lines(self, env_path: Path) -> list[str]:
         """Load env file contents or a template as a list of lines."""
         inst = env_path.parent

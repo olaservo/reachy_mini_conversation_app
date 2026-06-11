@@ -1,17 +1,6 @@
 /**
  * Header personality badge: avatar + "Personality" label + active profile name.
- *
- * Lives in the app shell (rendered by ``index.html``) so it can persist
- * across view changes without re-mounting. Views drive it via the
- * exported setters:
- *   - ``setPersonality(name)``: updates avatar + name text.
- *   - ``showPersonalityBadge()`` / ``hidePersonalityBadge()``: toggles
- *     visibility, typically wired to route changes (visible on talk,
- *     hidden on home / settings).
- *
- * The avatar mirrors the personality-card treatment from ``home.js``:
- * we strip the ``user_personalities/`` prefix to find a matching SVG,
- * and fall back to ``default.svg`` for unknown / custom profiles.
+ * Lives in the app shell (index.html) so it persists across view changes.
  */
 
 import { avatarFor } from "./constants.js";

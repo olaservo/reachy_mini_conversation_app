@@ -52,11 +52,7 @@ export function createRouter(routes, { fallback = "#/", outlet } = {}) {
       }
       dispatch();
     },
-    /** Programmatic navigation, e.g. after applying a personality.
-     *
-     * Dispatches synchronously so the new view mounts in the same task as
-     * the click handler. The subsequent ``hashchange`` event becomes a
-     * no-op thanks to the ``lastRoute`` guard inside ``dispatch``. */
+    /** Navigate and dispatch synchronously; the resulting hashchange is a no-op via lastRoute. */
     navigate(route) {
       if (window.location.hash === route) return;
       window.location.hash = route;
