@@ -101,6 +101,29 @@ def test_mic_endpoints_report_and_toggle_mute_state() -> None:
     assert LocalStream(MagicMock(), robot)._mic_muted is False
 
 
+@pytest.mark.asyncio
+async def test_conversation_events_survive_handler_rebuild() -> None:
+    """Activity from a rebuilt handler must reach subscribers of the original event bus."""
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.observer = None
+
+        def set_activity_observer(self, observer: Any) -> None:
+            self.observer = observer
+
+    rebuilt = FakeHandler()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(FakeHandler(), robot, settings_app=FastAPI(), handler_factory=lambda voice: rebuilt)
+
+    queue, unsubscribe = stream._event_bus.subscribe()
+    stream._build_handler_for_current_backend()
+    rebuilt.observer("assistant_audio_delta")
+
+    assert await asyncio.wait_for(queue.get(), timeout=1.0) == "assistant_audio_delta"
+    unsubscribe()
+
+
 def test_backend_config_persists_gemini_selection_and_status(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

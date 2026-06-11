@@ -201,14 +201,15 @@ class LocalStream:
         self._backend_connection_state = "not_started"
         self._backend_error: str | None = None
         self._backend_retry_delay = BACKEND_RETRY_DELAY_SECONDS
+        # One bus for the stream's lifetime: the /conversation_events route
+        # closes over it, so handler rebuilds must keep publishing into it.
+        self._event_bus = ConversationEventBus()
         self._install_handler(handler)
 
     def _install_handler(self, handler: ConversationHandler) -> None:
         """Set the active handler and wire LocalStream-owned helpers into it."""
         self.handler = handler
         self.handler._clear_queue = self.clear_audio_queue
-
-        self._event_bus = ConversationEventBus()
         self._attach_event_bus_to_handler()
 
     def _attach_event_bus_to_handler(self) -> None:
@@ -587,9 +588,6 @@ class LocalStream:
             except Exception:
                 pass
 
-        class ApiKeyPayload(BaseModel):
-            openai_api_key: str
-
         class BackendPayload(BaseModel):
             backend: str
             api_key: Optional[str] = None
@@ -695,15 +693,6 @@ class LocalStream:
                     loop.call_soon_threadsafe(self.clear_audio_queue)
             return JSONResponse({"muted": self._mic_muted})
 
-        # POST /openai_api_key -> set/persist key
-        @self._settings_app.post("/openai_api_key")
-        def _set_key(payload: ApiKeyPayload) -> JSONResponse:
-            key = (payload.openai_api_key or "").strip()
-            if not key:
-                return JSONResponse({"ok": False, "error": "empty_key"}, status_code=400)
-            self._persist_api_key(key)
-            return JSONResponse({"ok": True, **_status_payload()})
-
         @self._settings_app.post("/backend_config")
         def _set_backend(payload: BackendPayload) -> JSONResponse:
             backend = payload.backend.strip().lower()
@@ -757,32 +746,6 @@ class LocalStream:
                     **payload_data,
                 }
             )
-
-        # POST /validate_api_key -> validate key without persisting it
-        @self._settings_app.post("/validate_api_key")
-        async def _validate_key(payload: ApiKeyPayload) -> JSONResponse:
-            key = (payload.openai_api_key or "").strip()
-            if not key:
-                return JSONResponse({"valid": False, "error": "empty_key"}, status_code=400)
-
-            # Try to validate by checking if we can fetch the models
-            try:
-                import httpx
-
-                headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.get("https://api.openai.com/v1/models", headers=headers)
-                    if response.status_code == 200:
-                        return JSONResponse({"valid": True})
-                    elif response.status_code == 401:
-                        return JSONResponse({"valid": False, "error": "invalid_api_key"}, status_code=401)
-                    else:
-                        return JSONResponse(
-                            {"valid": False, "error": "validation_failed"}, status_code=response.status_code
-                        )
-            except Exception as e:
-                logger.warning(f"API key validation failed: {e}")
-                return JSONResponse({"valid": False, "error": "validation_error"}, status_code=500)
 
         self._settings_initialized = True
 
