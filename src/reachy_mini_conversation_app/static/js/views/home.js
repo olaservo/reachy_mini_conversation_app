@@ -2,6 +2,7 @@
 
 import {
   applyPersonality,
+  describeError,
   listPersonalities,
   loadPersonality,
   savePersonality,
@@ -105,7 +106,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
       newName = saveResult?.value || created.name;
     } catch (error) {
       if (signal.aborted) return;
-      status.textContent = `Failed to create profile: ${error?.message || error}`;
+      status.textContent = `Failed to create profile: ${describeError(error)}`;
       status.classList.add("is-error");
       return;
     }
@@ -179,6 +180,6 @@ function renderError(label, error) {
     "div",
     { class: "view-error" },
     h("p", null, label),
-    h("p", { class: "muted small" }, error?.message || String(error))
+    h("p", { class: "muted small" }, describeError(error))
   );
 }

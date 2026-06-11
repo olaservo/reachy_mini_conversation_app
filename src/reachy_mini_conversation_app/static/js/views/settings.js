@@ -2,6 +2,7 @@
 
 import {
   applyVoice,
+  describeError,
   getCurrentVoice,
   getStatus,
   listVoices,
@@ -124,7 +125,7 @@ function buildBackendSection({ onSaved } = {}) {
         result?.message || (result?.requires_restart ? "Saved. Restart the app to apply." : "Saved.");
       await onSaved?.();
     } catch (error) {
-      status.textContent = `Failed to save: ${error?.message || error}`;
+      status.textContent = `Failed to save: ${describeError(error)}`;
       status.classList.add("is-error");
     }
   });
@@ -173,7 +174,7 @@ function buildVoiceSection() {
       const result = await applyVoice(select.value);
       status.textContent = result?.status || "Voice applied.";
     } catch (error) {
-      status.textContent = `Failed to apply: ${error?.message || error}`;
+      status.textContent = `Failed to apply: ${describeError(error)}`;
       status.classList.add("is-error");
     }
   });

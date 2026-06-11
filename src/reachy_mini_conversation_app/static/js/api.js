@@ -82,4 +82,25 @@ export const getCurrentVoice = () => request("GET", "/voices/current");
 export const applyVoice = (voice) =>
   request("POST", "/voices/apply", { body: { voice } });
 
+/** Backend error codes that need friendlier copy than the raw code. */
+const ERROR_MESSAGES = Object.freeze({
+  invalid_backend: "Unknown backend selected.",
+  empty_key: "An API key is required for this backend.",
+  empty_hf_host: "Enter a Hugging Face host.",
+  invalid_hf_host: "That Hugging Face host doesn't look right.",
+  invalid_hf_port: "That Hugging Face port doesn't look right.",
+  invalid_hf_mode: "Unknown Hugging Face mode.",
+  missing_hf_session_url: "Couldn't reach the Hugging Face Space. Check it's running.",
+  invalid_name: "Enter a valid profile name.",
+  missing_voice: "Choose a voice first.",
+  profile_locked: "Profile switching is locked by the administrator.",
+  loop_unavailable: "Reachy is still starting up. Try again in a moment.",
+});
+
+/** Map a thrown error to user-facing copy, falling back to its raw message. */
+export function describeError(error) {
+  const code = error?.body?.error;
+  return ERROR_MESSAGES[code] || error?.message || String(error);
+}
+
 export { HttpError };

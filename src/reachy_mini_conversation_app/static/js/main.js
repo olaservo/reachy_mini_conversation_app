@@ -12,7 +12,17 @@ import { mountHomeView } from "./views/home.js";
 import { mountTalkView } from "./views/talk.js";
 import { mountSettingsView } from "./views/settings.js";
 
+/** Honor the desktop app's ?theme=dark|light, overriding prefers-color-scheme. */
+function applyEmbeddedTheme() {
+  const theme = new URLSearchParams(window.location.search).get("theme");
+  if (theme !== "dark" && theme !== "light") return;
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+}
+
 function boot() {
+  applyEmbeddedTheme();
+
   const outlet = $("#view-outlet");
   if (!outlet) {
     console.error("#view-outlet missing from index.html");

@@ -81,8 +81,19 @@ export async function mountTalkView({ outlet, signal }) {
   syncMicAria();
 
   const subscription = subscribeConversationEvents({
-    onReady: () => {
+    // Re-sync mic state on (re)connect: another tab may have toggled it.
+    onReady: async () => {
+      if (!togglePending) {
+        try {
+          muted = Boolean((await getMicState())?.muted);
+        } catch {
+          // keep the last known mute state
+        }
+      }
+      if (signal.aborted) return;
       orb.setState(restingState());
+      caption.textContent = CAPTION_BY_STATE[restingState()];
+      syncMicAria();
     },
     onActivity: (reason) => {
       if (muted) return;

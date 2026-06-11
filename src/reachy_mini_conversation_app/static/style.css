@@ -52,8 +52,9 @@
   --transition: 0.25s ease;
 }
 
+/* The desktop app pins the theme via ?theme=, overriding the OS preference. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #f6f7fa;
     --bg-soft: #eceff5;
     --bg-elev: #ffffff;
@@ -66,6 +67,20 @@
     --shadow-sm: 0 2px 8px rgba(20, 25, 40, 0.08);
     --shadow-lg: 0 16px 48px rgba(20, 25, 40, 0.18);
   }
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f7fa;
+  --bg-soft: #eceff5;
+  --bg-elev: #ffffff;
+  --bg-elev-hover: #f0f3fa;
+  --border: #d8dde6;
+  --border-strong: #b9c0cd;
+  --text: #1c2028;
+  --text-soft: #4a525f;
+  --text-muted: #7e8695;
+  --shadow-sm: 0 2px 8px rgba(20, 25, 40, 0.08);
+  --shadow-lg: 0 16px 48px rgba(20, 25, 40, 0.18);
 }
 
 *,
