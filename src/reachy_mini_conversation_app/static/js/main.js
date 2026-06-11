@@ -12,6 +12,25 @@ import { mountHomeView } from "./views/home.js";
 import { mountTalkView } from "./views/talk.js";
 import { mountSettingsView } from "./views/settings.js";
 
+const SETTINGS_RETURN_KEY = "settings-return-route";
+
+/** Survives reloads while on /settings (sessionStorage may be unavailable when embedded). */
+function readSettingsReturn() {
+  try {
+    return sessionStorage.getItem(SETTINGS_RETURN_KEY) === ROUTES.TALK ? ROUTES.TALK : ROUTES.HOME;
+  } catch {
+    return ROUTES.HOME;
+  }
+}
+
+function storeSettingsReturn(route) {
+  try {
+    sessionStorage.setItem(SETTINGS_RETURN_KEY, route);
+  } catch {
+    // in-memory fallback is enough
+  }
+}
+
 /** Honor the desktop app's ?theme=dark|light, overriding prefers-color-scheme. */
 function applyEmbeddedTheme() {
   const theme = new URLSearchParams(window.location.search).get("theme");
@@ -38,11 +57,18 @@ function boot() {
     { fallback: ROUTES.HOME, outlet }
   );
 
+  // Settings is an overlay: closing it returns to where it was opened
+  let settingsReturn = readSettingsReturn();
   const gear = $('[data-action="open-settings"]');
   if (gear) {
     gear.addEventListener("click", () => {
-      const onSettings = window.location.hash === ROUTES.SETTINGS;
-      router.navigate(onSettings ? ROUTES.HOME : ROUTES.SETTINGS);
+      if (window.location.hash === ROUTES.SETTINGS) {
+        router.navigate(settingsReturn);
+      } else {
+        settingsReturn = window.location.hash === ROUTES.TALK ? ROUTES.TALK : ROUTES.HOME;
+        storeSettingsReturn(settingsReturn);
+        router.navigate(ROUTES.SETTINGS);
+      }
     });
   }
 
@@ -56,7 +82,9 @@ function boot() {
 
   const back = $('[data-action="go-back"]');
   if (back) {
-    back.addEventListener("click", () => router.navigate(ROUTES.HOME));
+    back.addEventListener("click", () => {
+      router.navigate(window.location.hash === ROUTES.SETTINGS ? settingsReturn : ROUTES.HOME);
+    });
   }
 
   mountPersonalityBadge(document);
@@ -69,7 +97,9 @@ function boot() {
       gear.setAttribute("aria-label", onSettings ? "Close settings" : "Open settings");
     }
     if (back) {
-      back.hidden = route !== ROUTES.TALK;
+      back.hidden = route === ROUTES.HOME;
+      const toConversation = route === ROUTES.SETTINGS && settingsReturn === ROUTES.TALK;
+      back.setAttribute("aria-label", toConversation ? "Back to conversation" : "Back to personalities");
     }
     if (route === ROUTES.TALK) showPersonalityBadge();
     else hidePersonalityBadge();

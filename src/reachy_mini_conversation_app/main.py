@@ -7,8 +7,9 @@ import argparse
 import threading
 from typing import Optional
 from pathlib import Path
+from collections.abc import Callable, Awaitable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 
 from reachy_mini import ReachyMini, ReachyMiniApp
 from reachy_mini_conversation_app.utils import (
@@ -207,6 +208,13 @@ def run(
     effective_settings_app = settings_app
     if args.ui and settings_app is None:
         effective_settings_app = FastAPI()
+
+        @effective_settings_app.middleware("http")
+        async def _no_cache(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+            """Serve everything no-store so browsers don't keep stale UI modules."""
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            return response
 
     stream_manager = LocalStream(
         handler,
