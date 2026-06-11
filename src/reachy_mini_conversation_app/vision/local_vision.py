@@ -109,7 +109,7 @@ class VisionProcessor:
         logger.info("Loading SmolVLM2 model on %s (HF_HOME=%s)", self.device, config.HF_HOME)
         processor = cast(
             _VisionProcessor,
-            AutoProcessor.from_pretrained(self.vision_config.model_path),  # type: ignore[no-untyped-call]
+            AutoProcessor.from_pretrained(self.vision_config.model_path),
         )
 
         model_kwargs: dict[str, object] = {

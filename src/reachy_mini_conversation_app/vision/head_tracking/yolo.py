@@ -11,7 +11,7 @@ from reachy_mini_conversation_app.vision.head_tracking import HeadTrackerResult
 
 try:
     from supervision import Detections
-    from ultralytics import YOLO  # type: ignore[attr-defined]
+    from ultralytics import YOLO
 except ImportError as e:
     raise ImportError(
         "To use YOLO head tracker, please install the extra dependencies: pip install '.[yolo_vision]'",
