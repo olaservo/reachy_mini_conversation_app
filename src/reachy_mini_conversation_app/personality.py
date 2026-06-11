@@ -13,6 +13,9 @@ from .config import USER_PERSONALITIES_DIRNAME, config, get_default_voice_for_ba
 
 DEFAULT_OPTION = "(built-in default)"
 
+# Dev-only profiles, hidden from the UI, but still loadable via REACHY_MINI_CUSTOM_PROFILE
+UNLISTED_PROFILES = {"tedai"}
+
 
 def _prompts_dir() -> Path:
     return Path(__file__).parent / "prompts"
@@ -38,7 +41,7 @@ def list_personalities() -> List[str]:
         builtin_root = config.PROFILES_DIRECTORY
         if builtin_root.exists():
             for p in sorted(builtin_root.iterdir()):
-                if p.name == USER_PERSONALITIES_DIRNAME:
+                if p.name == USER_PERSONALITIES_DIRNAME or p.name in UNLISTED_PROFILES:
                     continue
                 if p.is_dir() and (p / "instructions.txt").exists():
                     names.append(p.name)
