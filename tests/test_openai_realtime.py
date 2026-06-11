@@ -400,7 +400,7 @@ async def test_empty_audio_buffer_error_exits_listening_without_chat_error(monke
 
 @pytest.mark.asyncio
 async def test_apply_personality_preserves_manual_voice_override(monkeypatch: Any) -> None:
-    """Applying a profile should update tools without discarding a manual voice."""
+    """Applying a profile should restart the session without discarding a manual voice."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "cedar")
     monkeypatch.setattr(
@@ -418,25 +418,19 @@ async def test_apply_personality_preserves_manual_voice_override(monkeypatch: An
     monkeypatch.setattr("reachy_mini_conversation_app.config.set_custom_profile", lambda _profile: None)
 
     handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
-    update = AsyncMock()
-    item_create = AsyncMock()
-    handler.connection = SimpleNamespace(
-        session=SimpleNamespace(update=update),
-        conversation=SimpleNamespace(item=SimpleNamespace(create=item_create)),
-    )
+    handler.connection = MagicMock()
     handler._voice_override = "marin"
     restart = AsyncMock()
     monkeypatch.setattr(handler, "_restart_session", restart)
 
     status = await handler.apply_personality("example")
 
-    assert status == "Applied personality to current realtime session."
+    assert status == "Applied personality and restarted realtime session."
     assert handler.get_current_voice() == "marin"
-    restart.assert_not_awaited()
-    session = update.await_args.kwargs["session"]
+    restart.assert_awaited_once_with(refresh_client=False)
+    session = handler._get_session_config(handler._get_active_tool_specs())
     assert session["audio"]["output"]["voice"] == "marin"
     assert [tool["name"] for tool in session["tools"]] == ["remember"]
-    item_create.assert_awaited_once()
 
 
 def test_handler_uses_startup_voice_at_startup(monkeypatch: Any) -> None:

@@ -525,8 +525,8 @@ async def test_build_realtime_client_does_not_send_openai_key_to_hf_allocator(mo
 
 
 @pytest.mark.asyncio
-async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
-    """Live personality updates should honor the selected voice and active tools."""
+async def test_apply_personality_restarts_hf_session_without_reallocating_endpoint(monkeypatch: Any) -> None:
+    """Live personality updates should reset history without going through the allocator again."""
     monkeypatch.setattr(hf_mod, "get_session_instructions", lambda _instance_path=None: "new instructions")
     monkeypatch.setattr(hf_mod, "get_session_voice", lambda default=HF_DEFAULT_VOICE: "Serena")
     monkeypatch.setattr(
@@ -544,44 +544,55 @@ async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(m
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", "https://lb.example.test/session")
 
-    captured_update: dict[str, Any] = {}
-    captured_items: list[dict[str, Any]] = []
-
-    class FakeSession:
-        async def update(self, **kwargs: Any) -> None:
-            captured_update.update(kwargs)
-
-    class FakeItem:
-        async def create(self, **kwargs: Any) -> None:
-            captured_items.append(kwargs)
-
-    class FakeConversation:
-        item = FakeItem()
-
-    class FakeConnection:
-        session = FakeSession()
-        conversation = FakeConversation()
-
     handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
-    handler.connection = FakeConnection()
+    handler.connection = MagicMock()
     restart = AsyncMock(return_value=None)
     monkeypatch.setattr(handler, "_restart_session", restart)
 
     result = await handler.apply_personality("example")
 
-    assert result == "Applied personality to current realtime session."
-    restart.assert_not_awaited()
-    session = captured_update["session"]
-    assert session["instructions"].startswith("new instructions")
-    assert "previous visual observations" in session["instructions"]
+    assert result == "Applied personality and restarted realtime session."
+    restart.assert_awaited_once_with(refresh_client=False)
+    session = handler._get_session_config(handler._get_active_tool_specs())
+    assert session["instructions"] == "new instructions"
     assert session["audio"]["output"]["voice"] == "Serena"
     assert [tool["name"] for tool in session["tools"]] == ["remember"]
-    assert len(captured_items) == 1
-    notice_item = captured_items[0]["item"]
-    assert notice_item["role"] == "system"
-    notice_text = notice_item["content"][0]["text"]
-    assert "currently available tools are: remember" in notice_text
-    assert "If camera is not in that list" in notice_text
+
+
+@pytest.mark.asyncio
+async def test_restart_session_can_reuse_hf_allocated_endpoint(monkeypatch: Any) -> None:
+    """A requested same-endpoint restart must not call the HF session allocator."""
+    monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
+
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    fake_client = MagicMock()
+    fake_connection = MagicMock()
+    fake_connection.close = AsyncMock()
+    handler.client = fake_client
+    handler.connection = fake_connection
+
+    build_realtime_client = AsyncMock(side_effect=AssertionError("allocator should not be called"))
+    monkeypatch.setattr(handler, "_build_realtime_client", build_realtime_client)
+
+    session_started = asyncio.Event()
+    keep_session_open = asyncio.Event()
+
+    async def fake_run_realtime_session() -> None:
+        session_started.set()
+        handler._connected_event.set()
+        await keep_session_open.wait()
+
+    monkeypatch.setattr(handler, "_run_realtime_session", fake_run_realtime_session)
+
+    await handler._restart_session(refresh_client=False)
+
+    fake_connection.close.assert_awaited_once()
+    build_realtime_client.assert_not_awaited()
+    assert handler.client is fake_client
+    assert session_started.is_set()
+
+    keep_session_open.set()
+    await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio

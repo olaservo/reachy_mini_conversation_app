@@ -147,6 +147,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
         # Internal lifecycle flags
         self._connected_event: asyncio.Event = asyncio.Event()
+        self._realtime_session_finished_event: asyncio.Event = asyncio.Event()
+        self._realtime_session_finished_event.set()
+        self._session_generation = 0
 
         # Background tool manager
         self.tool_manager = BackgroundToolManager()
@@ -232,48 +235,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
     def _get_session_config(self, tool_specs: list[dict[str, Any]]) -> RealtimeSessionCreateRequestParam:
         """Return the backend-specific realtime session config."""
 
-    @staticmethod
-    def _build_personality_change_notice(tool_specs: list[dict[str, Any]]) -> str:
-        """Return a system notice that bounds retained backend history after profile changes."""
-        tool_names = sorted(spec["name"] for spec in tool_specs if isinstance(spec.get("name"), str))
-        tools_text = ", ".join(tool_names) if tool_names else "none"
-        return (
-            "The active personality and tool configuration just changed. Treat this as a new conversation context. "
-            "Do not rely on previous tool availability, previous camera images, or previous visual observations. "
-            f"The currently available tools are: {tools_text}. "
-            "If camera is not in that list, you cannot see the user, inspect images, or answer visual questions."
-        )
-
-    def _append_personality_change_notice_to_session(
-        self,
-        session_config: RealtimeSessionCreateRequestParam,
-        tool_specs: list[dict[str, Any]],
-    ) -> None:
-        """Make the profile-change boundary part of the live session instructions."""
-        notice = self._build_personality_change_notice(tool_specs)
-        instructions = session_config.get("instructions")
-        if isinstance(instructions, str) and instructions.strip():
-            session_config["instructions"] = f"{instructions}\n\n{notice}"
-        else:
-            session_config["instructions"] = notice
-
-    async def _add_personality_change_notice(self, tool_specs: list[dict[str, Any]]) -> None:
-        """Inject a system boundary so backends with retained history drop stale tool assumptions."""
-        if self.connection is None:
-            return
-
-        notice = self._build_personality_change_notice(tool_specs)
-        try:
-            await self.connection.conversation.item.create(
-                item={
-                    "type": "message",
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": notice}],
-                },
-            )
-        except Exception as e:
-            logger.warning("Failed to add personality change boundary: %s", e)
-
     async def _cancel_partial_transcript_task(self) -> None:
         if self.partial_transcript_task and not self.partial_transcript_task.done():
             self.partial_transcript_task.cancel()
@@ -350,8 +311,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         """Apply a new personality (profile) at runtime if possible.
 
         - Updates the global config's selected profile for subsequent calls.
-        - If a realtime connection is active, sends a session.update with the
-          freshly resolved instructions so the change takes effect immediately.
+        - If a realtime connection is active, reconnects the current endpoint
+          so backend conversation history starts fresh with the new tools.
 
         Returns a short status message for UI feedback.
         """
@@ -367,22 +328,18 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
             try:
                 tool_specs = self._get_active_tool_specs()
-                session_config = self._get_session_config(tool_specs)
-                self._append_personality_change_notice_to_session(session_config, tool_specs)
+                _ = self._get_session_config(tool_specs)
             except BaseException as e:  # catch SystemExit from prompt loader without crashing
                 logger.error("Failed to resolve personality content: %s", e)
                 return f"Failed to apply personality: {e}"
 
             if self.connection is not None:
                 try:
-                    await self.connection.session.update(
-                        session=session_config,
-                    )
-                    await self._add_personality_change_notice(tool_specs)
-                    logger.info("Applied personality via live update: %s", profile or "built-in default")
-                    return "Applied personality to current realtime session."
+                    await self._restart_session(refresh_client=False)
+                    logger.info("Applied personality via session reconnect: %s", profile or "built-in default")
+                    return "Applied personality and restarted realtime session."
                 except Exception as e:
-                    logger.warning("Live update failed for personality change: %s", e)
+                    logger.warning("Session reconnect failed for personality change: %s", e)
                     return "Applied personality. Will take effect on next connection."
             else:
                 logger.info(
@@ -444,6 +401,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         """Start the handler with minimal retries on unexpected websocket closure."""
         await self._prepare_startup_credentials()
         self.client = await self._build_realtime_client()
+        self._session_generation += 1
+        session_generation = self._session_generation
 
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
@@ -467,18 +426,37 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 raise
             finally:
                 # never keep a stale reference
+                if session_generation == self._session_generation:
+                    self.connection = None
+                    try:
+                        self._connected_event.clear()
+                    except Exception:
+                        pass
+
+    async def _run_realtime_session_for_generation(self, session_generation: int) -> None:
+        """Run a reconnect task and clean up only if it is still current."""
+        try:
+            await self._run_realtime_session()
+        except self._connection_closed_errors() as e:
+            logger.warning("Realtime websocket closed after restart: %s", e)
+        except Exception:
+            logger.exception("Realtime session restart task failed")
+        finally:
+            if session_generation == self._session_generation:
                 self.connection = None
                 try:
                     self._connected_event.clear()
                 except Exception:
                     pass
 
-    async def _restart_session(self) -> None:
+    async def _restart_session(self, *, refresh_client: bool | None = None) -> None:
         """Force-close the current session and start a fresh one in background.
 
         Does not block the caller while the new session is establishing.
         """
         try:
+            self._session_generation += 1
+            session_generation = self._session_generation
             if self.connection is not None:
                 try:
                     await self.connection.close()
@@ -486,6 +464,10 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     pass
                 finally:
                     self.connection = None
+                try:
+                    await asyncio.wait_for(self._realtime_session_finished_event.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Timed out waiting for old realtime session cleanup; reconnecting anyway.")
 
             # Ensure we have a client (start_up must have run once)
             if getattr(self, "client", None) is None:
@@ -497,9 +479,14 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 self._connected_event.clear()
             except Exception:
                 pass
-            if self.REFRESH_CLIENT_ON_RECONNECT:
+            if refresh_client is None:
+                refresh_client = self.REFRESH_CLIENT_ON_RECONNECT
+            if refresh_client:
                 self.client = await self._build_realtime_client()
-            asyncio.create_task(self._run_realtime_session(), name="realtime-session-restart")
+            asyncio.create_task(
+                self._run_realtime_session_for_generation(session_generation),
+                name="realtime-session-restart",
+            )
             try:
                 await asyncio.wait_for(self._connected_event.wait(), timeout=5.0)
                 logger.info("Realtime session restarted and connected.")
@@ -720,6 +707,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
+        self._realtime_session_finished_event.clear()
         tool_specs = self._get_active_tool_specs()
         logger.info(
             "Tools to be used in conversation: %s",
@@ -959,6 +947,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
                 # Stop background tool manager tasks (listener + cleanup) in all paths.
                 await self.tool_manager.shutdown()
+                self._realtime_session_finished_event.set()
 
     # Microphone receive
     async def receive(self, frame: Tuple[int, NDArray[np.int16]]) -> None:
