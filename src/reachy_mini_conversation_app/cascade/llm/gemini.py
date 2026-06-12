@@ -173,7 +173,10 @@ class GeminiLLM(LLMProvider):
                                 for part_idx, part in enumerate(candidate.content.parts):
                                     if hasattr(part, "function_call") and part.function_call:
                                         key = (cand_idx, part_idx)
-                                        tool_call = self._convert_function_call_to_openai(part.function_call)
+                                        tool_call = self._convert_function_call_to_openai(
+                                            part.function_call,
+                                            getattr(part, "thought_signature", None),
+                                        )
                                         if key not in tool_calls_by_position:
                                             logger.info(f"Function call: {part.function_call.name}")
                                         tool_calls_by_position[key] = tool_call
@@ -309,9 +312,15 @@ class GeminiLLM(LLMProvider):
                     except json.JSONDecodeError:
                         arguments = {}
 
-                    # Create function call part
+                    # Create function call part, echoing back the Gemini 3.x thought_signature
+                    # captured on receipt (required, else the API rejects the request with 400).
                     function_call = types.FunctionCall(name=function_name, args=arguments)
-                    parts.append(types.Part(function_call=function_call))
+                    parts.append(
+                        types.Part(
+                            function_call=function_call,
+                            thought_signature=tool_call.get("thought_signature"),
+                        )
+                    )
 
             if parts:
                 gemini_contents.append(types.Content(role=gemini_role, parts=parts))
@@ -365,7 +374,11 @@ class GeminiLLM(LLMProvider):
             return [types.Tool(function_declarations=function_declarations)]
         return []
 
-    def _convert_function_call_to_openai(self, function_call: types.FunctionCall) -> Dict[str, Any]:
+    def _convert_function_call_to_openai(
+        self,
+        function_call: types.FunctionCall,
+        thought_signature: Optional[bytes] = None,
+    ) -> Dict[str, Any]:
         """Convert Gemini function call to OpenAI tool call format.
 
         Gemini format:
@@ -380,12 +393,16 @@ class GeminiLLM(LLMProvider):
                     "arguments": '{"location": "Paris"}'
                 }
             }
+
+        Gemini 3.x attaches an opaque thought_signature to each function_call part and
+        requires it to be echoed back on the next request, so we carry it on the tool call.
         """
         import uuid
 
         return {
             "id": f"call_{uuid.uuid4().hex[:8]}",
             "type": "function",
+            "thought_signature": thought_signature,
             "function": {
                 "name": function_call.name,
                 "arguments": json.dumps(function_call.args or {}),
