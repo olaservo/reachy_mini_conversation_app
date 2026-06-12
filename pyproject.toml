@@ -65,8 +65,11 @@ all_vision = [
 cascade = ["reachy_mini_conversation_app[cascade_silero_vad]", "librosa>=0.10.0", "pyyaml>=6.0"]
 cascade_silero_vad = ["torch>=2.0", "torchaudio>=2.0"]
 cascade_parakeet = ["parakeet-mlx>=0.4.0", "ffmpeg-python>=0.2.0"]
-cascade_parakeet_progressive = ["mlx-audio>=0.3.1"]
-cascade_voxtral_mlx = ["mlx-audio>=0.3.1"]
+# Pinned to the 0.4.1/0.4.2 line: 0.4.0 and earlier force transformers==5.0.0rc3 (breaks the
+# vision transformers==5.3.0 pin); 0.4.3+ require transformers>=5.5.0 (same break). 0.4.1/0.4.2
+# accept transformers 5.3.0 and only clash with mediapipe (protobuf 6 vs <5) — see conflicts below.
+cascade_parakeet_progressive = ["mlx-audio>=0.4.1,<0.4.3"]
+cascade_voxtral_mlx = ["mlx-audio>=0.4.1,<0.4.3"]
 cascade_nemotron = ["nemo_toolkit[asr]>=2.0"]
 cascade_kokoro = ["kokoro>=0.9.4"]
 cascade_elevenlabs = ["elevenlabs>=1.0.0"]
@@ -102,14 +105,12 @@ reachy-mini-conversation-app = "reachy_mini_conversation_app.main:main"
 
 [tool.uv]
 exclude-newer = "7 days"
-# The MLX-based cascade ASR extras (mlx-audio) require transformers>=5.5 / protobuf>=6,
-# which is incompatible with the vision extras that pin transformers==5.3.0 and mediapipe
-# (protobuf<5). They target different setups (MLX is Apple-Silicon-local ASR), so declare
-# them mutually exclusive instead of forcing a single resolvable lock.
+# The MLX cascade ASR extras (mlx-audio 0.4.1/0.4.2) depend on protobuf>=6, while mediapipe
+# pins protobuf<5 — an irreducible clash (no mlx-audio version satisfies both). mlx-audio is
+# otherwise compatible with the rest of the vision stack (yolo, local_vision/transformers 5.3.0),
+# so only the mediapipe-bearing extras (mediapipe_vision and all_vision, which bundles it) are
+# mutually exclusive with MLX ASR. MLX ASR + yolo head-tracking is the canonical combo and resolves.
 conflicts = [
-  [{ extra = "local_vision" }, { extra = "cascade_parakeet_progressive" }],
-  [{ extra = "local_vision" }, { extra = "cascade_voxtral_mlx" }],
-  [{ extra = "local_vision" }, { extra = "cascade_all" }],
   [{ extra = "all_vision" }, { extra = "cascade_parakeet_progressive" }],
   [{ extra = "all_vision" }, { extra = "cascade_voxtral_mlx" }],
   [{ extra = "all_vision" }, { extra = "cascade_all" }],
