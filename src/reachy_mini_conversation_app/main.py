@@ -249,9 +249,12 @@ def run(
     if args.gradio:
         from reachy_mini_conversation_app.gradio_personality import PersonalityUI
 
-        personality_ui = PersonalityUI()
-        personality_ui.create_components()
-        additional_inputs: list[Any] = [chatbot, *personality_ui.additional_inputs_ordered()]
+        personality_ui: PersonalityUI | None = None
+        additional_inputs: list[Any] = [chatbot]
+        if config.BACKEND_PROVIDER != CASCADE_BACKEND:
+            personality_ui = PersonalityUI()
+            personality_ui.create_components()
+            additional_inputs += personality_ui.additional_inputs_ordered()
 
         if config.BACKEND_PROVIDER in {OPENAI_BACKEND, GEMINI_BACKEND}:
             uses_gemini_backend = is_gemini_model()
@@ -279,7 +282,8 @@ def run(
         else:
             app = settings_app
 
-        personality_ui.wire_events(handler, stream_manager)
+        if personality_ui is not None:
+            personality_ui.wire_events(handler, stream_manager)
 
         app = gr.mount_gradio_app(app, stream.ui, path="/")
     else:
