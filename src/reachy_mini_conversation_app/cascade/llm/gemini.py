@@ -142,6 +142,10 @@ class GeminiLLM(LLMProvider):
             # Track tool calls by (candidate_idx, part_idx) to prevent duplicates
             # when a function call is streamed across multiple chunks
             tool_calls_by_position: Dict[tuple[int, int], Dict[str, Any]] = {}
+            # Most recent thought_signature seen on any part. With thinking models the
+            # signature can ride on a separate (thinking) part rather than the function_call
+            # part, so we keep the latest one as a fallback for calls that lack their own.
+            last_signature: Optional[bytes] = None
             first_token = True
             chunk_count = 0
 
@@ -171,14 +175,28 @@ class GeminiLLM(LLMProvider):
                         if hasattr(candidate, "content") and candidate.content:
                             if hasattr(candidate.content, "parts") and candidate.content.parts:
                                 for part_idx, part in enumerate(candidate.content.parts):
+                                    part_signature = getattr(part, "thought_signature", None)
+                                    if part_signature is not None:
+                                        last_signature = part_signature
                                     if hasattr(part, "function_call") and part.function_call:
                                         key = (cand_idx, part_idx)
                                         tool_call = self._convert_function_call_to_openai(
                                             part.function_call,
-                                            getattr(part, "thought_signature", None),
+                                            part_signature,
                                         )
-                                        if key not in tool_calls_by_position:
+                                        prev = tool_calls_by_position.get(key)
+                                        if prev is None:
                                             logger.info(f"Function call: {part.function_call.name}")
+                                        # The signature and the function_call name/args can arrive on
+                                        # different streamed chunks (and thinking models may put the
+                                        # signature on a separate part), so never clobber a captured
+                                        # signature with None — fall back to the prior one, then to the
+                                        # latest signature seen anywhere. Gemini 3.x rejects the next
+                                        # request if a function_call part is missing its signature.
+                                        if tool_call.get("thought_signature") is None:
+                                            tool_call["thought_signature"] = (
+                                                (prev or {}).get("thought_signature") or last_signature
+                                            )
                                         tool_calls_by_position[key] = tool_call
 
             # Yield deduplicated tool calls at the end
