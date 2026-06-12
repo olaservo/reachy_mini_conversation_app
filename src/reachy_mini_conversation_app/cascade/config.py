@@ -16,9 +16,29 @@ logger = logging.getLogger(__name__)
 logging.getLogger("numba").setLevel(logging.WARNING)
 
 # Metadata keys (not passed to provider constructor)
-ASR_METADATA_KEYS = {"module", "class", "streaming", "location", "requires", "hardware", "description", "status", "import_check", "install_extra"}
+ASR_METADATA_KEYS = {
+    "module",
+    "class",
+    "streaming",
+    "location",
+    "requires",
+    "hardware",
+    "description",
+    "status",
+    "import_check",
+    "install_extra",
+}
 LLM_METADATA_KEYS = {"module", "class", "location", "requires", "description"}
-TTS_METADATA_KEYS = {"module", "class", "location", "requires", "hardware", "description", "import_check", "install_extra"}
+TTS_METADATA_KEYS = {
+    "module",
+    "class",
+    "location",
+    "requires",
+    "hardware",
+    "description",
+    "import_check",
+    "install_extra",
+}
 
 
 def _find_cascade_yaml() -> Path:
@@ -154,9 +174,7 @@ class CascadeConfig:
             # Provider exists?
             if provider_name not in providers_dict:
                 available = ", ".join(providers_dict.keys())
-                raise RuntimeError(
-                    f"Unknown {section.upper()} provider '{provider_name}'. Available: {available}"
-                )
+                raise RuntimeError(f"Unknown {section.upper()} provider '{provider_name}'. Available: {available}")
 
             info = providers_dict[provider_name]
 
@@ -193,6 +211,7 @@ class CascadeConfig:
             elif hw == "cuda":
                 try:
                     import torch
+
                     if not torch.cuda.is_available():
                         raise RuntimeError(
                             f"{section.upper()} provider '{provider_name}' requires an NVIDIA CUDA GPU. "

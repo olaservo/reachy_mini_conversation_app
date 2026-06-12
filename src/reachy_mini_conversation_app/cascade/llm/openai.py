@@ -62,10 +62,9 @@ class OpenAILLM(LLMProvider):
                     image_bytes = part.get("image")
                     if image_bytes:
                         b64_str = base64.b64encode(image_bytes).decode("utf-8")
-                        new_content.append({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{b64_str}"}
-                        })
+                        new_content.append(
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_str}"}}
+                        )
                 else:
                     new_content.append(part)
 
@@ -199,8 +198,7 @@ class OpenAILLM(LLMProvider):
                 prompt_tokens = getattr(usage_data, "prompt_tokens", 0)
                 completion_tokens = getattr(usage_data, "completion_tokens", 0)
                 self.last_cost = (
-                    prompt_tokens * self.input_cost_per_1m / 1e6
-                    + completion_tokens * self.output_cost_per_1m / 1e6
+                    prompt_tokens * self.input_cost_per_1m / 1e6 + completion_tokens * self.output_cost_per_1m / 1e6
                 )
                 logger.info(f"LLM Cost: ${self.last_cost:.6f} (in={prompt_tokens}, out={completion_tokens})")
 

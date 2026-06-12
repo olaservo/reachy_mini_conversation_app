@@ -98,7 +98,9 @@ class KokoroTTS(TTSProvider):
 
                     if is_first_chunk:
                         tracker.mark("tts_model_first_chunk")
-                        audio_data = trim_leading_silence(audio_data, sample_rate=self.sample_rate, provider_name="Kokoro TTS")
+                        audio_data = trim_leading_silence(
+                            audio_data, sample_rate=self.sample_rate, provider_name="Kokoro TTS"
+                        )
                         is_first_chunk = False
 
                     # Convert float32 to int16 PCM

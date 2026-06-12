@@ -28,10 +28,10 @@ class NemotronASR(StreamingASRProvider):
     """
 
     def __init__(
-            self,
-            model: str = "nvidia/nemotron-speech-streaming-en-0.6b",
-            chunk_size_ms: int = 560,
-            sample_rate: int = 16000,
+        self,
+        model: str = "nvidia/nemotron-speech-streaming-en-0.6b",
+        chunk_size_ms: int = 560,
+        sample_rate: int = 16000,
     ) -> None:
         """Initialize Nemotron ASR.
 
@@ -99,8 +99,7 @@ class NemotronASR(StreamingASRProvider):
 
         except ImportError as e:
             raise ImportError(
-                f"NeMo toolkit not installed. Install with: "
-                f"pip install 'nemo_toolkit[asr]>=2.0'\nError: {e}"
+                f"NeMo toolkit not installed. Install with: pip install 'nemo_toolkit[asr]>=2.0'\nError: {e}"
             )
         except Exception as e:
             logger.exception(f"Failed to load Nemotron model: {e}")

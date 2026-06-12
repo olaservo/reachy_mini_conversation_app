@@ -95,7 +95,9 @@ class VoxtralMLXASR(StreamingASRProvider):
         full_audio = np.concatenate(self._audio_buffer)
         audio_mx = mx.array(full_audio, dtype=mx.float32)
         result = self._model.generate(
-            audio_mx, language=self.language, max_tokens=self.max_tokens,
+            audio_mx,
+            language=self.language,
+            max_tokens=self.max_tokens,
         )
         text = result.text.strip()
         self._last_partial = text or None
@@ -114,7 +116,9 @@ class VoxtralMLXASR(StreamingASRProvider):
         full_audio = np.concatenate(self._audio_buffer)
         audio_mx = mx.array(full_audio, dtype=mx.float32)
         result = self._model.generate(
-            audio_mx, language=self.language, max_tokens=self.max_tokens,
+            audio_mx,
+            language=self.language,
+            max_tokens=self.max_tokens,
         )
         transcript = result.text.strip()
 

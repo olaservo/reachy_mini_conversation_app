@@ -80,8 +80,7 @@ def get_profile_reactions() -> list[ReactionConfig] | None:
 def _parse_trigger(raw: dict[str, Any]) -> TriggerConfig:
     """Parse a trigger dict from YAML into a TriggerConfig."""
     all_groups = [
-        TriggerConfig(words=group.get("words", []), entities=group.get("entities", []))
-        for group in raw.get("all", [])
+        TriggerConfig(words=group.get("words", []), entities=group.get("entities", [])) for group in raw.get("all", [])
     ]
     return TriggerConfig(
         words=raw.get("words", []),

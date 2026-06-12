@@ -252,4 +252,3 @@ class DeepgramASR(StreamingASRProvider):
         """Handle error from Deepgram."""
         error = kwargs.get("error") or (args[1] if len(args) > 1 else args[0])
         logger.error(f"Deepgram error: {error}")
-

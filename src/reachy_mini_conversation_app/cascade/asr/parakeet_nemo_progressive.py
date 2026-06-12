@@ -189,18 +189,22 @@ def _segment_from_word_timestamps(words: list[tuple[str, float]]) -> list[Senten
         current_end = end_time
 
         if _SENTENCE_END_RE.search(word):
-            segments.append(SentenceSegment(
-                text=" ".join(current_words),
-                end=current_end,
-            ))
+            segments.append(
+                SentenceSegment(
+                    text=" ".join(current_words),
+                    end=current_end,
+                )
+            )
             current_words = []
 
     # Remaining words form the last (possibly incomplete) sentence
     if current_words:
-        segments.append(SentenceSegment(
-            text=" ".join(current_words),
-            end=current_end,
-        ))
+        segments.append(
+            SentenceSegment(
+                text=" ".join(current_words),
+                end=current_end,
+            )
+        )
 
     return segments
 

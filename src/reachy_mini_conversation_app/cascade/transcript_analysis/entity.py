@@ -45,9 +45,7 @@ class EntityAnalyzer(TranscriptAnalyzer):
 
         start_time = time.time()
         loop = asyncio.get_event_loop()
-        entities = await loop.run_in_executor(
-            None, lambda: self.model.predict_entities(text, self.entity_labels)
-        )
+        entities = await loop.run_in_executor(None, lambda: self.model.predict_entities(text, self.entity_labels))
         elapsed = time.time() - start_time
 
         logger.info(f"GLiNER analyzed '{text[:50]}...' in {elapsed * 1000:.0f}ms, found {len(entities)} entities")

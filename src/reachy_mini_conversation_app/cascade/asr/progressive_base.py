@@ -141,8 +141,7 @@ class ProgressiveASRBase(StreamingASRProvider):
         # Fall back to best partial if final is empty or much shorter
         if best_partial and len(transcript) < len(best_partial) * 0.5:
             logger.warning(
-                f"Final transcript '{transcript}' is worse than best partial '{best_partial}', "
-                f"using best partial"
+                f"Final transcript '{transcript}' is worse than best partial '{best_partial}', using best partial"
             )
             transcript = best_partial
 

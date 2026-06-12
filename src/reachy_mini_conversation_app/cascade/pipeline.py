@@ -20,9 +20,9 @@ def _log_prompt(messages: list[dict[str, Any]], tools: list[dict[str, Any]], sys
     import datetime
 
     lines: list[str] = []
-    lines.append(f"\n{'='*80}")
+    lines.append(f"\n{'=' * 80}")
     lines.append(f"LLM REQUEST  depth={depth}  {datetime.datetime.now().isoformat(timespec='milliseconds')}")
-    lines.append(f"{'='*80}")
+    lines.append(f"{'=' * 80}")
 
     # System instructions
     if system:
@@ -44,13 +44,11 @@ def _log_prompt(messages: list[dict[str, Any]], tools: list[dict[str, Any]], sys
             content = msg.get("content", "")
             if len(content) > 300:
                 content = content[:300] + "..."
-            lines.append(f"[{i}] {role} ({msg.get('name','?')}): {content}")
+            lines.append(f"[{i}] {role} ({msg.get('name', '?')}): {content}")
         # Assistant with tool calls
         elif "tool_calls" in msg:
             text = msg.get("content", "") or ""
-            tc_summary = ", ".join(
-                tc.get("function", {}).get("name", "?") for tc in msg["tool_calls"]
-            )
+            tc_summary = ", ".join(tc.get("function", {}).get("name", "?") for tc in msg["tool_calls"])
             lines.append(f"[{i}] {role}: {text[:200]}  [tool_calls: {tc_summary}]")
         # User with image
         elif isinstance(msg.get("content"), list):
@@ -256,7 +254,9 @@ async def execute_tool_calls(
                         {"status": "image_captured", "frame_index": frame_index}
                     )
                     ctx.result.turn_items.append(TurnItem(kind="image", image_jpeg=camera_image_bytes))
-                    logger.info("see_image_through_camera: stored frame %d, will add image to conversation", frame_index)
+                    logger.info(
+                        "see_image_through_camera: stored frame %d, will add image to conversation", frame_index
+                    )
                 else:
                     logger.warning(f"see_image_through_camera returned error: {result}")
 

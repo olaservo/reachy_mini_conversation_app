@@ -132,7 +132,9 @@ class ElevenLabsTTS(TTSProvider):
             )
 
             # Trim leading silence if enabled
-            audio_array = trim_leading_silence(audio_array, sample_rate=self.sample_rate, provider_name="ElevenLabs TTS")
+            audio_array = trim_leading_silence(
+                audio_array, sample_rate=self.sample_rate, provider_name="ElevenLabs TTS"
+            )
 
             # Always re-chunk for streaming playback
             audio_bytes = audio_array.tobytes()

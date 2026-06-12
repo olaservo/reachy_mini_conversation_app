@@ -254,4 +254,3 @@ class VADStateMachine:
         self._preroll_chunks = []
         self._vad.reset()
         self._state = VADState.LISTENING
-
