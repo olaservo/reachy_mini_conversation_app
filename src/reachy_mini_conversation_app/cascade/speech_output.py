@@ -26,9 +26,9 @@ class SpeechOutput(Protocol):
 class QueueSpeechOutput:
     """Synthesize TTS and push audio frames onto the handler's output queue.
 
-    The fastrtc stream drains the queue via emit() and plays audio through the
-    robot speaker, which also drives the daemon head wobbler. Each spoken
-    segment is additionally surfaced as an assistant chat message.
+    The fastrtc stream drains the queue via emit() and plays audio in the browser.
+    In Gradio mode the samples are additionally tapped to the daemon so the head
+    wobbler moves. Each spoken segment is also surfaced as an assistant chat message.
     """
 
     def __init__(self, handler: "CascadeHandler") -> None:
@@ -54,4 +54,9 @@ class QueueSpeechOutput:
             if first_chunk:
                 tracker.mark("audio_playback_started")
                 first_chunk = False
-            await handler.output_queue.put((sample_rate, samples.reshape(1, -1)))
+            frame = samples.reshape(1, -1)
+            # Browser plays the audio via emit(); in Gradio mode the daemon never sees
+            # it, so tap the same samples to drive the head wobbler (robot speaker muted).
+            if handler.gradio_mode:
+                handler._tap_audio_for_daemon_wobbler(frame)
+            await handler.output_queue.put((sample_rate, frame))

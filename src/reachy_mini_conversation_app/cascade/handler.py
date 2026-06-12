@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict, List, Union, Optional
 
 import numpy as np
-from fastrtc import AdditionalOutputs, wait_for_item, audio_to_int16
+from fastrtc import AdditionalOutputs, wait_for_item, audio_to_int16, audio_to_float32
 from numpy.typing import NDArray
 from scipy.signal import resample
 
@@ -227,6 +227,27 @@ class CascadeHandler(ConversationHandler):
                 audio = audio[:, 0]
             audio = audio.reshape(-1)
         return audio
+
+    def _tap_audio_for_daemon_wobbler(self, decoded_pcm: NDArray[np.int16]) -> None:
+        """Push spoken audio to the daemon so it drives the head wobbler.
+
+        In Gradio mode audio plays in the browser (via emit), so the daemon — whose
+        wobbler taps push_audio_sample — never sees it. Mirror the realtime handlers
+        and push the same samples; the robot speaker is muted upstream to avoid
+        double playback. See BaseRealtimeHandler._tap_audio_for_daemon_wobbler.
+        """
+        try:
+            robot = self.deps.reachy_mini
+            output_rate = robot.media.get_output_audio_samplerate()
+            audio = audio_to_float32(decoded_pcm).reshape(-1)
+            if self.output_sample_rate != output_rate:
+                num_samples = int(len(audio) * output_rate / self.output_sample_rate)
+                if num_samples == 0:
+                    return
+                audio = resample(audio, num_samples)
+            robot.media.push_audio_sample(audio.astype(np.float32))
+        except Exception as exc:
+            logger.debug("Daemon wobbler audio tap failed: %s", exc)
 
     def _aggregate_cost(self, provider: Union[ASRProvider, LLMProvider, TTSProvider], label: str) -> None:
         """Fold a provider's per-call cost into the cumulative total."""
