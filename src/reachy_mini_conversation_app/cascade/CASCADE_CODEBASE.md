@@ -24,7 +24,7 @@ mic frames ──▶ receive()                         emit() ──▶ robot sp
 ```
 
 - **`receive(frame)`** (`handler.py`): resamples mic audio to 16 kHz and feeds a
-  `VADStateMachine` (Silero VAD, `vad.py`) in 512-sample chunks. On `SPEECH_ENDED` it wraps the
+  `VADStateMachine` (Silero VAD, `vad/`) in 512-sample chunks. On `SPEECH_ENDED` it wraps the
   buffered speech in a WAV and spawns `_run_turn` as a background task, returning immediately so
   audio keeps flowing.
 - **`_run_turn(wav)`**: ASR → emit the user transcript (`AdditionalOutputs`) → run the LLM/tool
@@ -70,7 +70,7 @@ without `reactions.yaml` get a `NoOpTranscriptManager`.
 
 `cascade.yaml` (bundled in the package; a copy in the working directory overrides it) selects the
 active provider per stage and lists the catalog. `CASCADE_ASR_PROVIDER` / `CASCADE_LLM_PROVIDER` /
-`CASCADE_TTS_PROVIDER` env vars (or `--asr/llm/tts-provider`) override the selection.
+`CASCADE_TTS_PROVIDER` env vars override the selection.
 
 ## Known follow-ups
 

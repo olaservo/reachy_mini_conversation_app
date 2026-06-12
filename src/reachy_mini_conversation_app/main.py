@@ -96,15 +96,9 @@ def run(
             logger.warning("Failed to load startup settings: %s", e)
 
     # Cascade backend selection via CLI overrides any env/.env value above.
+    # Provider selection lives in cascade.yaml (or CASCADE_{ASR,LLM,TTS}_PROVIDER env vars).
     if args.cascade:
         os.environ["BACKEND_PROVIDER"] = CASCADE_BACKEND
-    if args.asr_provider:
-        os.environ["CASCADE_ASR_PROVIDER"] = args.asr_provider
-    if args.llm_provider:
-        os.environ["CASCADE_LLM_PROVIDER"] = args.llm_provider
-    if args.tts_provider:
-        os.environ["CASCADE_TTS_PROVIDER"] = args.tts_provider
-    if args.cascade or args.asr_provider or args.llm_provider or args.tts_provider:
         refresh_runtime_config_from_env()
 
     if config.BACKEND_PROVIDER == HF_BACKEND:

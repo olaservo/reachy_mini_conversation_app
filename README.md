@@ -240,8 +240,8 @@ Enable it with `--cascade` (selecting providers from `cascade.yaml`):
 
 ```bash
 reachy-mini-conversation-app --cascade --gradio
-# override a stage at launch:
-reachy-mini-conversation-app --cascade --asr-provider deepgram --tts-provider elevenlabs
+# override a stage at launch (or set these in .env):
+CASCADE_ASR_PROVIDER=deepgram CASCADE_TTS_PROVIDER=elevenlabs reachy-mini-conversation-app --cascade
 ```
 
 Providers are configured in `cascade.yaml` (`provider:` + a `providers:` catalog per stage):
