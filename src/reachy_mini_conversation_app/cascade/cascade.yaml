@@ -2,7 +2,7 @@
 # API keys are in .env file (OPENAI_API_KEY, DEEPGRAM_API_KEY, GEMINI_API_KEY, ELEVENLABS_API_KEY)
 
 asr:
-  provider: whisper_openai  # deepgram, whisper_openai, parakeet_mlx_progressive
+  provider: parakeet_mlx_progressive  # deepgram, whisper_openai, parakeet_mlx_progressive
 
   providers:
     # ========== CLOUD PROVIDERS ==========
@@ -110,7 +110,7 @@ asr:
 
 
 llm:
-  provider: gpt-4o-mini  # gpt-4o-mini, gpt-5.2-chat, gemini-2.5-flash-lite, gemini-3.1-flash-lite
+  provider: gemini-3.1-flash-lite  # gpt-4o-mini, gpt-5.2-chat, gemini-2.5-flash-lite, gemini-3.1-flash-lite
   temperature: 1.0
 
   providers:
@@ -165,7 +165,7 @@ llm:
 
 
 tts:
-  provider: tts_openai  # tts_openai, kokoro, elevenlabs
+  provider: kokoro  # tts_openai, kokoro, elevenlabs
   trim_silence: true
 
   providers:
