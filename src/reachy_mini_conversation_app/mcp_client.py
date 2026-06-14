@@ -7,6 +7,7 @@ downloading third-party Python code.
 
 from __future__ import annotations
 import re
+import ipaddress
 from typing import TYPE_CHECKING, Any, Mapping, AsyncIterator
 from datetime import timedelta
 from contextlib import asynccontextmanager
@@ -72,6 +73,22 @@ def _normalize_name_segment(label: str, value: str) -> str:
     return _require_name_segment(label, normalized)
 
 
+def _is_local_http_host(host: str) -> bool:
+    """Return whether plain HTTP is acceptable for this host (local network only)."""
+    if not host:
+        return False
+    if host in _LOCAL_HTTP_HOSTS or host == "localhost" or host.endswith(".localhost"):
+        return True
+    if host.endswith(".local"):  # mDNS, e.g. homeassistant.local
+        return True
+    candidate = host.strip("[]").split("%", 1)[0]  # strip IPv6 brackets + zone id
+    try:
+        ip = ipaddress.ip_address(candidate)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local
+
+
 def validate_http_mcp_url(url: str) -> str:
     """Validate that the MCP endpoint uses HTTP(S)."""
     parsed = urlparse(url)
@@ -81,8 +98,11 @@ def validate_http_mcp_url(url: str) -> str:
         raise ValueError(f"Invalid MCP URL '{url}'. Missing host.")
 
     host = (parsed.hostname or "").lower()
-    if parsed.scheme == "http" and host not in _LOCAL_HTTP_HOSTS:
-        raise ValueError("Remote MCP servers must use HTTPS. Plain HTTP is only allowed for localhost.")
+    if parsed.scheme == "http" and not _is_local_http_host(host):
+        raise ValueError(
+            "Remote MCP servers must use HTTPS. Plain HTTP is only allowed for loopback, "
+            "private, or link-local hosts (and *.local mDNS names)."
+        )
     return url
 
 
