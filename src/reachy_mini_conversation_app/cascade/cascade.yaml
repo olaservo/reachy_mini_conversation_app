@@ -200,6 +200,9 @@ tts:
       install_extra: cascade  # base cascade extra already provides openai; no dedicated extra required
       description: "Qwen3-TTS-12Hz-1.7B local/Modal TTS with per-character voices (speak_as)"
       # Settings (OpenAI-compatible /v1/audio/speech endpoint)
+      # Override without editing this file via env: CASCADE_TTS_BASE_URL=<endpoint>/v1
+      # Deployed (keyless) Modal endpoint, resolves all 11 roster voices by name:
+      #   https://olahungerford--qwen3-tts-voices-serve.modal.run/v1
       base_url: http://localhost:8001/v1  # local Qwen3-TTS server; Modal: <web-endpoint>/v1
       # api_key: ${QWEN_TTS_API_KEY}      # uncomment + set in .env for a token-protected (Modal) endpoint
       model: Qwen/Qwen3-TTS-12Hz-1.7B

@@ -64,6 +64,14 @@ def init_provider(provider_type: str, extra_kwargs: Dict[str, Any] | None = None
         if env_base_url:
             kwargs["base_url"] = env_base_url
 
+    # Same override for the Qwen3-TTS provider: point at a deployed (Modal) /v1/audio/speech
+    # endpoint without editing cascade.yaml's localhost default — useful on a dev box with no
+    # local TTS server. Verified: the Modal endpoint resolves all 11 roster voices by name.
+    if provider_type == "tts" and info.get("module") == "qwen3_tts":
+        env_base_url = os.getenv("CASCADE_TTS_BASE_URL")
+        if env_base_url:
+            kwargs["base_url"] = env_base_url
+
     # Merge extra kwargs if provided
     if extra_kwargs:
         kwargs.update(extra_kwargs)

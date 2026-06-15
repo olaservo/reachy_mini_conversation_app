@@ -26,38 +26,33 @@ and Gradium providers, so the cascade's ``QueueSpeechOutput`` can play it direct
 ``voice`` is the per-utterance speaker name (a ``voice_id`` from the roster, e.g.
 ``gm_narrator`` or ``npc_raider``). When omitted it falls back to ``default_voice``.
 The voice names must be registered as speakers on the Qwen3-TTS server (each is a
-stored voice-clone prompt produced by the VoiceDesign workflow). If your server
-expects the clone prompt to be passed inline rather than by name, map the name ->
-prompt here (see ``VOICE_PROMPTS`` placeholder) and send it via ``extra_body``.
+stored voice-clone prompt produced by the VoiceDesign workflow). The deployed Modal
+endpoint resolves all 11 roster names **by name** (verified 2026-06-15 — each returns
+distinct audio), so ``VOICE_PROMPTS`` stays empty. Only populate it if you stand up a
+server that instead wants the clone prompt passed inline via ``extra_body``.
 
-speak_as integration (design — handler wiring intentionally NOT implemented here)
----------------------------------------------------------------------------------
-The DM voices an NPC by calling a ``speak_as(voice_id, text)`` tool. Wiring it up
-is a 3-touch change in files owned by another agent; the precise seams are:
+speak_as integration (DONE — wired end to end in commit 3a75c07)
+----------------------------------------------------------------
+The DM voices an NPC by calling a ``speak_as(voice_id, message)`` tool. The wiring is
+live across three files; the seams (for reference / future edits) are:
 
-1. **Tool spec** — add a ``SPEAK_AS_TOOL_SPEC`` next to ``SPEAK_TOOL_SPEC`` in
-   ``cascade/handler.py:46`` and include it in ``_build_tool_specs``
-   (``handler.py:135``). Params: ``voice_id`` (string, one of the roster ids) and
-   ``message`` (string).
+1. **Tool spec** — ``SPEAK_AS_TOOL_SPEC`` sits next to ``SPEAK_TOOL_SPEC`` in
+   ``cascade/handler.py`` and is included in ``_build_tool_specs``. Params:
+   ``voice_id`` (one of the roster ids) and ``message``.
 
-2. **Interception** — in ``cascade/pipeline.py`` ``execute_tool_calls`` the
-   ``speak`` tool is special-cased at ``pipeline.py:217`` and again at
-   ``pipeline.py:264``. Add a sibling branch for ``speak_as`` that pulls
-   ``voice_id``/``message`` from ``arguments`` and calls
-   ``ctx.speech_output.speak(message, voice=voice_id)`` (see step 3), then
+2. **Interception** — ``cascade/pipeline.py:execute_tool_calls`` special-cases
+   ``speak_as`` alongside ``speak``: it pulls ``voice_id``/``message`` from the tool
+   arguments and calls ``ctx.speech_output.speak(message, voice=voice_id)``, then
    ``_track_cost(ctx, ctx.tts)``.
 
-3. **Per-utterance voice override** — ``QueueSpeechOutput.speak`` at
-   ``cascade/speech_output.py:38`` currently always uses ``handler._voice`` at
-   ``speech_output.py:50``. Add an optional ``voice: str | None = None`` parameter
-   and pass ``voice=voice or handler._voice`` into ``handler.tts.synthesize(...)``.
-   This is backward compatible: existing ``speak(text)`` callers are unchanged, and
-   the ``SpeechOutput`` Protocol at ``speech_output.py:21`` should grow the same
-   optional kwarg. The ``TTSProvider.synthesize`` base already accepts ``voice``
-   (``tts/base.py:17``), so no base change is needed for the override itself.
+3. **Per-utterance voice override** — ``QueueSpeechOutput.speak`` takes an optional
+   ``voice`` and threads ``voice=voice or handler._voice`` into
+   ``handler.tts.synthesize(...)``; the ``SpeechOutput`` Protocol carries the same
+   optional kwarg, and ``synthesize`` (below) forwards it to the endpoint's ``voice``
+   field. Backward compatible: bare ``speak(text)`` callers keep the default voice.
 
-That keeps narration on ``gm_narrator`` (the handler default) while ``speak_as``
-swaps voices per line without touching handler state.
+Narration stays on ``gm_narrator`` (the handler default) while ``speak_as`` swaps
+voices per line without touching handler state.
 """
 
 from __future__ import annotations
@@ -92,9 +87,9 @@ ROSTER_VOICE_IDS = (
     "npc_overseer",    # archetype: authority/comms
 )
 
-# Optional name -> inline voice-clone-prompt map. Leave empty if the server
-# resolves voices by name (the default assumption). Populate this only if your
-# Qwen3-TTS endpoint wants the clone prompt passed inline via extra_body.
+# Optional name -> inline voice-clone-prompt map. The deployed Modal endpoint
+# resolves all 11 roster voices by name (verified), so this stays empty. Populate
+# it only for a server that wants the clone prompt passed inline via extra_body.
 VOICE_PROMPTS: dict[str, str] = {}
 
 
