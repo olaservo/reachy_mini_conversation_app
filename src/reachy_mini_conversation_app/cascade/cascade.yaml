@@ -2,7 +2,10 @@
 # API keys are in .env file (OPENAI_API_KEY, DEEPGRAM_API_KEY, GEMINI_API_KEY, ELEVENLABS_API_KEY)
 
 asr:
-  provider: parakeet_mlx_progressive  # deepgram, whisper_openai, parakeet_mlx_progressive
+  # parakeet_mlx_progressive is Apple-Silicon-only and hard-fails config validation off macOS/arm64
+  # (e.g. this Windows dev box). whisper_openai (needs OPENAI_API_KEY) or deepgram (DEEPGRAM_API_KEY)
+  # for dev; switch back to parakeet on the robot host.
+  provider: whisper_openai  # deepgram, whisper_openai, parakeet_mlx_progressive
 
   providers:
     # ========== CLOUD PROVIDERS ==========
@@ -110,10 +113,28 @@ asr:
 
 
 llm:
-  provider: gemini-3.1-flash-lite  # gpt-4o-mini, gpt-5.2-chat, gemini-2.5-flash-lite, gemini-3.1-flash-lite
-  temperature: 1.0
+  provider: qwen-brain  # qwen-brain, gpt-4o-mini, gpt-5.2-chat, gemini-2.5-flash-lite, gemini-3.1-flash-lite
+  temperature: 0.7      # the DM brain; pipeline applies this top-level temp (per-provider temp is ignored)
 
   providers:
+
+    # The DM brain: Qwen3-30B-A3B-Instruct-2507-FP8 served by vLLM on Modal (keyless).
+    # OpenAI-compatible /v1/chat/completions; structured tool_calls validated (parser=hermes).
+    # Override the URL without editing this file via env: CASCADE_LLM_BASE_URL=<endpoint>/v1
+    # NOTE: serverless/scale-to-zero — first request after idle blocks on a ~2.5 min cold start
+    # (no readiness probe). Use a long client timeout so a cold start isn't mistaken for a hang.
+    qwen-brain:
+      module: openai
+      class: OpenAILLM
+      location: cloud
+      requires: []  # keyless vLLM endpoint; OpenAILLM falls back to api_key="EMPTY"
+      description: "Qwen3-30B-A3B-Instruct-2507-FP8 DM brain (vLLM on Modal, OpenAI-compatible, tool-calling)"
+      # Settings
+      model: Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
+      base_url: https://olahungerford--qwen3-brain-serve.modal.run/v1
+      # Pricing: self-hosted on Modal compute; not per-token billed
+      input_cost_per_1m: 0.0
+      output_cost_per_1m: 0.0
 
     gpt-5.2-chat:
       module: openai
