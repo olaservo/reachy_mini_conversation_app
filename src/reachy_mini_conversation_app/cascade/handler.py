@@ -128,7 +128,9 @@ class CascadeHandler(ConversationHandler):
     ) -> None:
         """Initialize providers, VAD, and stream buffers from cascade.yaml."""
         self.asr: ASRProvider = init_asr_provider()
-        self.llm: LLMProvider = init_llm_provider()
+        # Inject the persistent-memory index block (if memory is enabled) into the
+        # cascade system prompt at construction time.
+        self.llm: LLMProvider = init_llm_provider(deps.memory_manager)
         self.tts: TTSProvider = init_tts_provider()
 
         super().__init__(
@@ -180,6 +182,14 @@ class CascadeHandler(ConversationHandler):
         concurrently by the stream's record/play loops.
         """
         await self.llm.warmup()
+        # Rotate the memory session log so any synchronous remember/forget writes
+        # this session land in a fresh pending log. Reads/index injection work
+        # without this, so it's guarded and best-effort.
+        if self.deps.memory_manager is not None:
+            try:
+                self.deps.memory_manager.new_session()
+            except Exception as e:
+                logger.warning("Failed to start memory session: %s", e)
         await self._closed.wait()
 
     async def shutdown(self) -> None:
@@ -235,7 +245,9 @@ class CascadeHandler(ConversationHandler):
 
         set_custom_profile(profile)
         try:
-            self.llm.system_instructions = cascade_system_instructions()  # type: ignore[attr-defined]
+            self.llm.system_instructions = cascade_system_instructions(  # type: ignore[attr-defined]
+                self.deps.memory_manager
+            )
         except Exception as e:
             logger.error("Failed to apply personality '%s': %s", profile, e)
             return f"Failed to apply personality: {e}"
