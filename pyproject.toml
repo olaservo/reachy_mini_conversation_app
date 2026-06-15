@@ -32,6 +32,15 @@ dependencies = [
     "reachy_mini_toolbox",
     "reachy-mini>=1.8.0",
     "mcp>=1.27.1",
+
+    #Cascade backend — this fork runs the native cascade DM by default (see cascade.yaml).
+    #Kept in BASE deps (not only the [cascade] extra) so a no-extras install — e.g. the Reachy
+    #app dashboard / app-store `pip install <dir>` — still pulls the cascade runtime, including
+    #Silero VAD (torch/torchaudio) and audio (librosa brings soxr for streaming resampling).
+    "torch>=2.0",
+    "torchaudio>=2.0",
+    "librosa>=0.10.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
