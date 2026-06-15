@@ -181,11 +181,12 @@ def _load_models():
     import torch  # noqa: F401  (lazy)
     from qwen_tts import Qwen3TTSModel
 
+    # No attn_implementation override: flash-attn isn't installed in the batch image and
+    # this one-time generation doesn't need it (qwen_tts falls back to plain PyTorch).
     design = Qwen3TTSModel.from_pretrained(
         DESIGN_MODEL,
         device_map="cuda:0",
         dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",
     )
     clone = Qwen3TTSModel.from_pretrained(
         CLONE_MODEL,
@@ -251,7 +252,7 @@ def run_batch(only: Optional["list[str]"] = None) -> dict:
     REF_CLIPS_DIR.mkdir(parents=True, exist_ok=True)
     CLONE_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    design, base = _load_models()
+    design, clone = _load_models()
 
     # Merge with an existing manifest so --only does incremental top-ups.
     manifest: dict = {"model": DESIGN_MODEL, "language": LANGUAGE, "voices": {}}
@@ -265,7 +266,7 @@ def run_batch(only: Optional["list[str]"] = None) -> dict:
     for voice in roster:
         vid = voice["voice_id"]
         print(f"[voice] designing {vid} ...")
-        result = generate_one(design, base, voice)
+        result = generate_one(design, clone, voice)
         manifest["voices"][vid] = {
             "description": voice["description"],
             "sample_line": voice["sample_line"],

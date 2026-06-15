@@ -125,15 +125,18 @@ _LOCAL_VOICES_DIR = Path(__file__).resolve().parent.parent / "voices"
 
 voicedesign_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("libsndfile1")  # soundfile runtime dep
+    # libsndfile1 = soundfile runtime; sox/libsox + ffmpeg = qwen_tts/torchaudio audio I/O
+    # (qwen_tts errors with "SoX could not be found!" without these).
+    .apt_install("libsndfile1", "sox", "libsox-dev", "libsox-fmt-all", "ffmpeg")
     .pip_install(
         "torch",
+        "torchaudio",  # qwen_tts audio backend
         "transformers",
         "accelerate",
         "soundfile",
         "numpy",
-        # FLAG[import]: the package that ships `from qwen_tts import Qwen3TTSModel`.
-        # Pin once verified (model card / QwenLM/Qwen3-TTS README).
+        "hf_transfer",  # required because HF_HUB_ENABLE_HF_TRANSFER=1 is set below
+        # ships `from qwen_tts import Qwen3TTSModel` (verified: pip package `qwen-tts`).
         "qwen-tts",
     )
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
