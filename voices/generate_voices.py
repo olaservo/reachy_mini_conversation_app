@@ -17,38 +17,34 @@ The cascade TTS provider (reachy-dm-cascade .../cascade/tts/qwen3_tts.py) consum
 ``voices/README.md`` for the run command and the consumer handoff.
 
 ================================================================================
-QWEN3-TTS VOICEDESIGN API  (verified against the model card + QwenLM/Qwen3-TTS,
-but the EXACT signatures still need a smoke-test on a GPU host -- see FLAGS)
+QWEN3-TTS API  (signatures VERIFIED against the QwenLM/Qwen3-TTS README; the two
+remaining FLAGS are runtime behaviours that can only be confirmed on a GPU host)
 ================================================================================
-    from qwen_tts import Qwen3TTSModel        # FLAG[import]: confirm pkg/class name
+    from qwen_tts import Qwen3TTSModel        # verified: pip install -U qwen-tts
 
-    # VoiceDesign checkpoint -- design a voice from a NL instruction + text:
+    # VoiceDesign checkpoint -- design a voice from a PURE NL description (no base
+    # speaker; drives timbre/emotion/prosody from `instruct`):
     design = Qwen3TTSModel.from_pretrained(
         "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", device_map="cuda:0",
         dtype=torch.bfloat16, attn_implementation="flash_attention_2",
     )
-    wavs, sr = design.generate_voice_design(            # FLAG[design]: confirm kwargs
+    wavs, sr = design.generate_voice_design(            # verified kwargs
         text=<sample line>, language="English", instruct=<description>,
-    )   # wavs[0] is a float32/float waveform numpy array, sr the sample rate
+    )   # wavs is a list of waveforms; wavs[0] is the clip, sr the sample rate
 
-    # Base checkpoint -- build + reuse a clone prompt from that reference clip:
-    base = Qwen3TTSModel.from_pretrained(
-        "Qwen/Qwen3-TTS-12Hz-1.7B-Base", device_map="cuda:0", dtype=torch.bfloat16,
+    # CustomVoice checkpoint -- build + reuse a clone prompt from that reference clip
+    # (create_voice_clone_prompt / generate_voice_clone are demonstrated on CustomVoice):
+    clone = Qwen3TTSModel.from_pretrained(
+        "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice", device_map="cuda:0", dtype=torch.bfloat16,
     )
-    prompt = base.create_voice_clone_prompt(           # FLAG[clone]: confirm kwargs
-        ref_audio=(wavs[0], sr), ref_text=<sample line>,
-    )   # `prompt` is an opaque structured object (speaker features); we torch.save it.
-    wavs2, sr2 = base.generate_voice_clone(            # (runtime path, not run here)
+    prompt = clone.create_voice_clone_prompt(           # verified kwargs
+        ref_audio=(wavs[0], sr), ref_text=<sample line>, x_vector_only_mode=False,
+    )   # ref_audio also accepts a path / URL / base64. `prompt` is an opaque object.
+    wavs2, sr2 = clone.generate_voice_clone(            # (runtime path, not run here)
         text="...", language="English", voice_clone_prompt=prompt,
     )
 
-FLAGS to verify before a real run (do NOT trust blindly):
-  * FLAG[import]   package import name (`qwen_tts`) and class (`Qwen3TTSModel`).
-  * FLAG[design]   generate_voice_design kwargs / return shape ((wavs, sr) tuple,
-                   wavs a list of waveforms). Does it need `language=`? Model card
-                   shows it; we pass it. Some builds may use `instruction=`.
-  * FLAG[clone]    create_voice_clone_prompt arg names: `ref_audio` as a
-                   (numpy, sr) tuple + `ref_text`. Docs also allow a path/URL/b64.
+FLAGS to verify on the first GPU run (runtime behaviours, not signatures):
   * FLAG[serialize] HOW the clone prompt serializes. It is an opaque object (likely
                    tensors). We use torch.save / torch.load as the safe default. If
                    it is a plain dict of numpy arrays, np.savez would also work. The
@@ -82,7 +78,10 @@ MANIFEST_PATH = ASSETS_DIR / "voices.json"
 
 LANGUAGE = "English"
 DESIGN_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-BASE_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+# Clone-prompt creation + reuse live on the CustomVoice checkpoint (verified against
+# the QwenLM/Qwen3-TTS README — create_voice_clone_prompt / generate_voice_clone are
+# demonstrated on -CustomVoice, NOT -Base).
+CLONE_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 
 # Authoritative ordering / membership check (mirrors ROSTER_VOICE_IDS in the
 # cascade's qwen3_tts.py). The parser must yield exactly these 11 ids.
@@ -178,9 +177,9 @@ def parse_spec(md_path: Path = SPEC_MD) -> "list[dict]":
 # 2. GPU workflow. Imports heavy deps lazily so the file stays laptop-safe.
 # --------------------------------------------------------------------------- #
 def _load_models():
-    """Load the VoiceDesign + Base checkpoints. GPU only.  FLAG[import]."""
+    """Load the VoiceDesign + CustomVoice checkpoints. GPU only."""
     import torch  # noqa: F401  (lazy)
-    from qwen_tts import Qwen3TTSModel  # FLAG[import]
+    from qwen_tts import Qwen3TTSModel
 
     design = Qwen3TTSModel.from_pretrained(
         DESIGN_MODEL,
@@ -188,15 +187,15 @@ def _load_models():
         dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    base = Qwen3TTSModel.from_pretrained(
-        BASE_MODEL,
+    clone = Qwen3TTSModel.from_pretrained(
+        CLONE_MODEL,
         device_map="cuda:0",
         dtype=torch.bfloat16,
     )
-    return design, base
+    return design, clone
 
 
-def generate_one(design, base, voice: dict) -> dict:
+def generate_one(design, clone, voice: dict) -> dict:
     """Design -> reference clip -> reusable clone prompt for a single voice.
 
     Returns the manifest entry (without the shared description/sample fields,
@@ -209,7 +208,7 @@ def generate_one(design, base, voice: dict) -> dict:
     text = voice["sample_line"]
     instruct = voice["description"]
 
-    # (a) Design the voice from its NL description.            FLAG[design]
+    # (a) Design the voice from its NL description (pure text-driven, no base speaker).
     wavs, sr = design.generate_voice_design(
         text=text,
         language=LANGUAGE,
@@ -220,10 +219,12 @@ def generate_one(design, base, voice: dict) -> dict:
     ref_clip_path = REF_CLIPS_DIR / f"{vid}.wav"
     sf.write(str(ref_clip_path), ref_wav, sr)
 
-    # (b) Build a reusable clone prompt from that clip.        FLAG[clone]
-    clone_prompt = base.create_voice_clone_prompt(
+    # (b) Build a reusable clone prompt from that clip. x_vector_only_mode=False keeps
+    #     the full speaker features (better fidelity than the x-vector-only fast path).
+    clone_prompt = clone.create_voice_clone_prompt(
         ref_audio=(ref_wav, sr),
         ref_text=text,
+        x_vector_only_mode=False,
     )
 
     # (c) Persist the clone prompt as a committed asset.       FLAG[serialize]
