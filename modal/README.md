@@ -52,9 +52,10 @@ Cost levers (same as the brain):
 - **`scaledown_window`** is a paid idle tail after each burst — 5 min here for dev; raise for demo.
 
 ## Cold start & keep-warm
-- First-ever run downloads the VL weights (~16 GB for 8B). `HF_HUB_ENABLE_HF_TRANSFER=1` speeds it;
-  after that they're cached in the `hf-cache` Volume (shared with the brain) so cold containers skip
-  the download. `vllm-cache` keeps compile/cudagraph artifacts so warm restarts skip recompile.
+- First-ever run downloads the VL weights (~16 GB for 8B) via **Xet** (`huggingface_hub[hf_xet]` +
+  explicit `HF_TOKEN`; the legacy `hf_transfer` backend is deprecated/inert and stalls). After that
+  they're cached in the `hf-cache` Volume (shared with the brain) so cold containers skip the
+  download. `vllm-cache` keeps compile/cudagraph artifacts so warm restarts skip recompile.
 - `startup_timeout`/`timeout` are 20 min to cover first-run load + cudagraph capture.
 - `web_server` has **no readiness probe** — the first request after a cold start blocks for the full
   model load. The camera-tool client (`describe_frame`, default `timeout=60s`) should use a generous
@@ -92,11 +93,15 @@ curl https://<workspace>--qwen3-vl-serve.modal.run/v1/models
 python modal/describe_frame.py frame.jpg https://<workspace>--qwen3-vl-serve.modal.run/v1
 ```
 
-## ⚠️ vLLM flags to confirm on a real run (see comments in `qwen_vl_modal.py`)
-1. **Qwen3-VL support in `vllm/vllm-openai:v0.23.0`** — confirm the image registers
-   `Qwen3VLForConditionalGeneration` and loads the model. Bump the tag if not.
-2. **`--limit-mm-per-prompt` format** — using the JSON-dict form `'{"image": 1}'`. Older vLLM took
-   `image=1`. Switch if rejected.
-3. **`--trust-remote-code`** — Qwen3-VL should be natively supported (so NOT needed), but add it if
-   load fails with a remote-code prompt.
+## vLLM flags — ✅ verified on a real run (2026-06-15)
+Deployed + smoke-tested against `https://olahungerford--qwen3-vl-serve.modal.run`; a generated
+test frame (red circle upper-left, blue square lower-right) was described correctly with positions.
+1. **Qwen3-VL support in `vllm/vllm-openai:v0.23.0`** — ✅ registers and serves
+   `Qwen/Qwen3-VL-8B-Instruct` (`/v1/models` OK).
+2. **`--limit-mm-per-prompt` format** — ✅ the JSON-dict form `'{"image": 1}'` is accepted.
+3. **`--trust-remote-code`** — ✅ NOT needed (natively supported).
 4. **No tool-call parser** — intentional. This is a leaf vision server, not a tool-caller.
+
+> Cold start: like the brain, the first-ever start runs torch.compile + warmup (minutes);
+> subsequent cold starts are faster (compile cache persists in `vllm-cache`). Subsequent runs of the
+> client should still allow a generous timeout (no readiness probe).

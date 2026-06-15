@@ -33,28 +33,22 @@ VLLM_PORT = 8000
 MINUTES = 60
 
 # --- Image -------------------------------------------------------------------
-# Same stock vLLM OpenAI-compatible image as the brain. v0.23.0 is recent enough to include
-# Qwen3-VL model support and the multimodal `/v1/chat/completions` image_url path.
-# ⚠️ VERIFY: confirm v0.23.0 actually registers `Qwen3VLForConditionalGeneration`. Qwen3-VL
-#    landed in vLLM in the v0.11+ / late-2025 line; v0.23.0 should have it, but check
-#    `vllm serve Qwen/Qwen3-VL-8B-Instruct` loads on a real run. If it errors on an unknown
-#    architecture, bump the image tag or add `--trust-remote-code` (see serve cmd note below).
+# Same stock vLLM OpenAI-compatible image as the brain. ✅ VERIFIED 2026-06-15: v0.23.0 registers
+# Qwen3-VL and serves Qwen3-VL-8B-Instruct (model loaded, /v1/models OK) with the multimodal
+# `/v1/chat/completions` image_url path working — no --trust-remote-code needed.
 image = (
     modal.Image.from_registry("vllm/vllm-openai:v0.23.0", add_python="3.12")
     .entrypoint([])  # the image's entrypoint IS `vllm serve`; clear it so we launch our own cmd
-    .env(
-        {
-            "HF_HUB_ENABLE_HF_TRANSFER": "1",  # faster weight download
-            "VLLM_USE_V1": "1",
-        }
-    )
+    .env({"VLLM_USE_V1": "1"})
 )
 
 # Lightweight CPU image just for pre-baking weights — no need for the heavy GPU image.
+# hf_xet gives the modern fast Xet transfer (the weights are Xet-backed; legacy hf_transfer is
+# deprecated/inert and trickled the brain's shards into a 30-min timeout). Do NOT set
+# HF_XET_HIGH_PERFORMANCE=1 — on the brain it left hung threads after commit. Default Xet is fast.
 download_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("huggingface_hub[hf_transfer]")
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    .pip_install("huggingface_hub[hf_xet]")
 )
 
 # --- Caches & secrets --------------------------------------------------------
@@ -105,18 +99,14 @@ def serve():
         # the multimodal cache and rejects accidental multi-image payloads.
         "--limit-mm-per-prompt",
         '{"image": 1}',
-        # ⚠️ VERIFY the --limit-mm-per-prompt value FORMAT against the pinned vLLM version. Recent
-        #    vLLM (v0.7+) takes a JSON dict like '{"image": 1}'; some older builds took
-        #    `image=1`. If the server rejects this arg, switch to the key=value form.
+        # ✅ VERIFIED 2026-06-15: v0.23.0 accepts the JSON-dict form '{"image": 1}' (server started
+        #    and served a single-image request fine).
         #
         # Modest context: a single table-read is one image + a short prompt + a short description.
         # 16k is plenty and keeps the KV cache small on the L40S; raise only if descriptions truncate.
         "--max-model-len",
         "16384",
-        # ⚠️ VERIFY whether Qwen3-VL needs --trust-remote-code on this vLLM version. Qwen3-VL is a
-        #    natively-supported architecture in recent vLLM (so it should NOT need it), but the
-        #    Qwen processor has occasionally required it. If load fails with a remote-code prompt,
-        #    add: "--trust-remote-code".
+        # ✅ VERIFIED 2026-06-15: loads WITHOUT --trust-remote-code on v0.23.0 (natively supported).
         # ⚠️ OPTIONAL: Qwen3-VL supports mrope/large images; if you want to bound vision tokens you
         #    can add `--mm-processor-kwargs '{"max_pixels": ...}'`. Left off here — confirm defaults
         #    are sane for a ~1MP webcam frame before tuning.
@@ -128,15 +118,21 @@ def serve():
     image=download_image,
     volumes={"/root/.cache/huggingface": hf_cache},
     secrets=[hf_secret],
-    timeout=30 * MINUTES,
+    timeout=60 * MINUTES,  # generous headroom; the 8B VL weights are smaller than the brain's 30 GB
 )
 def download_weights():
     """Pre-bake the VL weights into the hf-cache Volume before a demo (optional one-off).
 
     Run with:  modal run modal/qwen_vl_modal.py::download_weights
     """
+    import os
+
     from huggingface_hub import snapshot_download
 
-    snapshot_download(MODEL_NAME)
+    # Pass the token explicitly to dodge the anonymous-HF rate limit (the public-repo warning is
+    # benign). Log presence (not the value) so a missing/misnamed secret is obvious.
+    token = os.environ.get("HF_TOKEN")
+    print(f"HF_TOKEN present in env: {bool(token)}")
+    snapshot_download(MODEL_NAME, token=token)
     hf_cache.commit()
     print(f"Cached {MODEL_NAME} into the hf-cache volume.")
