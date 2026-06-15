@@ -1,0 +1,95 @@
+{
+  "_comment": "PLACEHOLDER / SCHEMA EXAMPLE. The real file is (re)written by voices/generate_voices.py::run_batch on a GPU host. Each `voices.<id>` entry is {description, sample_line, ref_clip, clone_prompt_path, sample_rate, clone_prompt}. `clone_prompt` is null because the actual prompt is an opaque tensor blob stored out-of-line at `clone_prompt_path` (load via torch.load). `ref_clip` and `clone_prompt_path` are paths RELATIVE to the voices/ dir. Consumer handoff: see voices/README.md.",
+  "model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+  "language": "English",
+  "voices": {
+    "gm_narrator": {
+      "description": "A warm, soft-spoken storyteller and Game Master — rich mid-range, relaxed and intimate, speaking calmly at a gentle conversational volume as if leaning in across the table. Unhurried, lightly wry, never loud or announcer-like; subtle understated timing, not booming theatrics. The default voice for all narration.",
+      "sample_line": "The rusted gate groans softly open, and beyond it the quiet wasteland stretches out under a fading sky. Take a breath, wanderers — and tell me where you'd like to go.",
+      "ref_clip": "assets/ref_clips/gm_narrator.wav",
+      "clone_prompt_path": "assets/clone_prompts/gm_narrator.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "augusta_byron": {
+      "description": "A bright, articulate woman in her late 20s; crisp diction, measured and inquisitive, a faint clinical warmth and unshaken optimism.",
+      "sample_line": "Fascinating — the radiation readings spike near the old reactor. If my calculations hold, we can cross safely. Probably.",
+      "ref_clip": "assets/ref_clips/augusta_byron.wav",
+      "clone_prompt_path": "assets/clone_prompts/augusta_byron.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "tommy_doyle": {
+      "description": "A smooth, fast-talking man in his mid-30s with a gambler's swagger; warm gravel, a grin you can hear, always working an angle.",
+      "sample_line": "Relax, friend — I've talked my way out of worse than a few raiders. Tell you what, double or nothing on the caps?",
+      "ref_clip": "assets/ref_clips/tommy_doyle.wav",
+      "clone_prompt_path": "assets/clone_prompts/tommy_doyle.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "bailey_bigsmile": {
+      "description": "A dry, raspy ghoul voice — cracked and gravelly from centuries of radiation; slow, wry, world-weary but oddly kindly.",
+      "sample_line": "Two hundred years I've walked this dust, kid. Trust me — the things that'll kill you out here are never the ones you're watchin' for.",
+      "ref_clip": "assets/ref_clips/bailey_bigsmile.wav",
+      "clone_prompt_path": "assets/clone_prompts/bailey_bigsmile.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "old_tallman": {
+      "description": "An immense, deep, slow-rumbling bass; ponderous and philosophical, with a surprising gentleness beneath the bulk.",
+      "sample_line": "Small ones ask why the world ended. Old Tallman asks... what it wishes to become next.",
+      "ref_clip": "assets/ref_clips/old_tallman.wav",
+      "clone_prompt_path": "assets/clone_prompts/old_tallman.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "hazel_johnson": {
+      "description": "A young woman, earnest and disciplined; clear, slightly formal military cadence; eager, principled, by-the-book.",
+      "sample_line": "Scribe Johnson reporting. The technology in this bunker must be catalogued and recovered for the Brotherhood. By the book, no exceptions.",
+      "ref_clip": "assets/ref_clips/hazel_johnson.wav",
+      "clone_prompt_path": "assets/clone_prompts/hazel_johnson.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "marvin": {
+      "description": "A chipper retro robotic butler; clipped upper-class British accent with a faint metallic, tinny modulation; eternally, almost smugly, polite.",
+      "sample_line": "Ah, splendid! Another delightful brush with certain death. Might I suggest, sir, that we not all perish before tea?",
+      "ref_clip": "assets/ref_clips/marvin.wav",
+      "clone_prompt_path": "assets/clone_prompts/marvin.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "npc_raider": {
+      "description": "A snarling, manic male voice; ragged and aggressive, unhinged glee.",
+      "sample_line": "Well, well, well! Fresh meat wandered right into my yard! Hand over the caps and maybe — MAYBE — I let you keep your kneecaps!",
+      "ref_clip": "assets/ref_clips/npc_raider.wav",
+      "clone_prompt_path": "assets/clone_prompts/npc_raider.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "npc_settler": {
+      "description": "A tired, wary working-class voice; soft, hesitant, hopeful underneath.",
+      "sample_line": "You're... you're not with the raiders, are you? Please. We don't have much left, but we could use a little help.",
+      "ref_clip": "assets/ref_clips/npc_settler.wav",
+      "clone_prompt_path": "assets/clone_prompts/npc_settler.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "npc_merchant": {
+      "description": "A oily, ingratiating fast patter; sing-song salesmanship, never quite trustworthy.",
+      "sample_line": "Step right up, friend! Stimpaks, scrap, secrets — all guaranteed genuine, mostly! For you? A very special, very fair price.",
+      "ref_clip": "assets/ref_clips/npc_merchant.wav",
+      "clone_prompt_path": "assets/clone_prompts/npc_merchant.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    },
+    "npc_overseer": {
+      "description": "A cold, clipped institutional voice over a crackle of radio static.",
+      "sample_line": "Attention, vault residents. Remain calm and return to your quarters. The situation is fully under control. Repeat — fully under control.",
+      "ref_clip": "assets/ref_clips/npc_overseer.wav",
+      "clone_prompt_path": "assets/clone_prompts/npc_overseer.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    }
+  }
+}
