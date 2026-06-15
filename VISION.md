@@ -44,7 +44,7 @@ The cascade pipeline has **two** camera paths:
   This is the seam we use — we just point that vision processor at the Qwen3-VL Modal server instead
   of the bundled local SmolVLM2.
 
-## Precise integration point (not yet wired — specified here)
+## Integration point (WIRED — verified against the live endpoint)
 `tools/camera.py` already branches on `deps.vision_processor`:
 
 ```python
@@ -56,30 +56,23 @@ return {"b64_im": ...}                                    # ← only when NO pro
 ```
 
 The bundled `VisionProcessor` (`vision/local_vision.py`) runs SmolVLM2 **locally** and exposes
-`process_image(frame: ndarray(BGR), prompt: str) -> str`. To use the Modal Qwen3-VL server instead,
-add a tiny **remote** processor with the same one-method shape that JPEG-encodes the frame and calls
-`describe_frame`:
+`process_image(frame: ndarray(BGR), prompt: str) -> str`. The remote path uses the Modal Qwen3-VL
+server via a drop-in processor with the same one-method shape:
 
-```python
-# e.g. vision/remote_vision.py (NOT created here — needs the live endpoint to test end-to-end)
-from reachy_mini_conversation_app.camera_frame_encoding import encode_bgr_frame_as_jpeg
-from modal.describe_frame import describe_frame   # or vendor this helper into the package
+- **`vision/remote_vision.py`** — `RemoteVisionProcessor(base_url)` JPEG-encodes the frame
+  (`encode_bgr_frame_as_jpeg`) and POSTs an OpenAI `/v1/chat/completions` request with a
+  tabletop-reading system prompt, returning the text (graceful `(vision unavailable: …)` string on
+  error). Self-contained — mirrors `modal/describe_frame.py` but does not import from `modal/`.
+- **`utils.initialize_camera_and_vision`** (called from `main.py:157`) — backend precedence is
+  `--local-vision` (SmolVLM2) > `VL_BASE_URL` env (RemoteVisionProcessor) > None (realtime backend).
+  When `VL_BASE_URL` is set it returns a `RemoteVisionProcessor`.
 
-class RemoteVisionProcessor:
-    def __init__(self, base_url: str):
-        self.base_url = base_url
-    def process_image(self, frame, prompt: str) -> str:
-        jpeg = encode_bgr_frame_as_jpeg(frame)         # same encoder camera.py uses
-        return describe_frame(jpeg, base_url=self.base_url, prompt=prompt)
-```
+**No other code changes** — `camera.py`, the result sanitizer, and the brain all already speak the
+`image_description` text contract.
 
-Then in `utils.initialize_camera_and_vision` (called from `main.py:157`), when a `VL_BASE_URL` is
-set, construct `RemoteVisionProcessor(VL_BASE_URL)` and return it as `vision_processor` instead of
-initializing the local SmolVLM2. **No other code changes** — `camera.py`, the result sanitizer, and
-the brain all already speak the `image_description` text contract.
-
-> We deliberately do **not** rewire the app here: doing it without the live endpoint risks a
-> merge/runtime conflict and can't be tested. The seam above is exact and additive.
+> Verified: the live `qwen3-vl` endpoint returns correct text for a test image
+> (`/v1/chat/completions` with an `image_url` → "two solid-colored squares, one red and one blue").
+> The wiring above is exercised by setting `VL_BASE_URL`; a full on-robot run still needs a camera.
 
 ## Env var
 - **`VL_BASE_URL`** — the Qwen3-VL server's OpenAI base URL ending in `/v1`, e.g.
