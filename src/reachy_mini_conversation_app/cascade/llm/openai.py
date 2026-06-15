@@ -19,8 +19,9 @@ class OpenAILLM(LLMProvider):
 
     def __init__(
         self,
-        api_key: str,
-        model: str,
+        api_key: Optional[str] = None,
+        model: str = "gpt-4o-mini",
+        base_url: Optional[str] = None,
         system_instructions: Optional[str] = None,
         input_cost_per_1m: float = 0.0,
         output_cost_per_1m: float = 0.0,
@@ -28,20 +29,26 @@ class OpenAILLM(LLMProvider):
         """Initialize OpenAI LLM.
 
         Args:
-            api_key: OpenAI API key
+            api_key: OpenAI API key. Optional for OpenAI-compatible servers (e.g. a local
+                vLLM endpoint) that do not authenticate; a dummy value is used in that case.
             model: Model name
+            base_url: Optional OpenAI-compatible API base URL. Set this to point at a
+                self-hosted/vLLM endpoint (e.g. the Modal-hosted Qwen brain) instead of the
+                public OpenAI API. When unset, the default OpenAI endpoint is used.
             system_instructions: System prompt
             input_cost_per_1m: Cost per 1M input tokens (from cascade.yaml)
             output_cost_per_1m: Cost per 1M output tokens (from cascade.yaml)
 
         """
-        self.client = AsyncOpenAI(api_key=api_key)
+        # vLLM and other OpenAI-compatible servers usually ignore the key but the client
+        # still requires a non-empty string, so fall back to a harmless dummy.
+        self.client = AsyncOpenAI(api_key=api_key or "EMPTY", base_url=base_url)
         self.model = model
         self.system_instructions = system_instructions
         self.input_cost_per_1m = input_cost_per_1m
         self.output_cost_per_1m = output_cost_per_1m
         self.last_cost: float = 0.0
-        logger.info(f"Initialized OpenAI LLM with model: {model}")
+        logger.info(f"Initialized OpenAI LLM with model: {model}" + (f" (base_url={base_url})" if base_url else ""))
 
     def _convert_messages_for_openai(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert internal message format to OpenAI Chat Completions format.

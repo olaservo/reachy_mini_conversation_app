@@ -165,10 +165,31 @@ llm:
 
 
 tts:
-  provider: kokoro  # tts_openai, kokoro, elevenlabs
+  provider: qwen3_tts  # qwen3_tts, tts_openai, kokoro, elevenlabs, gradium
   trim_silence: true
 
   providers:
+    qwen3_tts:
+      module: qwen3_tts
+      class: Qwen3TTS
+      location: local  # local serve by default; set base_url to a Modal endpoint for cloud
+      requires: []  # no required API key: local serve needs none; pass a token via api_key setting for Modal
+      hardware: null
+      import_check: openai  # only needs the openai client (core dep); model weights live on the server
+      install_extra: cascade  # base cascade extra already provides openai; no dedicated extra required
+      description: "Qwen3-TTS-12Hz-1.7B local/Modal TTS with per-character voices (speak_as)"
+      # Settings (OpenAI-compatible /v1/audio/speech endpoint)
+      base_url: http://localhost:8001/v1  # local Qwen3-TTS server; Modal: <web-endpoint>/v1
+      # api_key: ${QWEN_TTS_API_KEY}      # uncomment + set in .env for a token-protected (Modal) endpoint
+      model: Qwen/Qwen3-TTS-12Hz-1.7B
+      voice: gm_narrator  # default narrator voice; speak_as overrides per utterance
+      sample_rate: 24000  # Qwen3-TTS-12Hz emits 24kHz PCM
+      response_format: pcm
+      cost_per_1m_chars: 0.0  # local = free; set for Modal cost accounting
+      # 11-voice roster (voice_id values), see reachy-dm/voices/character-voices.md:
+      #   gm_narrator augusta_byron tommy_doyle bailey_bigsmile old_tallman
+      #   hazel_johnson marvin npc_raider npc_settler npc_merchant npc_overseer
+
     tts_openai:
       module: openai
       class: OpenAITTS

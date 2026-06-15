@@ -1,6 +1,7 @@
 """Factory functions for initializing cascade providers (ASR, LLM, TTS)."""
 
 from __future__ import annotations
+import os
 import logging
 import importlib
 from typing import Any, Dict
@@ -54,6 +55,14 @@ def init_provider(provider_type: str, extra_kwargs: Dict[str, Any] | None = None
         kwargs["api_key"] = api_key_map[requires[0]]
     elif requires:
         raise ValueError(f"Multi-key providers not supported: {requires}")
+
+    # Allow an env var to override the OpenAI-compatible LLM base URL without editing
+    # cascade.yaml. Handy when the endpoint is dynamic (e.g. a freshly-deployed Modal
+    # vLLM URL serving the Qwen brain). Mirrors the CASCADE_*_PROVIDER override pattern.
+    if provider_type == "llm" and info.get("module") == "openai":
+        env_base_url = os.getenv("CASCADE_LLM_BASE_URL")
+        if env_base_url:
+            kwargs["base_url"] = env_base_url
 
     # Merge extra kwargs if provided
     if extra_kwargs:
