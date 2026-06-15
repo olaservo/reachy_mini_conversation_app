@@ -18,6 +18,7 @@ import logging
 from typing import List, Callable, Optional
 from pathlib import Path
 
+import numpy as np
 from fastrtc import AdditionalOutputs, audio_to_float32
 from scipy.signal import resample
 
@@ -910,15 +911,46 @@ class LocalStream:
             await asyncio.sleep(0)  # avoid busy loop
 
     async def play_loop(self) -> None:
-        """Fetch outputs from the handler: log text and play audio frames."""
+        """Fetch outputs from the handler: log text and play audio frames.
+
+        TTS audio arrives as many tiny chunks. Resampling each chunk independently with an
+        FFT resampler (scipy.signal.resample) rings at every chunk boundary — audible as
+        glitchy/choppy speech, especially over the robot's WebRTC audio. Instead we use a
+        *stateful* polyphase streaming resampler (soxr.ResampleStream) that carries filter
+        state across chunks, so there are no per-chunk boundary artifacts. A fresh stream is
+        created per speech segment (and on a sample-rate change) and flushed with last=True
+        at the segment's end (a quiet gap or a text/segment boundary).
+        """
+        import soxr  # stateful streaming resampler (ships with librosa); smooth for chunked TTS
+
+        resampler = None  # soxr.ResampleStream for the current segment
+        seg_in_sr: Optional[int] = None
+        seg_out_sr: Optional[int] = None
+
+        def end_segment() -> None:
+            """Flush the streaming resampler's tail and reset for the next segment."""
+            nonlocal resampler, seg_in_sr, seg_out_sr
+            if resampler is not None:
+                try:
+                    tail = resampler.resample_chunk(np.zeros(0, dtype=np.float32), last=True)
+                    if tail is not None and len(tail) > 0:
+                        self._robot.media.push_audio_sample(np.asarray(tail, dtype=np.float32))
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.debug("Resampler flush failed: %s", e)
+            resampler = None
+            seg_in_sr = None
+            seg_out_sr = None
+
         while not self._stop_event.is_set():
             handler = self.handler
             try:
                 handler_output = await asyncio.wait_for(handler.emit(), timeout=0.5)
             except asyncio.TimeoutError:
+                end_segment()  # stream went quiet — play any buffered tail
                 continue
 
             if isinstance(handler_output, AdditionalOutputs):
+                end_segment()  # speech-segment boundary — don't carry resampler state across it
                 for msg in handler_output.args:
                     content = msg.get("content", "")
                     if isinstance(content, str):
@@ -930,13 +962,12 @@ class LocalStream:
 
             elif isinstance(handler_output, tuple):
                 input_sample_rate, audio_data = handler_output
-                output_sample_rate = self._robot.media.get_output_audio_samplerate()
 
                 # Skip empty audio frames
                 if audio_data.size == 0:
                     continue
 
-                # Reshape if needed
+                # Reshape to mono 1-D
                 if audio_data.ndim == 2:
                     # Scipy channels last convention
                     if audio_data.shape[1] > audio_data.shape[0]:
@@ -945,20 +976,25 @@ class LocalStream:
                     if audio_data.shape[1] > 1:
                         audio_data = audio_data[:, 0]
 
-                # Cast if needed
-                audio_frame = audio_to_float32(audio_data)
+                audio_frame = np.asarray(audio_to_float32(audio_data), dtype=np.float32).reshape(-1)
+                output_sample_rate = self._robot.media.get_output_audio_samplerate()
 
-                # Resample if needed
-                if input_sample_rate != output_sample_rate:
-                    num_samples = int(len(audio_frame) * output_sample_rate / input_sample_rate)
-                    if num_samples == 0:
-                        continue
-                    audio_frame = resample(
-                        audio_frame,
-                        num_samples,
-                    )
-
-                self._robot.media.push_audio_sample(audio_frame)
+                if input_sample_rate == output_sample_rate:
+                    # No resampling needed — drop any stale resampler and play directly.
+                    end_segment()
+                    self._robot.media.push_audio_sample(audio_frame)
+                else:
+                    # (Re)create the stateful resampler if the rates changed.
+                    if resampler is None or seg_in_sr != input_sample_rate or seg_out_sr != output_sample_rate:
+                        end_segment()
+                        resampler = soxr.ResampleStream(
+                            int(input_sample_rate), int(output_sample_rate), 1, dtype="float32"
+                        )
+                        seg_in_sr = input_sample_rate
+                        seg_out_sr = output_sample_rate
+                    out = resampler.resample_chunk(audio_frame, last=False)
+                    if out is not None and len(out) > 0:
+                        self._robot.media.push_audio_sample(np.asarray(out, dtype=np.float32))
 
             else:
                 logger.debug("Ignoring output type=%s", type(handler_output).__name__)
