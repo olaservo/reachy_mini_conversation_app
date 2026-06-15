@@ -22,10 +22,12 @@ Keep them short (one breath), vivid, and distinctly in-character; the wasteland 
 
 ## Narrator
 - **voice_id:** `gm_narrator`
-- **description:** A warm, theatrical storyteller and Game Master — rich mid-range, inviting
-  and slightly wry, with confident dramatic timing. The default voice for all narration.
-- **sample line:** "The rusted gate groans open, and beyond it the wasteland stretches out
-  under a bruised and radiant sky. Roll for initiative, wanderers."
+- **description:** A warm, soft-spoken storyteller and Game Master — rich mid-range, relaxed
+  and intimate, speaking calmly at a gentle conversational volume as if leaning in across the
+  table. Unhurried, lightly wry, never loud or announcer-like; subtle understated timing, not
+  booming theatrics. The default voice for all narration.
+- **sample line:** "The rusted gate groans softly open, and beyond it the quiet wasteland
+  stretches out under a fading sky. Take a breath, wanderers — and tell me where you'd like to go."
 
 ## Pregens
 | voice_id | character | VoiceDesign description | sample line |
