@@ -164,6 +164,19 @@ async function saveBackendConfig(backend, { key = "", hfMode = "", hfHost = "", 
   return await resp.json();
 }
 
+async function saveMcpServerToken(alias, token) {
+  const resp = await fetch("/mcp_server_token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ alias, token }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(data.error || "save_failed");
+  }
+  return data;
+}
+
 // ---------- Personalities API ----------
 async function loadPersonality(name) {
   const url = new URL("/personalities/load", window.location.origin);
@@ -537,6 +550,76 @@ async function init() {
     } else {
       setStatusMessage(backendStatusEl, "");
     }
+
+    renderMcpServers(status);
+  }
+
+  const mcpPanel = document.getElementById("mcp-panel");
+  const mcpList = document.getElementById("mcp-servers-list");
+  const mcpStatusEl = document.getElementById("mcp-status");
+  let mcpSignature = null;
+
+  function renderMcpServers(status) {
+    const servers = Array.isArray(status.mcp_servers) ? status.mcp_servers : [];
+    if (servers.length === 0) {
+      show(mcpPanel, false);
+      mcpSignature = null;
+      return;
+    }
+    show(mcpPanel, true);
+
+    // Only rebuild when the server set or saved-state changes, so typing isn't clobbered
+    // by background status refreshes.
+    const signature = JSON.stringify(servers.map((s) => [s.alias, !!s.token_set]));
+    if (signature === mcpSignature) return;
+    mcpSignature = signature;
+
+    mcpList.innerHTML = "";
+    servers.forEach((server) => {
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const label = document.createElement("label");
+      label.textContent = server.alias;
+      label.setAttribute("for", `mcp-token-${server.alias}`);
+
+      const input = document.createElement("input");
+      input.type = "password";
+      input.id = `mcp-token-${server.alias}`;
+      input.autocomplete = "off";
+      input.placeholder = server.token_set ? "•••••• (saved — paste to replace)" : `token for ${server.token_env}`;
+
+      const btn = document.createElement("button");
+      btn.className = "ghost";
+      btn.type = "button";
+      btn.textContent = server.token_set ? "Replace token" : "Save token";
+
+      btn.addEventListener("click", async () => {
+        const token = (input.value || "").trim();
+        if (!token) {
+          setStatusMessage(mcpStatusEl, `Enter a token for ${server.alias}.`, "warn");
+          return;
+        }
+        btn.disabled = true;
+        setStatusMessage(mcpStatusEl, `Saving token for ${server.alias}...`);
+        try {
+          await saveMcpServerToken(server.alias, token);
+          input.value = "";
+          setStatusMessage(mcpStatusEl, `Saved token for ${server.alias}.`, "ok");
+          const latest = await fetchStatusSnapshot();
+          if (latest) renderCredentialPanels(latest);
+        } catch (e) {
+          setStatusMessage(mcpStatusEl, `Could not save token for ${server.alias}: ${e.message}`, "warn");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      row.appendChild(label);
+      row.appendChild(input);
+      row.appendChild(btn);
+      mcpList.appendChild(row);
+    });
   }
 
   statusEl.textContent = "Checking configuration...";
