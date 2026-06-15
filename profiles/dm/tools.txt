@@ -1,0 +1,25 @@
+# Robot expression — perform NPCs and react to story beats (use with intent, not constantly)
+dance
+stop_dance
+play_emotion
+stop_emotion
+move_head
+head_tracking
+idle_do_nothing
+# Character voices — deliver an in-character line in a specific designed voice
+# (app-native tool; the WS1 adapter synthesizes the voice and streams the audio)
+speak_as
+# Vision — read a physical character sheet, dice, or map the player shows you
+camera
+# Session memory — track party, scene, and ongoing plot threads
+remember
+forget
+# TTRPG engine (require: mcp-servers add ttrpg http://127.0.0.1:3001 --profile dm)
+ttrpg__roll_dice
+ttrpg__present_player_choice
+ttrpg__show_character_sheet
+# Story-reactive lighting via Home Assistant (require: mcp-servers add hass <url> --token-env HA_ACCESS_TOKEN --profile dm)
+hass__GetLiveContext
+hass__HassLightSet
+hass__HassTurnOn
+hass__HassTurnOff
