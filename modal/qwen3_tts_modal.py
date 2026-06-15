@@ -1,41 +1,43 @@
-"""Serve Qwen3-TTS-12Hz-1.7B on Modal via vllm-omni (OpenAI-compatible speech endpoint).
+"""Serve the DM's per-character voices on Modal via a CUSTOM FastAPI server (Qwen3-TTS).
 
-The per-character voice synthesizer for the DM. The WS1 adapter's `speak_as(voice_id, text)`
-handler dials this server's `/v1/audio/speech` to render an in-character line in a designed
-voice (vs. Omni's 3 built-in speakers Ethan/Chelsie/Aiden). Omni stays the brain + default
-narration; this is the optional second model that unlocks the 11-voice roster in
-`voices/character-voices.md`.
+The per-character voice synthesizer for the DM. The cascade TTS provider calls this
+server's `/v1/audio/speech` to render an in-character line in a designed voice (the
+11-voice roster in `voices/character-voices.md`), beyond the cascade default narrator.
+
+⚠️ WHY A CUSTOM SERVER (not vllm-omni): vLLM-Omni only supports **offline** inference for
+Qwen3-TTS — there is no online `/v1/audio/speech` server for the TTS stages yet. The old
+`vllm serve --omni` path here was a dead end. Instead we serve `voices/tts_server.py`, a
+FastAPI app that wraps the transformers `qwen_tts` voice-clone API around the clone
+prompts we already generated and committed under `voices/assets/clone_prompts/`. The
+`voice` request param is a roster id (e.g. `gm_narrator`/`npc_raider`) resolved to a
+committed clone prompt server-side. Serving uses the **Base** checkpoint (cloning lives
+only on -Base); the offline design batch below uses VoiceDesign + Base.
 
 NOTE — local is the preferred home-use target (this Modal app is the hackathon-cloud variant).
-1.7B is tiny (~3.4GB bf16): at home, run the SAME `vllm serve` on the machine beside the
-robot/adapter and point the adapter at `http://localhost:8091/v1` — localhost call, $0, lowest
-latency, and it keeps the Modal $250 grant for the 30B Omni (which actually needs cloud GPU).
-See modal/README.md → "Local deployment (home use)".
+1.7B is tiny (~3.4GB bf16): at home, run the SAME FastAPI server on the machine beside the
+robot/cascade (`cd voices && uvicorn tts_server:app --port 8091`) and point the cascade at
+`http://localhost:8091/v1` — localhost call, $0, lowest latency, keeping the Modal grant for
+the 30B brain. See modal/README.md → "Serving".
 
 Deploy:   modal deploy modal/qwen3_tts_modal.py
 Iterate:  modal serve  modal/qwen3_tts_modal.py
-Secret:   modal secret create huggingface HF_TOKEN=hf_xxx   (one-time; shared with the Omni app)
+Secret:   modal secret create huggingface HF_TOKEN=hf_xxx   (one-time; shared with the brain app)
 """
 
+import os
 import subprocess
 from pathlib import Path
 
 import modal
 
-# VoiceDesign = design a voice from a natural-language description (the generation phase in
-# voices/character-voices.md). Runtime per-character playback may instead serve CustomVoice
-# (register precomputed/designed speakers by name) or Base (clone from a reference). See README
-# "Which TTS variant" — kept as VoiceDesign here to match the model the spec designs with.
-MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-VLLM_PORT = 8091
+# Serving + cloning REQUIRE the Base checkpoint (create/generate_voice_clone live only on
+# -Base). The offline design batch additionally pulls VoiceDesign (see DESIGN_MODEL_NAME).
+MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+DESIGN_MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+SERVE_PORT = 8091
 MINUTES = 60
 
-# Same vllm-omni image as the Omni app (it patches vllm's `serve` with `--omni`).
-image = (
-    modal.Image.from_registry("vllm/vllm-omni:v0.22.0", add_python="3.12")
-    .entrypoint([])
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1", "VLLM_USE_V1": "1"})
-)
+_LOCAL_VOICES_DIR = Path(__file__).resolve().parent.parent / "voices"
 
 download_image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -43,46 +45,71 @@ download_image = (
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
 )
 
-# Reuse the Omni app's caches + secret so weights/compile artifacts are shared.
+# --- Serve image: our FastAPI app + transformers qwen_tts (NOT vllm-omni) ----------------
+# apt: sox/libsox + ffmpeg = qwen_tts/torchaudio audio I/O; libsndfile1 = soundfile runtime.
+# pip: torch stack + qwen-tts (ships `from qwen_tts import Qwen3TTSModel`) + fastapi/uvicorn.
+# NOTE: flash-attn is intentionally NOT installed (tts_server passes no attn_implementation).
+serve_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .apt_install("sox", "libsox-dev", "libsox-fmt-all", "ffmpeg", "libsndfile1")
+    .pip_install(
+        "torch",
+        "torchaudio",
+        "transformers",
+        "accelerate",
+        "soundfile",
+        "numpy",
+        "hf_transfer",
+        "qwen-tts",
+        "fastapi",
+        "uvicorn[standard]",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    # Ship the clone prompts + tts_server.py into the container at /root/voices.
+    .add_local_dir(_LOCAL_VOICES_DIR, remote_path="/root/voices")
+)
+
+# Reuse the brain app's HF cache + secret so weights are shared.
 hf_cache = modal.Volume.from_name("hf-cache", create_if_missing=True)
-vllm_cache = modal.Volume.from_name("vllm-cache", create_if_missing=True)
 hf_secret = modal.Secret.from_name("huggingface")
 
 app = modal.App("qwen3-tts-voices")
 
 
 @app.function(
-    image=image,
-    # 1.7B + code2wav fits comfortably on one small card. L4 (24GB) is cheapest; A10G also fine.
+    image=serve_image,
+    # 1.7B in bf16 (~3.4GB) fits comfortably on one small card. L4 (24GB) is cheapest.
     gpu="L4",
-    volumes={
-        "/root/.cache/huggingface": hf_cache,
-        "/root/.cache/vllm": vllm_cache,
-    },
+    volumes={"/root/.cache/huggingface": hf_cache},
     secrets=[hf_secret],
-    timeout=10 * MINUTES,
+    timeout=15 * MINUTES,
     scaledown_window=5 * MINUTES,
     min_containers=0,  # scale-to-zero; set to 1 ONLY during the demo window, then back to 0.
 )
-@modal.concurrent(max_inputs=16)
-@modal.web_server(port=VLLM_PORT, startup_timeout=10 * MINUTES)
+@modal.concurrent(max_inputs=8)
+@modal.web_server(port=SERVE_PORT, startup_timeout=15 * MINUTES)
 def serve():
+    """Launch our CUSTOM FastAPI Qwen3-TTS server (Modal proxies SERVE_PORT).
+
+    vLLM-Omni has no online TTS server, so we run `voices/tts_server.py` (FastAPI) which
+    wraps the qwen_tts voice-clone API. Non-blocking like the brain app: Popen + return.
+    """
+    env = {
+        **os.environ,
+        "QWEN_TTS_MODEL": MODEL_NAME,
+        "CLONE_PROMPTS_DIR": "/root/voices/assets/clone_prompts",
+        "QWEN_TTS_DEVICE": "cuda:0",
+    }
     cmd = [
-        "vllm",
-        "serve",
-        MODEL_NAME,
-        "--omni",  # vllm-omni: auto-resolves the bundled qwen3_tts.yaml stage config
-        "--trust-remote-code",
+        "uvicorn",
+        "tts_server:app",
         "--host",
         "0.0.0.0",
         "--port",
-        str(VLLM_PORT),
-        "--gpu-memory-utilization",
-        "0.9",
-        # If the bundled TTS YAML does not auto-resolve in this image, pass it explicitly:
-        # "--deploy-config", "vllm_omni/deploy/qwen3_tts.yaml",
+        str(SERVE_PORT),
     ]
-    subprocess.Popen(cmd)  # non-blocking; Modal proxies VLLM_PORT once vllm is up
+    # cwd=/root/voices so `tts_server:app` imports; env points at the shipped clone prompts.
+    subprocess.Popen(cmd, cwd="/root/voices", env=env)  # non-blocking; Modal proxies once up
 
 
 @app.function(
@@ -94,13 +121,17 @@ def serve():
 def download_weights():
     """Optional one-off: pre-bake the 1.7B weights into the hf-cache Volume.
 
+    Caches BOTH the Base (serving + cloning) and VoiceDesign (offline design) checkpoints
+    so a prebake covers serving and the design batch.
+
     Run with:  modal run modal/qwen3_tts_modal.py::download_weights
     """
     from huggingface_hub import snapshot_download
 
-    snapshot_download(MODEL_NAME)
+    for name in (MODEL_NAME, DESIGN_MODEL_NAME):
+        snapshot_download(name)
+        print(f"Cached {name} into the hf-cache volume.")
     hf_cache.commit()
-    print(f"Cached {MODEL_NAME} into the hf-cache volume.")
 
 
 # --------------------------------------------------------------------------- #
@@ -113,16 +144,13 @@ def download_weights():
 # `run_batch()` does the actual design->clone->save work; here we just run it on
 # a Modal L4 and ship the bytes back.
 #
-# The vllm-omni serving image does NOT necessarily expose the `qwen_tts` Python
-# package used by generate_voices.py (it serves via vLLM, not the HF model class),
-# so this entrypoint uses a dedicated transformers/qwen_tts image.  FLAG[import]:
-# confirm the exact pip package providing `qwen_tts` / `Qwen3TTSModel`.
+# Uses its own transformers/qwen_tts image (same deps as serve_image, plus it ships
+# generate_voices.py + character-voices.md). The design batch needs BOTH the VoiceDesign
+# and Base checkpoints; serving needs only Base.
 #
 # Run:   modal run modal/qwen3_tts_modal.py::design_voices
 #        (writes voices/assets/** back into your local worktree)
 # --------------------------------------------------------------------------- #
-_LOCAL_VOICES_DIR = Path(__file__).resolve().parent.parent / "voices"
-
 voicedesign_image = (
     modal.Image.debian_slim(python_version="3.12")
     # libsndfile1 = soundfile runtime; sox/libsox + ffmpeg = qwen_tts/torchaudio audio I/O
