@@ -211,6 +211,40 @@ def build_server_config(server: InstalledMcpServer) -> RemoteMcpServerConfig:
     )
 
 
+@dataclass(frozen=True)
+class McpTokenRequirement:
+    """One configured MCP server's auth-token requirement, for the settings UI."""
+
+    alias: str
+    token_env: str
+    token_set: bool
+
+
+def list_token_requirements(instance_path: str | Path | None) -> list[McpTokenRequirement]:
+    """Return the env-var token requirements for configured MCP servers.
+
+    Used by the headless settings UI to let users supply a server's token without
+    editing the instance ``.env`` by hand. ``token_set`` reflects whether the named
+    environment variable currently holds a non-empty value.
+    """
+    requirements: list[McpTokenRequirement] = []
+    for server in read_mcp_servers(instance_path).servers:
+        if server.auth is not None and server.auth.type == BEARER_AUTH_TYPE:
+            token_set = bool((os.environ.get(server.auth.token_env) or "").strip())
+            requirements.append(
+                McpTokenRequirement(alias=server.alias, token_env=server.auth.token_env, token_set=token_set)
+            )
+    return requirements
+
+
+def find_server_token_env(instance_path: str | Path | None, alias: str) -> str | None:
+    """Return the token env-var name for a configured MCP server alias, or None."""
+    for server in read_mcp_servers(instance_path).servers:
+        if server.alias == alias and server.auth is not None:
+            return server.auth.token_env
+    return None
+
+
 def _build_generic_server_tools(remote_specs: Sequence[RemoteToolSpec]) -> list[InstalledToolSpaceTool]:
     """Map discovered remote specs to app-facing tools without HF-specific name cleaning."""
     return [

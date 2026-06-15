@@ -12,12 +12,15 @@ import reachy_mini_conversation_app.mcp_servers as mcp_servers_mod
 from reachy_mini_conversation_app.main import main
 from reachy_mini_conversation_app.mcp_client import RemoteToolSpec
 from reachy_mini_conversation_app.mcp_servers import (
+    McpServerAuth,
     ResolvedMcpServer,
     InstalledMcpServer,
     InstalledToolSpaceTool,
     InstalledMcpServersManifest,
     read_mcp_servers,
     write_mcp_servers,
+    find_server_token_env,
+    list_token_requirements,
 )
 from reachy_mini_conversation_app.tool_spaces import (
     InstalledToolSpace,
@@ -246,6 +249,39 @@ def test_write_mcp_servers_uses_instance_path_when_provided(tmp_path: Path) -> N
     assert path == tmp_path / "mcp_servers.json"
     assert path.is_file()
     assert not (tmp_path / "external_content" / "mcp_servers.json").exists()
+
+
+def test_list_token_requirements_reflects_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Token requirements should list bearer-auth servers and whether their env var is set."""
+    write_mcp_servers(
+        tmp_path,
+        InstalledMcpServersManifest(
+            servers=[
+                InstalledMcpServer(alias="hass", url=HA_URL, auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV)),
+                InstalledMcpServer(alias="noauth", url=HA_LOCAL_URL),  # no auth -> excluded
+            ]
+        ),
+    )
+
+    monkeypatch.delenv(TOKEN_ENV, raising=False)
+    reqs = list_token_requirements(tmp_path)
+    assert [(r.alias, r.token_env, r.token_set) for r in reqs] == [("hass", TOKEN_ENV, False)]
+
+    monkeypatch.setenv(TOKEN_ENV, TOKEN_VALUE)
+    reqs = list_token_requirements(tmp_path)
+    assert reqs[0].token_set is True
+
+
+def test_find_server_token_env(tmp_path: Path) -> None:
+    """find_server_token_env resolves a known alias and returns None otherwise."""
+    write_mcp_servers(
+        tmp_path,
+        InstalledMcpServersManifest(
+            servers=[InstalledMcpServer(alias="hass", url=HA_URL, auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV))]
+        ),
+    )
+    assert find_server_token_env(tmp_path, "hass") == TOKEN_ENV
+    assert find_server_token_env(tmp_path, "nope") is None
 
 
 def _reload_core_tools() -> ModuleType:

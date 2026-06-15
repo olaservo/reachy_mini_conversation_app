@@ -159,6 +159,22 @@
         </div>
       </div>
 
+      <div id="mcp-panel" class="panel hidden">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Connected services</p>
+            <h2>MCP server tokens</h2>
+          </div>
+          <span class="chip">Optional</span>
+        </div>
+        <p class="muted">
+          Some connected MCP servers (for example a local Home Assistant) need an access token.
+          Paste it once and we store it locally in this instance's <code>.env</code>; it is never uploaded.
+        </p>
+        <div id="mcp-servers-list"></div>
+        <p id="mcp-status" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
+      </div>
+
       <div id="personality-panel" class="panel hidden">
         <div class="panel-heading">
           <div>
