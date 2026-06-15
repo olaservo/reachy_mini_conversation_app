@@ -1,0 +1,15 @@
+{
+  "_comment": "PLACEHOLDER / SCHEMA EXAMPLE. The real file is (re)written by voices/generate_voices.py::run_batch on a GPU host. Each `voices.<id>` entry is {description, sample_line, ref_clip, clone_prompt_path, sample_rate, clone_prompt}. `clone_prompt` is null because the actual prompt is an opaque tensor blob stored out-of-line at `clone_prompt_path` (load via torch.load). `ref_clip` and `clone_prompt_path` are paths RELATIVE to the voices/ dir. Consumer handoff: see voices/README.md.",
+  "model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+  "language": "English",
+  "voices": {
+    "gm_narrator": {
+      "description": "A warm, theatrical storyteller and Game Master — rich mid-range, inviting and slightly wry, with confident dramatic timing. The default voice for all narration.",
+      "sample_line": "The rusted gate groans open, and beyond it the wasteland stretches out under a bruised and radiant sky. Roll for initiative, wanderers.",
+      "ref_clip": "assets/ref_clips/gm_narrator.wav",
+      "clone_prompt_path": "assets/clone_prompts/gm_narrator.pt",
+      "sample_rate": 24000,
+      "clone_prompt": null
+    }
+  }
+}
