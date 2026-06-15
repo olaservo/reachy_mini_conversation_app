@@ -179,7 +179,9 @@ async def _process_llm_response_once(ctx: PipelineContext, _depth: int = 0) -> N
             "function": {"name": "speak", "arguments": json.dumps({"message": full_text})},
         }
         await execute_tool_calls([synthetic_tool_call], ctx)
-    elif tool_calls and not any(tc.get("function", {}).get("name") == "speak" for tc in tool_calls):
+    elif tool_calls and not any(
+        tc.get("function", {}).get("name") in ("speak", "speak_as") for tc in tool_calls
+    ):
         # Tool calls but no speak — record assistant text if present
         if full_text:
             ctx.result.turn_items.append(TurnItem(kind="assistant", text=full_text))
@@ -187,8 +189,9 @@ async def _process_llm_response_once(ctx: PipelineContext, _depth: int = 0) -> N
         # Process normal tool calls
         await execute_tool_calls(tool_calls, ctx)
 
-        # If no speak tool was called, re-invoke LLM so it can react to tool results
-        has_speak = any(tc.get("function", {}).get("name") == "speak" for tc in tool_calls)
+        # If no speak tool was called, re-invoke LLM so it can react to tool results.
+        # speak_as is also a verbal response, so it counts as speaking.
+        has_speak = any(tc.get("function", {}).get("name") in ("speak", "speak_as") for tc in tool_calls)
         if not has_speak and _depth < 5:
             logger.info("No speak in tool calls — re-invoking LLM to react to tool results")
             await _process_llm_response_once(ctx, _depth=_depth + 1)
@@ -216,6 +219,11 @@ async def execute_tool_calls(
             # the handler injects its spec and turns the returned message into TTS below.
             if tool_name == "speak":
                 result = {"message": arguments.get("message", "")}
+            elif tool_name == "speak_as":
+                result = {
+                    "voice_id": arguments.get("voice_id", ""),
+                    "message": arguments.get("message", ""),
+                }
             else:
                 result = await dispatch_tool_call(
                     tool_name,
@@ -270,8 +278,19 @@ async def execute_tool_calls(
                     await ctx.speech_output.speak(message)
                 _track_cost(ctx, ctx.tts)
 
+            # Special handling for speak_as tool — like speak, but in a named voice
+            elif tool_name == "speak_as" and "message" in result:
+                voice_id = result["voice_id"]
+                message = result["message"]
+                logger.info(f"Speaking as {voice_id}: {message}")
+                ctx.result.turn_items.append(TurnItem(kind="speak", text=message))
+
+                if ctx.speech_output:
+                    await ctx.speech_output.speak(message, voice=voice_id)
+                _track_cost(ctx, ctx.tts)
+
             # Other tools
-            elif tool_name not in ("speak", "see_image_through_camera"):
+            elif tool_name not in ("speak", "speak_as", "see_image_through_camera"):
                 ctx.result.turn_items.append(
                     TurnItem(kind="tool", tool_name=tool_name, tool_content=json.dumps(result))
                 )

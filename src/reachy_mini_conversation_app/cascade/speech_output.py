@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 class SpeechOutput(Protocol):
     """Protocol for TTS playback backends."""
 
-    async def speak(self, text: str) -> None:
-        """Synthesize and play speech."""
+    async def speak(self, text: str, voice: str | None = None) -> None:
+        """Synthesize and play speech, optionally in a specific voice."""
         ...
 
 
@@ -35,8 +35,11 @@ class QueueSpeechOutput:
         """Bind to the owning handler (whose output_queue/tts are used)."""
         self.handler = handler
 
-    async def speak(self, text: str) -> None:
-        """Stream TTS audio for `text` onto the handler's output queue."""
+    async def speak(self, text: str, voice: str | None = None) -> None:
+        """Stream TTS audio for `text` onto the handler's output queue.
+
+        `voice` overrides the handler default for this utterance (used by `speak_as`).
+        """
         from reachy_mini_conversation_app.cascade.timing import tracker
 
         if not text.strip():
@@ -47,7 +50,7 @@ class QueueSpeechOutput:
 
         sample_rate = handler.tts.sample_rate
         first_chunk = True
-        async for chunk in handler.tts.synthesize(text, voice=handler._voice):
+        async for chunk in handler.tts.synthesize(text, voice=voice or handler._voice):
             samples = np.frombuffer(chunk, dtype=np.int16)
             if samples.size == 0:
                 continue

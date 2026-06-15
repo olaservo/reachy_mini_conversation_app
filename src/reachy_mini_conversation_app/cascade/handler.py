@@ -55,6 +55,33 @@ SPEAK_TOOL_SPEC: Dict[str, Any] = {
 }
 
 
+# Like `speak`, but voices the line as a specific character. The pipeline intercepts
+# this and routes the message to TTS using the named per-character voice instead of
+# the handler default, letting the DM voice NPCs distinctly without changing state.
+SPEAK_AS_TOOL_SPEC: Dict[str, Any] = {
+    "type": "function",
+    "name": "speak_as",
+    "description": (
+        "Speak the given message in a specific character's voice. Use this to voice an NPC "
+        "or narrator distinctly instead of the default voice."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "voice_id": {
+                "type": "string",
+                "description": (
+                    "The id of the registered character voice to use, e.g. 'gm_narrator' or "
+                    "'npc_raider'."
+                ),
+            },
+            "message": {"type": "string", "description": "The text to speak in that voice"},
+        },
+        "required": ["voice_id", "message"],
+    },
+}
+
+
 def _to_chat_tool_specs(realtime_specs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Convert Realtime-API tool specs to Chat Completions format."""
     chat_specs: List[Dict[str, Any]] = []
@@ -132,7 +159,7 @@ class CascadeHandler(ConversationHandler):
 
     def _build_tool_specs(self) -> List[Dict[str, Any]]:
         """Chat-format tool specs = shared robot tools + the cascade speak tool."""
-        return _to_chat_tool_specs([*get_active_tool_specs(self.deps), SPEAK_TOOL_SPEC])
+        return _to_chat_tool_specs([*get_active_tool_specs(self.deps), SPEAK_TOOL_SPEC, SPEAK_AS_TOOL_SPEC])
 
     # ── ConversationHandler contract ─────────────────────────────────────────
 
