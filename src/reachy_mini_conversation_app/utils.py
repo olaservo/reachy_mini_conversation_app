@@ -78,6 +78,52 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
     remove_parser.add_argument("space_slug", help="Installed Hugging Face Space slug in the form owner/space-name")
 
     tool_spaces_subparsers.add_parser("list", help="List installed Space tool sources")
+
+    mcp_servers_parser = subparsers.add_parser("mcp-servers", help="Manage generic remote MCP server tool sources")
+    mcp_servers_subparsers = mcp_servers_parser.add_subparsers(dest="mcp_servers_command", required=True)
+
+    mcp_add_parser = mcp_servers_subparsers.add_parser("add", help="Configure one HTTP(S) MCP server")
+    mcp_add_parser.add_argument("alias", help="Local alias for the server (e.g. 'hass'). Used to namespace its tools.")
+    mcp_add_parser.add_argument("url", help="MCP endpoint URL, e.g. http://homeassistant.local:8123/api/mcp")
+    mcp_add_parser.add_argument(
+        "--token-env",
+        dest="token_env",
+        default=None,
+        metavar="ENV_VAR",
+        help="Name of the environment variable holding the bearer token. The token value is never stored.",
+    )
+    mcp_add_parser.add_argument(
+        "--request-timeout",
+        dest="request_timeout",
+        type=float,
+        default=10.0,
+        help="Per-request timeout in seconds (default: 10).",
+    )
+    mcp_add_parser.add_argument(
+        "--tool-timeout",
+        dest="tool_timeout",
+        type=float,
+        default=30.0,
+        help="Per-tool-call timeout in seconds (default: 30).",
+    )
+    mcp_add_parser.add_argument(
+        "--install-only",
+        action="store_true",
+        default=False,
+        help="Configure the server without enabling its tools in any profile.",
+    )
+    mcp_add_parser.add_argument(
+        "--profile",
+        dest="profile",
+        default=None,
+        metavar="PROFILE",
+        help="Enable tools in this profile instead of the active profile.",
+    )
+
+    mcp_remove_parser = mcp_servers_subparsers.add_parser("remove", help="Remove one configured MCP server")
+    mcp_remove_parser.add_argument("alias", help="Alias of the configured MCP server to remove.")
+
+    mcp_servers_subparsers.add_parser("list", help="List configured MCP servers and their tools")
     return parser.parse_known_args()
 
 

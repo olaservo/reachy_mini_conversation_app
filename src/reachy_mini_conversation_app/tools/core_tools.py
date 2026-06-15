@@ -92,21 +92,25 @@ class RemoteMcpTool(Tool):
     def __init__(
         self,
         *,
-        slug: str,
+        source: str,
         name: str,
         description: str,
         parameters_schema: Dict[str, Any],
         client_tool_name: str,
         client: "RemoteMcpToolClient",
     ) -> None:
-        """Store the resolved local/remote names and the shared MCP client."""
+        """Store the resolved local/remote names and the shared MCP client.
+
+        ``source`` identifies the remote origin (e.g. ``space:<slug>`` for a
+        Hugging Face Space, ``mcp:<alias>`` for a generic MCP server).
+        """
         self.name = name
         self.description = description
         self.parameters_schema = parameters_schema
-        self._space_slug = slug
+        self._source = source
         self._client_tool_name = client_tool_name
         self._client = client
-        self._registry_source = f"space:{slug}:{client_tool_name}"
+        self._registry_source = f"remote:{source}:{client_tool_name}"
 
     async def __call__(self, deps: ToolDependencies, **kwargs: Any) -> Dict[str, Any]:
         """Invoke the underlying remote MCP tool."""
@@ -114,7 +118,10 @@ class RemoteMcpTool(Tool):
         payload = dict(result)
         if payload.get("namespaced_tool_name") == self._client_tool_name:
             payload["namespaced_tool_name"] = self.name
-        payload.setdefault("tool_space_slug", self._space_slug)
+        payload.setdefault("remote_source", self._source)
+        # Preserve the legacy result field for Hugging Face Space tools.
+        if self._source.startswith("space:"):
+            payload.setdefault("tool_space_slug", self._source[len("space:") :])
         return payload
 
 
@@ -397,12 +404,67 @@ def _resolve_remote_tools(tool_names: list[str], instance_path: str | Path | Non
             cached_tool = _LOADED_REMOTE_TOOL_CACHE.get(cache_key)
             if cached_tool is None:
                 cached_tool = RemoteMcpTool(
-                    slug=resolved_space.slug,
+                    source=f"space:{resolved_space.slug}",
                     name=remote_tool.local_name,
                     description=remote_tool.description,
                     parameters_schema=remote_tool.parameters_schema,
                     client_tool_name=remote_tool.client_tool_name,
                     client=resolved_space.client,
+                )
+                _LOADED_REMOTE_TOOL_CACHE[cache_key] = cached_tool
+            remote_tools.append(cached_tool)
+
+    return remote_tools
+
+
+def _resolve_generic_mcp_tools(tool_names: list[str], instance_path: str | Path | None) -> list[RemoteMcpTool]:
+    """Resolve generic (non-Space) MCP server tools enabled by the active profile."""
+    from reachy_mini_conversation_app.mcp_servers import read_mcp_servers, resolve_mcp_server_sync
+
+    remote_tools: list[RemoteMcpTool] = []
+    for server in read_mcp_servers(instance_path).servers:
+        enabled_tools = sorted(name for name in tool_names if name.startswith(f"{server.alias}__"))
+        if not enabled_tools:
+            logger.debug(
+                "MCP server '%s' has no enabled tools in the active profile; skipping discovery.",
+                server.alias,
+            )
+            continue
+
+        try:
+            resolved_server = resolve_mcp_server_sync(server)
+        except Exception as exc:
+            logger.warning(
+                "MCP server '%s' is unavailable, skipping its tools (%s): %s",
+                server.alias,
+                ", ".join(enabled_tools),
+                exc,
+            )
+            continue
+
+        enabled_tool_names = set(enabled_tools)
+        discovered_tool_names = {tool.local_name for tool in resolved_server.tools}
+        missing_tool_names = sorted(enabled_tool_names - discovered_tool_names)
+        if missing_tool_names:
+            logger.warning(
+                "Enabled tools from MCP server '%s' not found and will be skipped: %s",
+                server.alias,
+                ", ".join(missing_tool_names),
+            )
+
+        for remote_tool in resolved_server.tools:
+            if remote_tool.local_name not in enabled_tool_names:
+                continue
+            cache_key = ("mcp_server", f"{server.alias}:{remote_tool.local_name}:{remote_tool.client_tool_name}")
+            cached_tool = _LOADED_REMOTE_TOOL_CACHE.get(cache_key)
+            if cached_tool is None:
+                cached_tool = RemoteMcpTool(
+                    source=f"mcp:{server.alias}",
+                    name=remote_tool.local_name,
+                    description=remote_tool.description,
+                    parameters_schema=remote_tool.parameters_schema,
+                    client_tool_name=remote_tool.client_tool_name,
+                    client=resolved_server.client,
                 )
                 _LOADED_REMOTE_TOOL_CACHE[cache_key] = cached_tool
             remote_tools.append(cached_tool)
@@ -495,6 +557,7 @@ def initialize_tools(instance_path: str | Path | None = None, *, force: bool = F
 
     tool_names = _read_profile_tool_names()
     remote_tools = _resolve_remote_tools(tool_names, effective_instance_path)
+    remote_tools += _resolve_generic_mcp_tools(tool_names, effective_instance_path)
     remote_tool_names = {tool.name for tool in remote_tools}
     loaded_tool_classes = _load_profile_tools(tool_names, remote_tool_names)
 
