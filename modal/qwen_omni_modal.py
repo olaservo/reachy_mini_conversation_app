@@ -88,6 +88,15 @@ def serve():
         "0.0.0.0",
         "--port",
         str(VLLM_PORT),
+        # OOM FIX (stage-0 Thinker): the 30B loads (59.5 GiB) but KV-cache alloc OOMs on the
+        # 80GB H100 because the default max_model_len=65536 + max_num_seqs=64 reserve a huge
+        # KV cache. The DM is single-user + turn-based, so shrink both. If a global flag
+        # doesn't reach the Thinker stage under --omni, switch to a custom --deploy-config
+        # YAML (copy vllm-omni/.../qwen3_omni_moe.yaml, set stage 0 max_model_len/max_num_seqs).
+        "--max-model-len",
+        "16384",
+        "--max-num-seqs",
+        "8",
         # Single-GPU squeeze (use with gpu="H200"); collapse stages onto cuda:0:
         # "--stage-overrides",
         # '{"1":{"gpu_memory_utilization":0.3,"devices":"0"},'
