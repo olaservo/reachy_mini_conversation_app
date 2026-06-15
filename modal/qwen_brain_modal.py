@@ -34,19 +34,16 @@ MINUTES = 60
 image = (
     modal.Image.from_registry("vllm/vllm-openai:v0.23.0", add_python="3.12")
     .entrypoint([])  # the image's entrypoint IS `vllm serve`; clear it so we launch our own cmd
-    .env(
-        {
-            "HF_HUB_ENABLE_HF_TRANSFER": "1",  # faster weight download
-            "VLLM_USE_V1": "1",
-        }
-    )
+    .env({"VLLM_USE_V1": "1"})
 )
 
 # Lightweight CPU image just for pre-baking weights — no need for the heavy GPU image.
+# hf_xet gives the modern fast Xet transfer (the FP8 shards are Xet-backed; legacy hf_transfer is
+# deprecated/inert). NB: do NOT set HF_XET_HIGH_PERFORMANCE=1 — it pulled one ~95 MB/s burst then
+# the high-perf client deadlocked (flat network/CPU until timeout). Default Xet is fast and stable.
 download_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("huggingface_hub[hf_transfer]")
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    .pip_install("huggingface_hub[hf_xet]")
 )
 
 # --- Caches & secrets --------------------------------------------------------
@@ -105,15 +102,21 @@ def serve():
     image=download_image,
     volumes={"/root/.cache/huggingface": hf_cache},
     secrets=[hf_secret],
-    timeout=30 * MINUTES,
+    timeout=60 * MINUTES,  # ~30 GB FP8 pull; Xet is fast but leave generous headroom
 )
 def download_weights():
     """Pre-bake the brain weights into the hf-cache Volume before a demo (optional one-off).
 
     Run with:  modal run modal/qwen_brain_modal.py::download_weights
     """
+    import os
+
     from huggingface_hub import snapshot_download
 
-    snapshot_download(MODEL_NAME)
+    # The repo is public, but an authenticated pull avoids the anonymous rate limit that stalled
+    # the first attempt. Log presence (not the value) so a missing/misnamed secret is obvious.
+    token = os.environ.get("HF_TOKEN")
+    print(f"HF_TOKEN present in env: {bool(token)}")
+    snapshot_download(MODEL_NAME, token=token)
     hf_cache.commit()
     print(f"Cached {MODEL_NAME} into the hf-cache volume.")
