@@ -62,16 +62,19 @@ Call `POST /v1/chat/completions` with `modalities:["text","audio"]`, `tools`, an
 `extra_body={"speaker": "chelsie"}`. (Don't route `/v1/realtime` through Modal — the adapter
 design avoids it.)
 
-## Cost — budget is **$250 of credits** (NOT the $20k prize pool)
-- H100 ≈ $0.002778/sec ≈ **$10/GPU-hr** (verify at modal.com/pricing). Per-second billing, $0 idle.
-- `H100:2` ≈ **$20/GPU-hr** → **$250 ≈ ~12 GPU-pair-hours total.** So:
-  - **Dev/testing:** keep `min_containers=0` (scale-to-zero). Pay only per-request seconds;
-    each cold iteration (~10–20 min incl. first-run load) ≈ $3–7. Plan only a handful of runs.
-  - **Demo:** set `min_containers=1` **only** during the recording window (1–2 hr ≈ $20–40),
-    then put it **back to 0 immediately**.
-  - **Cheaper:** `gpu="H200"` single-card (~half cost, needs stage overrides) or a validated
-    FP8 checkpoint on 1×H100 — validate before relying on either.
-- Never leave a GPU container warm idling — it silently burns the grant.
+## Cost — serverless, **$250 grant** (NOT the $20k prize pool)
+**Modal is serverless / scale-to-zero:** with `min_containers=0` you pay **$0 while idle**, only
+per-second while a GPU is actually running. `H100:2` ≈ **$20/GPU-hr** (H100 ≈ $10/GPU-hr; verify
+at modal.com/pricing), so $250 ≈ **~12.5 hours of *actual* runtime** (cumulative, not wall-clock)
+— plenty for dev + a demo if you scale to zero. Two things burn it:
+- **`min_containers ≥ 1`** keeps a GPU up (defeats scale-to-zero). Use it **only** for the live
+  demo window (1–2 hr ≈ $20–40), then back to 0. It's needed for the demo because the 30B
+  3-stage cold start is multi-minute — too slow to scale-to-zero between turns of a live session.
+- **A long `scaledown_window`** is a paid idle tail after each burst — set to 5 min here for cheap
+  dev; raise it for the demo to avoid mid-session re-cold-starts.
+
+Dev iterations (scale-to-zero) ≈ $3–7 each. Cheaper GPU options: `gpu="H200"` single-card
+(~half, needs stage overrides) or a validated FP8 checkpoint on 1×H100.
 
 ## Open risks to validate on a real run
 1. **Single-GPU bf16 fit is unproven** — repo only verifies 2-/3-GPU. Validate `gpu="H200"` single-card before relying on it.

@@ -61,11 +61,12 @@ app = modal.App("qwen3-omni-voice")
         "/root/.cache/vllm": vllm_cache,
     },
     secrets=[hf_secret],
-    timeout=20 * MINUTES,          # covers first-run weight download
-    scaledown_window=20 * MINUTES,  # stay warm 20 min after the last request
-    # Cost control: scale-to-zero by default ($0 idle). For a LIVE demo set this to 1 so
-    # there is no multi-minute cold start mid-session, then put it back to 0 afterwards.
-    min_containers=0,
+    timeout=20 * MINUTES,  # covers the slow first-run weight load + 3-stage init
+    # Serverless: with min_containers=0 you pay $0 while idle. scaledown_window is the paid
+    # idle tail after the last request — short (5 min) for cheap dev; raise it for a live demo
+    # so you don't re-cold-start (multi-minute) between turns.
+    scaledown_window=5 * MINUTES,
+    min_containers=0,  # scale-to-zero. Set to 1 ONLY during the demo window, then back to 0.
 )
 @modal.concurrent(max_inputs=16)  # one server handles many concurrent sessions/voices
 @modal.web_server(port=VLLM_PORT, startup_timeout=20 * MINUTES)
