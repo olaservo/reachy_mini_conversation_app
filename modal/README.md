@@ -79,7 +79,9 @@ Dev iterations (scale-to-zero) ≈ $3–7 each. Cheaper GPU options: `gpu="H200"
 ## Open risks to validate on a real run
 1. **Single-GPU bf16 fit is unproven** — repo only verifies 2-/3-GPU. Validate `gpu="H200"` single-card before relying on it.
 2. **FP8/AWQ for Qwen3-Omni is unconfirmed** — the ~32GB number assumes a working 3-stage quant. Don't assume the stock `-Instruct` repo serves FP8.
-3. **Image pull on Modal** — confirm `vllm/vllm-omni:v0.23.0` pulls/runs under `from_registry`; fallback is the commented pip build.
+3. **Image version** — using `vllm/vllm-omni:v0.22.0` (newest published; no v0.23.0 image yet).
+   Confirm 0.22.0 serves Qwen3-Omni-30B-A3B; fallback is the commented pip build (vllm 0.23.0).
+   The `download_weights` prebake uses a light CPU image, so only `serve` pulls the GPU image.
 4. **`web_server` has no readiness probe** — first request after cold start blocks for the full model load; the adapter needs a long client timeout (or warm-up ping after deploy).
 5. **3-stage cold-start time on Modal is unmeasured** — time one cold start, size `startup_timeout`, keep `min_containers=1` for the demo.
 6. **`--omni` is vllm-omni-specific** — only present because the image has vllm-omni installed (it patches vllm's `serve`). Confirm `vllm` resolves to the omni-patched CLI.

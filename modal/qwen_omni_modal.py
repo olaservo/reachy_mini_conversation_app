@@ -24,7 +24,8 @@ MINUTES = 60
 # already pinned together). It has NO default entrypoint, so we clear it and launch
 # `vllm serve --omni` ourselves in serve().
 image = (
-    modal.Image.from_registry("vllm/vllm-omni:v0.23.0", add_python="3.12")
+    # Newest tag published on Docker Hub is v0.22.0 (no v0.23.0 image yet — docs are ahead).
+    modal.Image.from_registry("vllm/vllm-omni:v0.22.0", add_python="3.12")
     .entrypoint([])  # drop any inherited entrypoint
     .env(
         {
@@ -41,6 +42,13 @@ image = (
 #     .uv_pip_install("vllm==0.23.0", extra_options="--torch-backend=auto")
 #     .uv_pip_install("vllm-omni==0.23.0", "hf_transfer")
 # )
+
+# Lightweight CPU image just for pre-baking weights — no need for the heavy GPU image.
+download_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install("huggingface_hub[hf_transfer]")
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
 
 # --- Caches & secrets --------------------------------------------------------
 hf_cache = modal.Volume.from_name("hf-cache", create_if_missing=True)      # model weights
@@ -89,7 +97,7 @@ def serve():
 
 
 @app.function(
-    image=image,
+    image=download_image,
     volumes={"/root/.cache/huggingface": hf_cache},
     secrets=[hf_secret],
     timeout=30 * MINUTES,
