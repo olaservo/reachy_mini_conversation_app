@@ -17,8 +17,9 @@ The cascade TTS provider (reachy-dm-cascade .../cascade/tts/qwen3_tts.py) consum
 ``voices/README.md`` for the run command and the consumer handoff.
 
 ================================================================================
-QWEN3-TTS API  (signatures VERIFIED against the QwenLM/Qwen3-TTS README; the two
-remaining FLAGS are runtime behaviours that can only be confirmed on a GPU host)
+QWEN3-TTS API  (signatures VERIFIED against the QwenLM/Qwen3-TTS repo's own example
+scripts: examples/test_model_12hz_voice_design.py + examples/test_model_12hz_base.py,
+cloned locally at build-small-hackathon/Qwen3-TTS/)
 ================================================================================
     from qwen_tts import Qwen3TTSModel        # verified: pip install -U qwen-tts
 
@@ -32,10 +33,11 @@ remaining FLAGS are runtime behaviours that can only be confirmed on a GPU host)
         text=<sample line>, language="English", instruct=<description>,
     )   # wavs is a list of waveforms; wavs[0] is the clip, sr the sample rate
 
-    # CustomVoice checkpoint -- build + reuse a clone prompt from that reference clip
-    # (create_voice_clone_prompt / generate_voice_clone are demonstrated on CustomVoice):
+    # Base checkpoint -- build + reuse a clone prompt from that reference clip
+    # (create_voice_clone_prompt / generate_voice_clone live ONLY on -Base; -CustomVoice
+    # rejects them at runtime with tts_model_type=custom_voice):
     clone = Qwen3TTSModel.from_pretrained(
-        "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice", device_map="cuda:0", dtype=torch.bfloat16,
+        "Qwen/Qwen3-TTS-12Hz-1.7B-Base", device_map="cuda:0", dtype=torch.bfloat16,
     )
     prompt = clone.create_voice_clone_prompt(           # verified kwargs
         ref_audio=(wavs[0], sr), ref_text=<sample line>, x_vector_only_mode=False,
@@ -44,14 +46,22 @@ remaining FLAGS are runtime behaviours that can only be confirmed on a GPU host)
         text="...", language="English", voice_clone_prompt=prompt,
     )
 
-FLAGS to verify on the first GPU run (runtime behaviours, not signatures):
-  * FLAG[serialize] HOW the clone prompt serializes. It is an opaque object (likely
-                   tensors). We use torch.save / torch.load as the safe default. If
-                   it is a plain dict of numpy arrays, np.savez would also work. The
-                   CONSUMER must load it the SAME way -- see voices/README.md.
-  * FLAG[runtime]  whether the cascade server wants the clone prompt inline
-                   (VOICE_PROMPTS map) or registered as a named speaker via the
-                   CustomVoice checkpoint's precompute path. See README "Handoff".
+ASSET STRATEGY: the GUARANTEED, fully-verified deliverable is the 11 designed
+reference WAV clips (+ each voice's ref_text = its sample line). The repo's base
+example clones DIRECTLY from a ref clip: generate_voice_clone(ref_audio=<wav>,
+ref_text=<line>, ...) — so the clips alone are enough to reproduce each voice at
+serve time. The serialized clone-prompt (.pt) is a best-effort OPTIMISATION layered
+on top (skipped gracefully if it fails — see generate_one's try/except).
+
+FLAGS that remain genuinely open (the repo examples reuse the prompt in-memory only):
+  * FLAG[serialize] the example NEVER saves the clone-prompt to disk. We torch.save
+                   it as a convenience; cross-process torch.load is unverified. The
+                   ref WAV is the fallback if this proves unportable.
+  * FLAG[runtime]  the cascade serves TTS via vllm-omni (/v1/audio/speech), a
+                   DIFFERENT path than transformers generate_voice_clone. How a
+                   designed voice is registered/selected on that server (named
+                   speaker vs inline clone) is the WS1 serve-wiring question --
+                   the ref clips + ref_text are the portable handoff. See README.
 
 NO GPU / NO heavy deps on the dev box: this module is import-light at top level and
 only touches torch / qwen_tts / soundfile INSIDE the GPU entrypoints, so it can be
@@ -78,10 +88,11 @@ MANIFEST_PATH = ASSETS_DIR / "voices.json"
 
 LANGUAGE = "English"
 DESIGN_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-# Clone-prompt creation + reuse live on the CustomVoice checkpoint (verified against
-# the QwenLM/Qwen3-TTS README — create_voice_clone_prompt / generate_voice_clone are
-# demonstrated on -CustomVoice, NOT -Base).
-CLONE_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+# Clone-prompt creation + reuse live on the BASE checkpoint (confirmed against the
+# QwenLM/Qwen3-TTS README AND the qwen_tts runtime: -CustomVoice reports
+# tts_model_type=custom_voice and rejects create_voice_clone_prompt; only -Base
+# supports create_voice_clone_prompt / generate_voice_clone).
+CLONE_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
 # Authoritative ordering / membership check (mirrors ROSTER_VOICE_IDS in the
 # cascade's qwen3_tts.py). The parser must yield exactly these 11 ids.
@@ -220,24 +231,32 @@ def generate_one(design, clone, voice: dict) -> dict:
     ref_clip_path = REF_CLIPS_DIR / f"{vid}.wav"
     sf.write(str(ref_clip_path), ref_wav, sr)
 
-    # (b) Build a reusable clone prompt from that clip. x_vector_only_mode=False keeps
-    #     the full speaker features (better fidelity than the x-vector-only fast path).
-    clone_prompt = clone.create_voice_clone_prompt(
-        ref_audio=(ref_wav, sr),
-        ref_text=text,
-        x_vector_only_mode=False,
-    )
-
-    # (c) Persist the clone prompt as a committed asset.       FLAG[serialize]
-    #     torch.save handles tensors/objects; the CONSUMER must torch.load it.
-    clone_prompt_path = CLONE_PROMPTS_DIR / f"{vid}.pt"
-    torch.save(clone_prompt, str(clone_prompt_path))
-
-    return {
+    entry = {
         "ref_clip": str(ref_clip_path.relative_to(VOICES_DIR)).replace("\\", "/"),
-        "clone_prompt_path": str(clone_prompt_path.relative_to(VOICES_DIR)).replace("\\", "/"),
+        "clone_prompt_path": None,
         "sample_rate": int(sr),
     }
+
+    # (b) Build a reusable clone prompt from that clip. x_vector_only_mode=False keeps
+    #     the full speaker features (better fidelity than the x-vector-only fast path).
+    #     Defensive: a clone failure for one voice must NOT abort the whole batch — the
+    #     designed ref clip is already saved and is the asset we can clone from later.
+    try:
+        clone_prompt = clone.create_voice_clone_prompt(
+            ref_audio=(ref_wav, sr),
+            ref_text=text,
+            x_vector_only_mode=False,
+        )
+        # (c) Persist the clone prompt as a committed asset.       FLAG[serialize]
+        #     torch.save handles tensors/objects; the CONSUMER must torch.load it.
+        clone_prompt_path = CLONE_PROMPTS_DIR / f"{vid}.pt"
+        torch.save(clone_prompt, str(clone_prompt_path))
+        entry["clone_prompt_path"] = str(clone_prompt_path.relative_to(VOICES_DIR)).replace("\\", "/")
+    except Exception as e:  # noqa: BLE001 — keep the batch going; ref clip is saved
+        print(f"[voice] WARN {vid}: clone-prompt step failed ({e}); kept ref clip only.")
+        entry["clone_error"] = str(e)
+
+    return entry
 
 
 def run_batch(only: Optional["list[str]"] = None) -> dict:
