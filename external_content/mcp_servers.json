@@ -9,6 +9,12 @@
       "request_timeout_s": 10.0,
       "tool_timeout_s": 30.0,
       "url": "http://10.0.0.136:8123/api/mcp"
+    },
+    {
+      "alias": "ttrpg",
+      "request_timeout_s": 10.0,
+      "tool_timeout_s": 30.0,
+      "url": "http://127.0.0.1:3001/mcp"
     }
   ],
   "version": 1
