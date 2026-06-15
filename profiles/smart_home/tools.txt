@@ -1,0 +1,18 @@
+dance
+stop_dance
+play_emotion
+stop_emotion
+camera
+idle_do_nothing
+head_tracking
+move_head
+remember
+forget
+# Home Assistant tools (require: mcp-servers add hass <url> --token-env HA_ACCESS_TOKEN)
+hass__HassTurnOn
+hass__HassTurnOff
+hass__HassLightSet
+hass__GetLiveContext
+hass__GetDateTime
+hass__HassBroadcast
+hass__HassCancelAllTimers

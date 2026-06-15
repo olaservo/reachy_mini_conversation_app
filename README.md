@@ -407,10 +407,10 @@ instance with the **Model Context Protocol Server** integration enabled. Its too
 (`HassTurnOn`, `HassLightSet`, `GetLiveContext`, …) then become callable by Reachy.
 
 ```bash
-# register a server (alias "hass") and enable its tools in the active profile
+# register a server (alias "hass") and enable its tools in a profile
 reachy-mini-conversation-app mcp-servers add hass \
   http://homeassistant.local:8123/api/mcp \
-  --token-env HA_ACCESS_TOKEN
+  --token-env HA_ACCESS_TOKEN --profile smart_home
 
 # register without enabling in any profile
 reachy-mini-conversation-app mcp-servers add hass <url> --token-env HA_ACCESS_TOKEN --install-only
@@ -425,7 +425,8 @@ reachy-mini-conversation-app mcp-servers remove hass
 Notes:
 
 - **Tools are namespaced** as `<alias>__<ToolName>` (e.g. `hass__HassTurnOn`) and enabled by
-  listing those names in a profile's `tools.txt`.
+  listing those names in a profile's `tools.txt`. A ready-made **`smart_home`** profile ships
+  with the common Home Assistant tools pre-listed.
 - **Auth / secrets:** pass `--token-env NAME` to send `Authorization: Bearer <value>`, where the
   value is read from the named environment variable **at runtime**. The token value is **never**
   written to disk or logged — only the env-var name is stored. For Home Assistant, create a
