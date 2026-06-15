@@ -84,14 +84,20 @@ def init_asr_provider() -> ASRProvider:
     return init_provider("asr")  # type: ignore[no-any-return]
 
 
-def cascade_system_instructions() -> str:
-    """Resolve the active profile's instructions plus the cascade-specific speak guidance."""
-    return get_session_instructions() + CASCADE_EXTRA_INSTRUCTIONS
+def cascade_system_instructions(memory_manager: Any | None = None) -> str:
+    """Resolve the active profile's instructions plus the cascade-specific speak guidance.
+
+    When ``memory_manager`` is provided, the persistent-memory index block is injected
+    into the system prompt via ``get_session_instructions``.
+    """
+    return get_session_instructions(memory_manager) + CASCADE_EXTRA_INSTRUCTIONS
 
 
-def init_llm_provider() -> LLMProvider:
+def init_llm_provider(memory_manager: Any | None = None) -> LLMProvider:
     """Initialize LLM provider from cascade.yaml config."""
-    return init_provider("llm", {"system_instructions": cascade_system_instructions()})  # type: ignore[no-any-return]
+    return init_provider(  # type: ignore[no-any-return]
+        "llm", {"system_instructions": cascade_system_instructions(memory_manager)}
+    )
 
 
 def init_tts_provider() -> TTSProvider:

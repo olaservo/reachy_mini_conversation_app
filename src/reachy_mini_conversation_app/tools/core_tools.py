@@ -42,6 +42,7 @@ class ToolDependencies:
     # Optional deps
     camera_worker: Any | None = None  # CameraWorker for frame buffering
     vision_processor: Any | None = None
+    memory_manager: Any | None = None  # MemoryManager from memory/ (None when disabled)
     motion_duration_s: float = 1.0
 
 
