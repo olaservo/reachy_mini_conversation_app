@@ -62,10 +62,16 @@ Call `POST /v1/chat/completions` with `modalities:["text","audio"]`, `tools`, an
 `extra_body={"speaker": "chelsie"}`. (Don't route `/v1/realtime` through Modal — the adapter
 design avoids it.)
 
-## Cost
+## Cost — budget is **$250 of credits** (NOT the $20k prize pool)
 - H100 ≈ $0.002778/sec ≈ **$10/GPU-hr** (verify at modal.com/pricing). Per-second billing, $0 idle.
-- `H100:2` ≈ **$20/GPU-hr** → a 2-hour warm demo ≈ **$40**; a full warm day ≈ **~$160**.
-- The **$20k Modal credits** dwarf this (~1000 GPU-pair-hours on 2×H100). Single H200 ≈ half the cost.
+- `H100:2` ≈ **$20/GPU-hr** → **$250 ≈ ~12 GPU-pair-hours total.** So:
+  - **Dev/testing:** keep `min_containers=0` (scale-to-zero). Pay only per-request seconds;
+    each cold iteration (~10–20 min incl. first-run load) ≈ $3–7. Plan only a handful of runs.
+  - **Demo:** set `min_containers=1` **only** during the recording window (1–2 hr ≈ $20–40),
+    then put it **back to 0 immediately**.
+  - **Cheaper:** `gpu="H200"` single-card (~half cost, needs stage overrides) or a validated
+    FP8 checkpoint on 1×H100 — validate before relying on either.
+- Never leave a GPU container warm idling — it silently burns the grant.
 
 ## Open risks to validate on a real run
 1. **Single-GPU bf16 fit is unproven** — repo only verifies 2-/3-GPU. Validate `gpu="H200"` single-card before relying on it.
