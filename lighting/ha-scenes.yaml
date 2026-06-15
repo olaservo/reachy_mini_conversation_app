@@ -1,0 +1,59 @@
+# Home Assistant scenes for the DM's story lighting (optional, declarative path).
+#
+# Use this if you'd rather activate named scenes than set bulbs one-by-one. After importing,
+# the DM activates a mood with hass__HassTurnOn on the scene (e.g. "scene.dm_combat"), or via
+# scene.turn_on with a transition.
+#
+# SETUP:
+#   1. Replace the placeholder `light.*` entity_ids below with YOUR LIFX entities
+#      (find them via Developer Tools → States, or hass__GetLiveContext).
+#   2. Add to configuration.yaml under `scene:` (or include this file:
+#      `scene: !include lighting/ha-scenes.yaml`), then reload scenes.
+#   3. Activate with transition, e.g.:
+#        service: scene.turn_on
+#        target: { entity_id: scene.dm_combat }
+#        data: { transition: 1 }
+#
+# Palette mirrors lighting/scene-palette.md.
+
+- name: DM Combat
+  id: dm_combat
+  entities:
+    light.YOUR_LIFX_1: { state: on, rgb_color: [210, 25, 25], brightness: 230 }
+    light.YOUR_LIFX_2: { state: on, rgb_color: [210, 25, 25], brightness: 230 }
+
+- name: DM Dread
+  id: dm_dread
+  entities:
+    light.YOUR_LIFX_1: { state: on, rgb_color: [120, 10, 10], brightness: 64 }
+    light.YOUR_LIFX_2: { state: on, rgb_color: [120, 10, 10], brightness: 64 }
+
+- name: DM Explore
+  id: dm_explore
+  entities:
+    light.YOUR_LIFX_1: { state: on, rgb_color: [40, 90, 160], brightness: 102 }
+    light.YOUR_LIFX_2: { state: on, rgb_color: [40, 90, 160], brightness: 102 }
+
+- name: DM Settlement
+  id: dm_settlement
+  entities:
+    light.YOUR_LIFX_1: { state: on, rgb_color: [255, 150, 60], brightness: 179 }
+    light.YOUR_LIFX_2: { state: on, rgb_color: [255, 150, 60], brightness: 179 }
+
+- name: DM Radiation
+  id: dm_radiation
+  entities:
+    light.YOUR_LIFX_1: { state: on, rgb_color: [80, 200, 70], brightness: 140 }
+    light.YOUR_LIFX_2: { state: on, rgb_color: [80, 200, 70], brightness: 140 }
+
+- name: DM Arcane
+  id: dm_arcane
+  entities:
+    light.YOUR_LIFX_1: { state: on, rgb_color: [150, 60, 220], brightness: 128 }
+    light.YOUR_LIFX_2: { state: on, rgb_color: [150, 60, 220], brightness: 128 }
+
+- name: DM Neutral
+  id: dm_neutral
+  entities:
+    light.YOUR_LIFX_1: { state: on, rgb_color: [255, 220, 180], brightness: 153 }
+    light.YOUR_LIFX_2: { state: on, rgb_color: [255, 220, 180], brightness: 153 }
