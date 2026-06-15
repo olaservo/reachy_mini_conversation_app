@@ -27,6 +27,33 @@ def test_validate_http_mcp_url_rejects_non_local_plain_http() -> None:
         validate_http_mcp_url("http://example.com/mcp")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8123/api/mcp",
+        "http://localhost:8123/api/mcp",
+        "http://10.0.0.136:8123/api/mcp",  # private (HA on the LAN)
+        "http://192.168.1.5:8123/api/mcp",  # private
+        "http://172.16.0.4:8123/api/mcp",  # private
+        "http://homeassistant.local:8123/api/mcp",  # mDNS
+        "http://169.254.1.1/api/mcp",  # IPv4 link-local
+        "http://[::1]/api/mcp",  # IPv6 loopback
+        "http://[fe80::1]/api/mcp",  # IPv6 link-local
+        "https://example.com/api/mcp",  # public over HTTPS is always fine
+    ],
+)
+def test_validate_http_mcp_url_accepts_local_network_and_https(url: str) -> None:
+    """Plain HTTP is allowed for loopback/private/link-local/.local hosts; HTTPS is allowed everywhere."""
+    assert validate_http_mcp_url(url) == url
+
+
+@pytest.mark.parametrize("url", ["http://8.8.8.8/api/mcp", "http://my-server.cloud/api/mcp"])
+def test_validate_http_mcp_url_rejects_public_http_hosts(url: str) -> None:
+    """Public IPs and public DNS names must use HTTPS over plain HTTP."""
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        validate_http_mcp_url(url)
+
+
 def test_build_namespaced_tool_name_normalizes_tool_segment() -> None:
     """Remote tool names are normalized into app-safe tool IDs."""
     assert build_namespaced_tool_name("gradio_docs", "search-docs") == "gradio_docs__search_docs"

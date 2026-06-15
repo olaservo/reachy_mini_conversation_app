@@ -283,7 +283,7 @@ play_emotion
 sweep_look
 ```
 Tools are resolved first from Python files in the profile folder (custom tools), then from the core library `src/reachy_mini_conversation_app/tools/` (like `dance`, `head_tracking`).
-Installed public Hugging Face Space tools can also be enabled here after you add them with `tool-spaces`.
+Installed public Hugging Face Space tools can also be enabled here after you add them with `tool-spaces`, and generic remote MCP server tools (e.g. Home Assistant) after you add them with `mcp-servers` (see below).
 
 **Custom tools:**
 
@@ -332,7 +332,8 @@ external_content/
 │       └── voice.txt        # optional
 ├── external_tools/
 │   └── my_custom_tool.py
-└── installed_tool_spaces.json
+├── installed_tool_spaces.json
+└── mcp_servers.json
 ```
 
 **Environment variables:**
@@ -394,6 +395,46 @@ Recommended tags for discoverability on Hugging Face:
 - `mcp`
 
 These tags are advisory only. Installation still relies on successful MCP validation, not on tag presence.
+
+</details>
+
+<details>
+<summary><b>Generic remote MCP servers (e.g. Home Assistant)</b></summary>
+
+Beyond public Hugging Face Spaces, you can connect the app to **any** HTTP(S) MCP server
+(Streamable HTTP transport) — for example a local [Home Assistant](https://www.home-assistant.io/)
+instance with the **Model Context Protocol Server** integration enabled. Its tools
+(`HassTurnOn`, `HassLightSet`, `GetLiveContext`, …) then become callable by Reachy.
+
+```bash
+# register a server (alias "hass") and enable its tools in the active profile
+reachy-mini-conversation-app mcp-servers add hass \
+  http://homeassistant.local:8123/api/mcp \
+  --token-env HA_ACCESS_TOKEN
+
+# register without enabling in any profile
+reachy-mini-conversation-app mcp-servers add hass <url> --token-env HA_ACCESS_TOKEN --install-only
+
+# list configured servers and their discovered tools
+reachy-mini-conversation-app mcp-servers list
+
+# remove a configured server
+reachy-mini-conversation-app mcp-servers remove hass
+```
+
+Notes:
+
+- **Tools are namespaced** as `<alias>__<ToolName>` (e.g. `hass__HassTurnOn`) and enabled by
+  listing those names in a profile's `tools.txt`.
+- **Auth / secrets:** pass `--token-env NAME` to send `Authorization: Bearer <value>`, where the
+  value is read from the named environment variable **at runtime**. The token value is **never**
+  written to disk or logged — only the env-var name is stored. For Home Assistant, create a
+  Long-Lived Access Token (Profile → Security) and set it as `HA_ACCESS_TOKEN` in your `.env`.
+- **Local-network HTTP:** plain `http://` is allowed for loopback, private (e.g. `10.x`,
+  `192.168.x`), link-local, and `*.local` hosts. Public hosts must use `https://`.
+- The configuration is written to:
+  - `mcp_servers.json` in the managed app instance directory
+  - `external_content/mcp_servers.json` in terminal mode
 
 </details>
 
