@@ -484,6 +484,10 @@ class LocalStream:
         class ApiKeyPayload(BaseModel):
             openai_api_key: str
 
+        class McpServerTokenPayload(BaseModel):
+            alias: str
+            token: str
+
         class BackendPayload(BaseModel):
             backend: str
             api_key: Optional[str] = None
@@ -511,6 +515,16 @@ class LocalStream:
             can_proceed = self._has_required_key(readiness_backend)
             requires_restart = backend_provider != active_backend and not self._can_rebuild_handler()
             backend_connection = self._backend_connection_status()
+            mcp_servers: list[dict[str, object]] = []
+            try:
+                from reachy_mini_conversation_app.mcp_servers import list_token_requirements
+
+                mcp_servers = [
+                    {"alias": req.alias, "token_env": req.token_env, "token_set": req.token_set}
+                    for req in list_token_requirements(self._instance_path)
+                ]
+            except Exception as exc:
+                logger.debug("Could not list MCP server token requirements: %s", exc)
             return {
                 "active_backend": active_backend,
                 "backend_provider": backend_provider,
@@ -528,6 +542,7 @@ class LocalStream:
                 "can_proceed_with_gemini": can_proceed_with_gemini,
                 "can_proceed_with_hf": can_proceed_with_hf,
                 "requires_restart": requires_restart,
+                "mcp_servers": mcp_servers,
                 **backend_connection,
             }
 
@@ -563,6 +578,21 @@ class LocalStream:
             if not key:
                 return JSONResponse({"ok": False, "error": "empty_key"}, status_code=400)
             self._persist_api_key(key)
+            return JSONResponse({"ok": True, **_status_payload()})
+
+        # POST /mcp_server_token -> persist a configured MCP server's bearer token
+        @self._settings_app.post("/mcp_server_token")
+        def _set_mcp_server_token(payload: McpServerTokenPayload) -> JSONResponse:
+            from reachy_mini_conversation_app.mcp_servers import find_server_token_env
+
+            alias = (payload.alias or "").strip()
+            token = (payload.token or "").strip()
+            if not token:
+                return JSONResponse({"ok": False, "error": "empty_token"}, status_code=400)
+            token_env = find_server_token_env(self._instance_path, alias)
+            if not token_env:
+                return JSONResponse({"ok": False, "error": "unknown_server"}, status_code=404)
+            self._persist_env_value(token_env, token)
             return JSONResponse({"ok": True, **_status_payload()})
 
         @self._settings_app.post("/backend_config")
