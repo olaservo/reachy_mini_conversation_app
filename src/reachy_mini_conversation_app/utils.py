@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import sys
 import logging
 import argparse
@@ -13,6 +14,7 @@ from reachy_mini_conversation_app.vision.head_tracking import HeadTracker
 
 if TYPE_CHECKING:
     from reachy_mini_conversation_app.vision.local_vision import VisionProcessor
+    from reachy_mini_conversation_app.vision.remote_vision import RemoteVisionProcessor
 
 
 class CameraVisionInitializationError(Exception):
@@ -82,11 +84,16 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
 def initialize_camera_and_vision(
     args: argparse.Namespace,
     current_robot: ReachyMini,
-) -> tuple[CameraWorker | None, VisionProcessor | None]:
-    """Initialize camera capture, optional head tracking, and optional local vision."""
+) -> tuple[CameraWorker | None, "VisionProcessor | RemoteVisionProcessor | None"]:
+    """Initialize camera capture, optional head tracking, and optional vision.
+
+    Vision backend precedence: --local-vision (local SmolVLM2) > VL_BASE_URL env
+    (remote Qwen3-VL returning text) > None (the realtime backend handles vision).
+    The remote path is what the text-only DM brain uses to "read the table".
+    """
     camera_worker: Optional[CameraWorker] = None
     head_tracker: HeadTracker | None = None
-    vision_processor: Optional[VisionProcessor] = None
+    vision_processor: Optional["VisionProcessor | RemoteVisionProcessor"] = None
 
     if not args.no_camera:
         if args.head_tracker is not None:
@@ -137,9 +144,19 @@ def initialize_camera_and_vision(
                 ) from e
 
             vision_processor = initialize_vision_processor()
+        elif os.environ.get("VL_BASE_URL"):
+            from reachy_mini_conversation_app.vision.remote_vision import RemoteVisionProcessor
+
+            base_url = os.environ["VL_BASE_URL"]
+            vision_processor = RemoteVisionProcessor(base_url)
+            logging.getLogger(__name__).info(
+                "Using remote Qwen3-VL vision backend at %s (camera tool returns text).",
+                base_url,
+            )
         else:
             logging.getLogger(__name__).info(
-                "Using the selected realtime backend for vision (default). Use --local-vision for local processing.",
+                "Using the selected realtime backend for vision (default). Use --local-vision for "
+                "local processing, or set VL_BASE_URL for the remote Qwen3-VL camera tool.",
             )
 
     return camera_worker, vision_processor
