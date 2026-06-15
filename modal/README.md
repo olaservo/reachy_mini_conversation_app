@@ -4,12 +4,14 @@ The cloud GPU server for the **Best Use of Modal** submission. It serves
 `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8` through **stock vLLM** as an OpenAI-compatible endpoint,
 exposing both the **Responses API** (`/v1/responses`) and `/v1/chat/completions`.
 
-**Architecture seam:** the judged Gradio Space is CPU-only → it connects to a **local
-`speech-to-speech` voice loop** (Silero VAD + Parakeet STT + Qwen3-TTS, serving `/v1/realtime`),
-which offloads the **language model** to this server over the Responses API. Tool calls
-(dice / scene / robot / `speak_as` / camera) round-trip through this endpoint. This server is the
-GPU half (the brain); voice + protocol stay near the robot. The same model can run locally for
-the off-grid demo — this is the cloud variant.
+**Architecture seam:** the judged Gradio Space is CPU-only → the conversation app's **native
+in-app cascade** (Silero VAD + Parakeet STT + Qwen3-TTS, in `src/reachy_mini_conversation_app/
+cascade/`) runs the voice loop near the robot and offloads the **language model** to this server
+over the Responses API. The cascade's `openai` LLM provider just points its `base_url` at this
+endpoint (in-process — no external `speech-to-speech` server). Tool calls (dice / scene / robot /
+`speak_as` / camera) round-trip through this endpoint. This server is the GPU half (the brain);
+voice + protocol stay in the cascade. The same model can run locally for the off-grid demo — this
+is the cloud variant.
 
 > Repurposed from the earlier 3-stage Qwen3-Omni server. The brain is a plain text LLM, so it now
 > runs on **one H100** with the stock `vllm/vllm-openai` image — no vllm-omni, no 2-GPU stage split.
@@ -49,21 +51,23 @@ modal serve modal/qwen_brain_modal.py
 - **For a live demo:** set `min_containers=1` in the script (one container always warm, no
   mid-session cold start), then **set it back to 0 afterwards** to stop paying.
 
-## Endpoint contract (for the speech-to-speech voice loop)
+## Endpoint contract (for the cascade's `openai` LLM provider)
 `modal deploy` prints a stable URL like:
 ```
 https://<workspace>--qwen3-brain-serve.modal.run
 ```
-The voice loop points its Responses-API base URL at that URL **+ `/v1`**:
-```bash
-# speech-to-speech launch
-speech-to-speech --mode realtime --stt parakeet-tdt --tts qwen3 \
-  --llm_backend responses-api \
-  --model_name Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 \
-  --responses_api_base_url https://<workspace>--qwen3-brain-serve.modal.run/v1
+The cascade's `openai` LLM provider points its `base_url` at that URL **+ `/v1`** — set it in
+`cascade.yaml` or via the `CASCADE_LLM_BASE_URL` env var (see the `reachy-dm-cascade` worktree):
+```yaml
+# cascade.yaml (llm provider = openai)
+llm:
+  provider: openai
+  model: Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
+  base_url: https://<workspace>--qwen3-brain-serve.modal.run/v1
+  api_key: EMPTY        # vLLM is keyless; any non-empty string satisfies the OpenAI client
+  temperature: 0.7
 ```
-vLLM ignores the API key, so any non-empty string works if the client requires one. Verify the
-server directly with:
+Verify the server directly with:
 ```bash
 curl https://<workspace>--qwen3-brain-serve.modal.run/v1/models
 curl https://<workspace>--qwen3-brain-serve.modal.run/v1/responses \
@@ -84,8 +88,8 @@ roughly double the old 2-GPU Omni budget. Two things burn it:
 Dev iterations (scale-to-zero) ≈ $1–3 each.
 
 ## Open risks to validate on a real run
-1. **Tool-call passthrough** — the core WS1+WS3 risk: app `session.update` tools → speech-to-speech
-   → brain Responses-API tool calls → results round-trip. Confirm early (`--tool-call-parser
+1. **Tool-call passthrough** — the core WS1+WS3 risk: app tools → cascade pipeline → brain
+   Responses-API tool calls → results round-trip. Confirm early (`--tool-call-parser
    qwen3_coder` is set; verify Qwen emits parseable calls and vLLM streams them over `/v1/responses`).
 2. **Responses API on this vLLM** — `/v1/responses` is served by recent stock vLLM; confirm the
    pinned `v0.23.0` image exposes it (fallback: route the voice loop at `/v1/chat/completions`).
