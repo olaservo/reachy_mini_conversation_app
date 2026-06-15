@@ -81,11 +81,14 @@ def serve():
         "0.0.0.0",
         "--port",
         str(VLLM_PORT),
-        # Tool calling for the DM (dice / scene / robot / speak_as / camera). qwen3_coder is the
-        # parser Qwen recommends for Qwen3's Hermes-style tool calls.
+        # Tool calling for the DM (dice / scene / robot / speak_as / camera). Qwen3-30B-A3B-
+        # *Instruct*-2507 emits the Hermes format (<tool_call>\n{json}\n</tool_call>), so the parser
+        # MUST be `hermes` — NOT `qwen3_coder` (that's for Qwen3-*Coder*'s <function=..> XML).
+        # Verified: with qwen3_coder the call leaked into message.content unparsed (tool_calls=[]);
+        # hermes extracts it into structured tool_calls. (HANDOFF/PLAN said qwen3_coder — wrong here.)
         "--enable-auto-tool-choice",
         "--tool-call-parser",
-        "qwen3_coder",
+        "hermes",
         # Instruct-2507 is non-thinking by default (no <think> blocks); pass the kwarg anyway so
         # the contract is explicit and survives a base-model swap. Harmless no-op for this model.
         "--default-chat-template-kwargs",
