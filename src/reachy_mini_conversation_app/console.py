@@ -911,32 +911,45 @@ class LocalStream:
             await asyncio.sleep(0)  # avoid busy loop
 
     async def play_loop(self) -> None:
-        """Fetch outputs from the handler: log text and play audio frames.
+        """Fetch outputs: log text, resample TTS (stateful), and play it with a jitter buffer.
 
-        TTS audio arrives as many tiny chunks. Resampling each chunk independently with an
-        FFT resampler (scipy.signal.resample) rings at every chunk boundary — audible as
-        glitchy/choppy speech, especially over the robot's WebRTC audio. Instead we use a
-        *stateful* polyphase streaming resampler (soxr.ResampleStream) that carries filter
-        state across chunks, so there are no per-chunk boundary artifacts. A fresh stream is
-        created per speech segment (and on a sample-rate change) and flushed with last=True
-        at the segment's end (a quiet gap or a text/segment boundary).
+        TTS audio arrives as many tiny chunks streamed from a remote (Modal) TTS server. Two
+        things make naive playback glitchy: (1) resampling each chunk independently rings at the
+        boundaries, and (2) pushing each chunk to the speaker the instant it arrives makes the
+        speaker underrun whenever a chunk is late (network/CPU jitter) — audible as choppy speech.
+        We fix both: (1) a *stateful* streaming resampler (soxr.ResampleStream) carries filter
+        state across chunks (no boundary artifacts), and (2) a small jitter buffer accumulates
+        ~JITTER_S of audio before each push so late chunks don't starve the speaker. Buffers are
+        flushed at every speech-segment boundary (a text message or a quiet gap).
         """
         import soxr  # stateful streaming resampler (ships with librosa); smooth for chunked TTS
 
         resampler = None  # soxr.ResampleStream for the current segment
         seg_in_sr: Optional[int] = None
         seg_out_sr: Optional[int] = None
+        JITTER_S = 0.6  # buffer this much audio before pushing, to absorb network/CPU jitter
+        outbuf: list = []  # pending resampled float32 frames (mutated in place)
+
+        def flush_out(force: bool = False) -> None:
+            """Push the jitter buffer once it holds ~JITTER_S (or force at a segment boundary)."""
+            if not outbuf:
+                return
+            pending = sum(len(x) for x in outbuf)
+            if force or (seg_out_sr and pending >= int(JITTER_S * seg_out_sr)):
+                self._robot.media.push_audio_sample(np.concatenate(outbuf))
+                outbuf.clear()
 
         def end_segment() -> None:
-            """Flush the streaming resampler's tail and reset for the next segment."""
+            """Flush the resampler tail + the jitter buffer, and reset for the next segment."""
             nonlocal resampler, seg_in_sr, seg_out_sr
             if resampler is not None:
                 try:
                     tail = resampler.resample_chunk(np.zeros(0, dtype=np.float32), last=True)
                     if tail is not None and len(tail) > 0:
-                        self._robot.media.push_audio_sample(np.asarray(tail, dtype=np.float32))
+                        outbuf.append(np.asarray(tail, dtype=np.float32))
                 except Exception as e:  # pragma: no cover - defensive
                     logger.debug("Resampler flush failed: %s", e)
+            flush_out(force=True)
             resampler = None
             seg_in_sr = None
             seg_out_sr = None
@@ -950,7 +963,7 @@ class LocalStream:
                 continue
 
             if isinstance(handler_output, AdditionalOutputs):
-                end_segment()  # speech-segment boundary — don't carry resampler state across it
+                end_segment()  # speech-segment boundary — don't carry state across it
                 for msg in handler_output.args:
                     content = msg.get("content", "")
                     if isinstance(content, str):
@@ -980,9 +993,12 @@ class LocalStream:
                 output_sample_rate = self._robot.media.get_output_audio_samplerate()
 
                 if input_sample_rate == output_sample_rate:
-                    # No resampling needed — drop any stale resampler and play directly.
-                    end_segment()
-                    self._robot.media.push_audio_sample(audio_frame)
+                    # No resampling needed — buffer and play (jitter-buffered).
+                    if resampler is not None:
+                        end_segment()
+                    seg_out_sr = output_sample_rate
+                    outbuf.append(audio_frame)
+                    flush_out()
                 else:
                     # (Re)create the stateful resampler if the rates changed.
                     if resampler is None or seg_in_sr != input_sample_rate or seg_out_sr != output_sample_rate:
@@ -994,7 +1010,8 @@ class LocalStream:
                         seg_out_sr = output_sample_rate
                     out = resampler.resample_chunk(audio_frame, last=False)
                     if out is not None and len(out) > 0:
-                        self._robot.media.push_audio_sample(np.asarray(out, dtype=np.float32))
+                        outbuf.append(np.asarray(out, dtype=np.float32))
+                    flush_out()
 
             else:
                 logger.debug("Ignoring output type=%s", type(handler_output).__name__)
