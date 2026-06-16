@@ -69,3 +69,6 @@ external_content/installed_tool_spaces.json
 external_content/mcp_servers.json
 external_content/external_profiles/*
 external_content/external_tools/*
+
+# robot instance config (contains keys)
+.env.robot
