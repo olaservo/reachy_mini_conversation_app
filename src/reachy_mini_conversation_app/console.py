@@ -108,6 +108,10 @@ class LocalStream:
         self._backend_connection_state = "not_started"
         self._backend_error: str | None = None
         self._backend_retry_delay = BACKEND_RETRY_DELAY_SECONDS
+        # play_loop's jitter buffer, exposed so a user barge-in (clear_audio_queue) can drop
+        # the buffered TTS tail instead of talking over the user for up to ~JITTER_S.
+        self._play_outbuf: list = []
+        self._reset_play_resampler = False
         self._install_handler(handler)
 
     def _install_handler(self, handler: ConversationHandler) -> None:
@@ -887,6 +891,12 @@ class LocalStream:
         # Drain the handler's pending output in place — do NOT replace the
         # queue object, since emit() may be awaiting it (wait_for_item).
         self._drain_output_queue()
+        # Drop play_loop's jitter buffer too, and flag the resampler for reset, so up to
+        # ~JITTER_S of already-buffered TTS doesn't keep playing over the user after barge-in.
+        # Safe to mutate here: clear_audio_queue runs on the same event loop as play_loop, so
+        # it only executes between play_loop's awaits (no concurrent mutation of the buffer).
+        self._play_outbuf.clear()
+        self._reset_play_resampler = True
 
     def _drain_output_queue(self) -> None:
         """Empty the handler's output queue in place without replacing it."""
@@ -928,7 +938,10 @@ class LocalStream:
         seg_in_sr: Optional[int] = None
         seg_out_sr: Optional[int] = None
         JITTER_S = 0.6  # buffer this much audio before pushing, to absorb network/CPU jitter
-        outbuf: list = []  # pending resampled float32 frames (mutated in place)
+        # Instance-owned so a barge-in (clear_audio_queue) can drop it mid-segment.
+        outbuf: list = self._play_outbuf  # pending resampled float32 frames (mutated in place)
+        outbuf.clear()
+        self._reset_play_resampler = False
 
         def flush_out(force: bool = False) -> None:
             """Push the jitter buffer once it holds ~JITTER_S (or force at a segment boundary)."""
@@ -955,6 +968,16 @@ class LocalStream:
             seg_out_sr = None
 
         while not self._stop_event.is_set():
+            # A user barge-in cleared the jitter buffer and asked us to reset; drop the
+            # interrupted segment's resampler state so its filter tail doesn't bleed into
+            # the next reply. (clear_audio_queue already emptied outbuf on the same loop.)
+            if self._reset_play_resampler:
+                self._reset_play_resampler = False
+                resampler = None
+                seg_in_sr = None
+                seg_out_sr = None
+                outbuf.clear()
+
             handler = self.handler
             try:
                 handler_output = await asyncio.wait_for(handler.emit(), timeout=0.5)
