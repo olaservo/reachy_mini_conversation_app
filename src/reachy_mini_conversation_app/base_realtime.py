@@ -405,33 +405,49 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         await self._prepare_startup_credentials()
         self.client = await self._build_realtime_client()
 
-        max_attempts = 3
-        for attempt in range(1, max_attempts + 1):
-            try:
-                await self._run_realtime_session()
-                # Normal exit from the session, stop retrying
-                return
-            except self._connection_closed_errors() as e:
-                # Abrupt close (e.g., "no close frame received or sent") → retry
-                logger.warning("Realtime websocket closed unexpectedly (attempt %d/%d): %s", attempt, max_attempts, e)
-                if attempt < max_attempts:
-                    if self.REFRESH_CLIENT_ON_RECONNECT:
-                        self.client = await self._build_realtime_client()
-                    # exponential backoff with jitter
-                    base_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s, 8s, etc.
-                    jitter = random.uniform(0, 0.5)
-                    delay = base_delay + jitter
-                    logger.info("Retrying in %.1f seconds...", delay)
-                    await asyncio.sleep(delay)
-                    continue
-                raise
-            finally:
-                # never keep a stale reference
-                self.connection = None
+        # Long-lived events->injection loop (morning-briefing demo). Launched at start_up
+        # scope so the bridge subscription survives realtime session restarts; cancelled
+        # when start_up exits. inject_user_turn waits on _connected_event across reconnects.
+        events_task = self._maybe_start_events_loop()
+        try:
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
                 try:
-                    self._connected_event.clear()
-                except Exception:
+                    await self._run_realtime_session()
+                    # Normal exit from the session, stop retrying
+                    return
+                except self._connection_closed_errors() as e:
+                    # Abrupt close (e.g., "no close frame received or sent") → retry
+                    logger.warning(
+                        "Realtime websocket closed unexpectedly (attempt %d/%d): %s", attempt, max_attempts, e
+                    )
+                    if attempt < max_attempts:
+                        if self.REFRESH_CLIENT_ON_RECONNECT:
+                            self.client = await self._build_realtime_client()
+                        # exponential backoff with jitter
+                        base_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s, 8s, etc.
+                        jitter = random.uniform(0, 0.5)
+                        delay = base_delay + jitter
+                        logger.info("Retrying in %.1f seconds...", delay)
+                        await asyncio.sleep(delay)
+                        continue
+                    raise
+                finally:
+                    # never keep a stale reference
+                    self.connection = None
+                    try:
+                        self._connected_event.clear()
+                    except Exception:
+                        pass
+        finally:
+            if events_task is not None:
+                events_task.cancel()
+                try:
+                    await events_task
+                except asyncio.CancelledError:
                     pass
+                except Exception as exc:
+                    logger.debug("Events loop task ended with: %s", exc)
 
     async def _restart_session(self) -> None:
         """Force-close the current session and start a fresh one in background.
@@ -474,6 +490,54 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         This method never blocks the caller.
         """
         await self._pending_responses.put(kwargs)
+
+    async def inject_user_turn(self, text: str, *, connect_timeout: float = 10.0) -> None:
+        """Inject a user turn into the live realtime session and request a response.
+
+        Used by the events loop (events_loop.run_events_injection_loop) to wake the agent
+        on an ha-events-bridge push. Mirrors how a normal user turn is created
+        (conversation.item.create) and routes the trigger through _safe_response_create so
+        it respects the one-active-response constraint. Waits briefly for a live connection
+        so an injection landing during a reconnect blocks instead of being dropped.
+        """
+        try:
+            await asyncio.wait_for(self._connected_event.wait(), timeout=connect_timeout)
+        except asyncio.TimeoutError:
+            logger.warning("inject_user_turn: no live realtime connection; dropping injected turn")
+            return
+        if not self.connection:
+            logger.warning("inject_user_turn: connection cleared; dropping injected turn")
+            return
+
+        self._mark_activity("events_injection")
+        await self.connection.conversation.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}],
+            },
+        )
+        await self.output_queue.put(AdditionalOutputs({"role": "user", "content": text}))
+        await self._safe_response_create()
+        logger.info("Injected user turn (%d chars) and requested response", len(text))
+
+    def _maybe_start_events_loop(self) -> "asyncio.Task[None] | None":
+        """Start the ha-events-bridge injection loop if enabled (morning-briefing demo).
+
+        Opt-in via config.HA_EVENTS_ENABLED. Returns the task (cancelled on start_up exit)
+        or None when disabled / on failure. Never raises into the startup path.
+        """
+        if not getattr(config, "HA_EVENTS_ENABLED", False):
+            return None
+        try:
+            from reachy_mini_conversation_app.events_loop import run_events_injection_loop
+
+            task = asyncio.create_task(run_events_injection_loop(self), name="events-injection")
+            logger.info("Started HA events injection loop (bridge=%s)", config.HA_EVENTS_BRIDGE_URL)
+            return task
+        except Exception as exc:
+            logger.warning("Failed to start HA events injection loop: %s", exc)
+            return None
 
     async def _response_sender_loop(self) -> None:
         """Dedicated worker that sends ``response.create()`` calls serially.

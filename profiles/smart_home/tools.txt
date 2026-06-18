@@ -16,3 +16,11 @@ hass__GetLiveContext
 hass__GetDateTime
 hass__HassBroadcast
 hass__HassCancelAllTimers
+# Morning-briefing demo tools — enabled by `mcp-servers add ... --profile smart_home`
+# once the servers exist (which appends the discovered IDs below). Names are provisional
+# until discovery.
+# Calendar MCP (to build):  mcp-servers add calendar <url> --token-env <ENV> --profile smart_home
+# calendar__list_today
+# calendar__list_upcoming
+# Gmail MCP (fork-gmail-mcp, account olahungerford):  mcp-servers add gmail <url> --token-env <ENV> --profile smart_home
+# gmail__<unread/summary tool>

@@ -196,6 +196,30 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return default
 
 
+def _env_int(name: str, default: int) -> int:
+    """Parse an integer environment value, falling back to a default on absence/error."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        logger.warning("Invalid integer value for %s=%r, using default=%s", name, raw, default)
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Parse a float environment value, falling back to a default on absence/error."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw.strip())
+    except ValueError:
+        logger.warning("Invalid float value for %s=%r, using default=%s", name, raw, default)
+        return default
+
+
 def _normalize_hf_connection_mode(value: str | None) -> str | None:
     """Normalize the Hugging Face connection mode, if explicitly configured."""
     candidate = (value or "").strip().lower()
@@ -396,6 +420,19 @@ class Config:
 
     logger.debug(f"Custom Profile: {REACHY_MINI_CUSTOM_PROFILE}")
 
+    # --- Morning-briefing demo: HA events bridge (events/stream -> realtime injection) ---
+    # Opt-in. When HA_EVENTS_ENABLED is false (default) the app behaves exactly as before:
+    # no events client is started. The bridge URL defaults to the dev PC's LAN IP because
+    # the fork runs on the Reachy CM4 and must reach the bridge over the network.
+    HA_EVENTS_ENABLED = _env_flag("HA_EVENTS_ENABLED", default=False)
+    HA_EVENTS_BRIDGE_URL = os.getenv("HA_EVENTS_BRIDGE_URL", "http://10.0.0.234:3100/")
+    HA_EVENTS_ENTITY_ID = os.getenv("HA_EVENTS_ENTITY_ID", "light.ola_office_color_a19")
+    HA_EVENTS_TO_STATE = os.getenv("HA_EVENTS_TO_STATE", "on")
+    HA_EVENTS_MORNING_START = _env_int("HA_EVENTS_MORNING_START", 5)
+    HA_EVENTS_MORNING_END = _env_int("HA_EVENTS_MORNING_END", 11)
+    HA_EVENTS_DEBOUNCE_S = _env_float("HA_EVENTS_DEBOUNCE_S", 120.0)
+    HA_EVENTS_ONCE_PER_MORNING = _env_flag("HA_EVENTS_ONCE_PER_MORNING", default=True)
+
     def __init__(self) -> None:
         """Initialize the configuration."""
         if self.REACHY_MINI_CUSTOM_PROFILE and self.PROFILES_DIRECTORY != DEFAULT_PROFILES_DIRECTORY:
@@ -481,6 +518,14 @@ def refresh_runtime_config_from_env() -> None:
     config.LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     config.HF_TOKEN = os.getenv("HF_TOKEN")
     config.REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
+    config.HA_EVENTS_ENABLED = _env_flag("HA_EVENTS_ENABLED", default=False)
+    config.HA_EVENTS_BRIDGE_URL = os.getenv("HA_EVENTS_BRIDGE_URL", "http://10.0.0.234:3100/")
+    config.HA_EVENTS_ENTITY_ID = os.getenv("HA_EVENTS_ENTITY_ID", "light.ola_office_color_a19")
+    config.HA_EVENTS_TO_STATE = os.getenv("HA_EVENTS_TO_STATE", "on")
+    config.HA_EVENTS_MORNING_START = _env_int("HA_EVENTS_MORNING_START", 5)
+    config.HA_EVENTS_MORNING_END = _env_int("HA_EVENTS_MORNING_END", 11)
+    config.HA_EVENTS_DEBOUNCE_S = _env_float("HA_EVENTS_DEBOUNCE_S", 120.0)
+    config.HA_EVENTS_ONCE_PER_MORNING = _env_flag("HA_EVENTS_ONCE_PER_MORNING", default=True)
 
 
 def get_backend_choice(model_name: str | None = None) -> str:
