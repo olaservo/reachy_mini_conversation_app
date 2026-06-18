@@ -32,10 +32,10 @@ def test_validate_http_mcp_url_rejects_non_local_plain_http() -> None:
     [
         "http://127.0.0.1:8123/api/mcp",
         "http://localhost:8123/api/mcp",
-        "http://10.0.0.136:8123/api/mcp",  # private (HA on the LAN)
+        "http://10.0.0.50:8000/mcp",  # private LAN IP (10.x)
         "http://192.168.1.5:8123/api/mcp",  # private
         "http://172.16.0.4:8123/api/mcp",  # private
-        "http://homeassistant.local:8123/api/mcp",  # mDNS
+        "http://my-mcp-server.local:8000/mcp",  # mDNS
         "http://169.254.1.1/api/mcp",  # IPv4 link-local
         "http://[::1]/api/mcp",  # IPv6 loopback
         "http://[fe80::1]/api/mcp",  # IPv6 link-local

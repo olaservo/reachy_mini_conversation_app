@@ -29,11 +29,11 @@ from reachy_mini_conversation_app.tool_spaces import (
 )
 
 
-HA_URL = "http://10.0.0.136:8123/api/mcp"
-HA_LOCAL_URL = "http://homeassistant.local:8123/api/mcp"
-TOKEN_ENV = "HA_ACCESS_TOKEN"
-TOKEN_VALUE = "super-secret-long-lived-token"
-HASS_TURN_ON = "hass__HassTurnOn"
+DEMO_URL = "http://192.168.1.50:8000/mcp"
+DEMO_LOCAL_URL = "http://my-mcp-server.local:8000/mcp"
+TOKEN_ENV = "MCP_SERVER_TOKEN"
+TOKEN_VALUE = "super-secret-token"
+EXAMPLE_TOOL = "example__DoThing"
 
 
 async def _mock_list_tool_specs(self: object) -> list[RemoteToolSpec]:
@@ -43,15 +43,15 @@ async def _mock_list_tool_specs(self: object) -> list[RemoteToolSpec]:
     return [
         RemoteToolSpec(
             server_alias=alias,
-            remote_name="HassTurnOn",
-            namespaced_name=f"{alias}__HassTurnOn",
+            remote_name="DoThing",
+            namespaced_name=f"{alias}__DoThing",
             description="Turn a device on",
             parameters_schema=schema,
         ),
         RemoteToolSpec(
             server_alias=alias,
-            remote_name="HassTurnOff",
-            namespaced_name=f"{alias}__HassTurnOff",
+            remote_name="DoOtherThing",
+            namespaced_name=f"{alias}__DoOtherThing",
             description="Turn a device off",
             parameters_schema=schema,
         ),
@@ -89,7 +89,7 @@ def test_mcp_servers_add_list_remove_round_trip(tmp_path: Path, monkeypatch: pyt
     assert (
         _run_cli(
             monkeypatch,
-            ["app", "mcp-servers", "add", "hass", HA_URL, "--token-env", TOKEN_ENV, "--install-only"],
+            ["app", "mcp-servers", "add", "example", DEMO_URL, "--token-env", TOKEN_ENV, "--install-only"],
         )
         == 0
     )
@@ -100,18 +100,18 @@ def test_mcp_servers_add_list_remove_round_trip(tmp_path: Path, monkeypatch: pyt
         "version": 1,
         "servers": [
             {
-                "alias": "hass",
+                "alias": "example",
                 "auth": {"token_env": TOKEN_ENV, "type": "bearer"},
                 "request_timeout_s": 10.0,
                 "tool_timeout_s": 30.0,
-                "url": HA_URL,
+                "url": DEMO_URL,
             }
         ],
     }
 
     assert _run_cli(monkeypatch, ["app", "mcp-servers", "list"]) == 0
 
-    assert _run_cli(monkeypatch, ["app", "mcp-servers", "remove", "hass"]) == 0
+    assert _run_cli(monkeypatch, ["app", "mcp-servers", "remove", "example"]) == 0
     assert read_mcp_servers(None).servers == []
 
 
@@ -124,7 +124,7 @@ def test_mcp_servers_add_never_persists_token_value(tmp_path: Path, monkeypatch:
     assert (
         _run_cli(
             monkeypatch,
-            ["app", "mcp-servers", "add", "hass", HA_URL, "--token-env", TOKEN_ENV, "--install-only"],
+            ["app", "mcp-servers", "add", "example", DEMO_URL, "--token-env", TOKEN_ENV, "--install-only"],
         )
         == 0
     )
@@ -143,7 +143,7 @@ def test_mcp_servers_add_fails_when_token_env_unset(tmp_path: Path, monkeypatch:
     assert (
         _run_cli(
             monkeypatch,
-            ["app", "mcp-servers", "add", "hass", HA_URL, "--token-env", TOKEN_ENV, "--install-only"],
+            ["app", "mcp-servers", "add", "example", DEMO_URL, "--token-env", TOKEN_ENV, "--install-only"],
         )
         == 1
     )
@@ -159,14 +159,14 @@ def test_mcp_servers_add_rejects_public_http(tmp_path: Path, monkeypatch: pytest
     assert (
         _run_cli(
             monkeypatch,
-            ["app", "mcp-servers", "add", "hass", "http://example.com/api/mcp", "--token-env", TOKEN_ENV],
+            ["app", "mcp-servers", "add", "example", "http://example.com/api/mcp", "--token-env", TOKEN_ENV],
         )
         == 1
     )
     assert not (tmp_path / "external_content" / "mcp_servers.json").exists()
 
 
-@pytest.mark.parametrize("url", [HA_URL, HA_LOCAL_URL])
+@pytest.mark.parametrize("url", [DEMO_URL, DEMO_LOCAL_URL])
 def test_mcp_servers_add_accepts_local_network_http(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str
 ) -> None:
@@ -176,7 +176,7 @@ def test_mcp_servers_add_accepts_local_network_http(
     _patch_discovery(monkeypatch)
 
     assert (
-        _run_cli(monkeypatch, ["app", "mcp-servers", "add", "hass", url, "--token-env", TOKEN_ENV, "--install-only"])
+        _run_cli(monkeypatch, ["app", "mcp-servers", "add", "example", url, "--token-env", TOKEN_ENV, "--install-only"])
         == 0
     )
     assert read_mcp_servers(None).servers[0].url == url
@@ -187,20 +187,20 @@ def test_mcp_servers_add_enables_in_named_profile(tmp_path: Path, monkeypatch: p
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(TOKEN_ENV, TOKEN_VALUE)
     _patch_discovery(monkeypatch)
-    tools_txt = _setup_profile(tmp_path, "smart_home")
+    tools_txt = _setup_profile(tmp_path, "demo_profile")
     monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", tmp_path)
 
     assert (
         _run_cli(
             monkeypatch,
-            ["app", "mcp-servers", "add", "hass", HA_URL, "--token-env", TOKEN_ENV, "--profile", "smart_home"],
+            ["app", "mcp-servers", "add", "example", DEMO_URL, "--token-env", TOKEN_ENV, "--profile", "demo_profile"],
         )
         == 0
     )
 
     enabled = tools_txt.read_text(encoding="utf-8")
-    assert HASS_TURN_ON in enabled
-    assert "hass__HassTurnOff" in enabled
+    assert EXAMPLE_TOOL in enabled
+    assert "example__DoOtherThing" in enabled
 
 
 def test_mcp_servers_add_rejects_alias_collision_with_tool_space(
@@ -211,17 +211,17 @@ def test_mcp_servers_add_rejects_alias_collision_with_tool_space(
     monkeypatch.setenv(TOKEN_ENV, TOKEN_VALUE)
     _patch_discovery(monkeypatch)
 
-    # Pre-seed a tool space; its alias is derived from the slug as 'owner_hass'.
+    # Pre-seed a tool space; its alias is derived from the slug as 'owner_example'.
     write_installed_tool_spaces(
         None,
-        InstalledToolSpacesManifest(spaces=[InstalledToolSpace(slug="owner/hass", alias="owner_hass")]),
+        InstalledToolSpacesManifest(spaces=[InstalledToolSpace(slug="owner/example", alias="owner_example")]),
     )
 
     # Configuring an MCP server with the same alias must be rejected.
     assert (
         _run_cli(
             monkeypatch,
-            ["app", "mcp-servers", "add", "owner_hass", HA_URL, "--token-env", TOKEN_ENV, "--install-only"],
+            ["app", "mcp-servers", "add", "owner_example", DEMO_URL, "--token-env", TOKEN_ENV, "--install-only"],
         )
         == 1
     )
@@ -233,8 +233,8 @@ def test_read_mcp_servers_rejects_duplicate_alias(tmp_path: Path) -> None:
     payload = {
         "version": 1,
         "servers": [
-            {"alias": "hass", "url": HA_URL},
-            {"alias": "hass", "url": HA_LOCAL_URL},
+            {"alias": "example", "url": DEMO_URL},
+            {"alias": "example", "url": DEMO_LOCAL_URL},
         ],
     }
     (tmp_path / "mcp_servers.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -244,7 +244,7 @@ def test_read_mcp_servers_rejects_duplicate_alias(tmp_path: Path) -> None:
 
 def test_write_mcp_servers_uses_instance_path_when_provided(tmp_path: Path) -> None:
     """Managed instance paths store the manifest beside other instance-local state."""
-    manifest = InstalledMcpServersManifest(servers=[InstalledMcpServer(alias="hass", url=HA_URL)])
+    manifest = InstalledMcpServersManifest(servers=[InstalledMcpServer(alias="example", url=DEMO_URL)])
     path = write_mcp_servers(tmp_path, manifest)
     assert path == tmp_path / "mcp_servers.json"
     assert path.is_file()
@@ -257,15 +257,15 @@ def test_list_token_requirements_reflects_env(tmp_path: Path, monkeypatch: pytes
         tmp_path,
         InstalledMcpServersManifest(
             servers=[
-                InstalledMcpServer(alias="hass", url=HA_URL, auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV)),
-                InstalledMcpServer(alias="noauth", url=HA_LOCAL_URL),  # no auth -> excluded
+                InstalledMcpServer(alias="example", url=DEMO_URL, auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV)),
+                InstalledMcpServer(alias="noauth", url=DEMO_LOCAL_URL),  # no auth -> excluded
             ]
         ),
     )
 
     monkeypatch.delenv(TOKEN_ENV, raising=False)
     reqs = list_token_requirements(tmp_path)
-    assert [(r.alias, r.token_env, r.token_set) for r in reqs] == [("hass", TOKEN_ENV, False)]
+    assert [(r.alias, r.token_env, r.token_set) for r in reqs] == [("example", TOKEN_ENV, False)]
 
     monkeypatch.setenv(TOKEN_ENV, TOKEN_VALUE)
     reqs = list_token_requirements(tmp_path)
@@ -277,10 +277,10 @@ def test_find_server_token_env(tmp_path: Path) -> None:
     write_mcp_servers(
         tmp_path,
         InstalledMcpServersManifest(
-            servers=[InstalledMcpServer(alias="hass", url=HA_URL, auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV))]
+            servers=[InstalledMcpServer(alias="example", url=DEMO_URL, auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV))]
         ),
     )
-    assert find_server_token_env(tmp_path, "hass") == TOKEN_ENV
+    assert find_server_token_env(tmp_path, "example") == TOKEN_ENV
     assert find_server_token_env(tmp_path, "nope") is None
 
 
@@ -298,14 +298,14 @@ def _reload_core_tools() -> ModuleType:
 def test_generic_mcp_tool_registers_in_active_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A hass__* tool listed in tools.txt should be registered from the configured MCP server."""
+    """A example__* tool listed in tools.txt should be registered from the configured MCP server."""
     external_profiles_root = tmp_path / "external_profiles"
-    profile_dir = external_profiles_root / "smart_home"
+    profile_dir = external_profiles_root / "demo_profile"
     profile_dir.mkdir(parents=True)
     (profile_dir / "instructions.txt").write_text("hi\n", encoding="utf-8")
-    (profile_dir / "tools.txt").write_text(f"{HASS_TURN_ON}\n", encoding="utf-8")
+    (profile_dir / "tools.txt").write_text(f"{EXAMPLE_TOOL}\n", encoding="utf-8")
 
-    server = InstalledMcpServer(alias="hass", url=HA_URL)
+    server = InstalledMcpServer(alias="example", url=DEMO_URL)
     monkeypatch.setattr(
         mcp_servers_mod,
         "read_mcp_servers",
@@ -319,9 +319,9 @@ def test_generic_mcp_tool_registers_in_active_profile(
             url=srv.url,
             tools=[
                 InstalledToolSpaceTool(
-                    local_name=HASS_TURN_ON,
-                    client_tool_name=HASS_TURN_ON,
-                    remote_name="HassTurnOn",
+                    local_name=EXAMPLE_TOOL,
+                    client_tool_name=EXAMPLE_TOOL,
+                    remote_name="DoThing",
                     description="Turn a device on",
                     parameters_schema={"type": "object", "properties": {}, "required": []},
                 )
@@ -330,12 +330,12 @@ def test_generic_mcp_tool_registers_in_active_profile(
         ),
     )
 
-    monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", "smart_home")
+    monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", "demo_profile")
     monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", external_profiles_root)
     monkeypatch.setattr(config_mod.config, "TOOLS_DIRECTORY", None)
     monkeypatch.setattr(config_mod.config, "AUTOLOAD_EXTERNAL_TOOLS", False)
 
     core_tools_mod = _reload_core_tools()
 
-    assert HASS_TURN_ON in core_tools_mod.ALL_TOOLS
-    assert HASS_TURN_ON in {spec["name"] for spec in core_tools_mod.get_tool_specs()}
+    assert EXAMPLE_TOOL in core_tools_mod.ALL_TOOLS
+    assert EXAMPLE_TOOL in {spec["name"] for spec in core_tools_mod.get_tool_specs()}

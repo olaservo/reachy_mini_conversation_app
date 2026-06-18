@@ -79,7 +79,7 @@ def _is_local_http_host(host: str) -> bool:
         return False
     if host in _LOCAL_HTTP_HOSTS or host == "localhost" or host.endswith(".localhost"):
         return True
-    if host.endswith(".local"):  # mDNS, e.g. homeassistant.local
+    if host.endswith(".local"):  # mDNS, e.g. my-mcp-server.local
         return True
     candidate = host.strip("[]").split("%", 1)[0]  # strip IPv6 brackets + zone id
     try:

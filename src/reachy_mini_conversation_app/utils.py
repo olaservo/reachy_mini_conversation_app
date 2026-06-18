@@ -75,8 +75,10 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
     mcp_servers_subparsers = mcp_servers_parser.add_subparsers(dest="mcp_servers_command", required=True)
 
     mcp_add_parser = mcp_servers_subparsers.add_parser("add", help="Configure one HTTP(S) MCP server")
-    mcp_add_parser.add_argument("alias", help="Local alias for the server (e.g. 'hass'). Used to namespace its tools.")
-    mcp_add_parser.add_argument("url", help="MCP endpoint URL, e.g. http://homeassistant.local:8123/api/mcp")
+    mcp_add_parser.add_argument(
+        "alias", help="Local alias for the server (e.g. 'example'). Used to namespace its tools."
+    )
+    mcp_add_parser.add_argument("url", help="MCP endpoint URL, e.g. http://my-mcp-server.local:8000/mcp")
     mcp_add_parser.add_argument(
         "--token-env",
         dest="token_env",

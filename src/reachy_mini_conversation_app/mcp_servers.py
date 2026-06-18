@@ -296,8 +296,8 @@ def format_mcp_server_listing(server: ResolvedMcpServer) -> str:
 
 def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str | Path | None = None) -> int:
     """Handle mcp-servers subcommands from the main CLI."""
-    # Importing config loads the .env file, so an auth token placed there (e.g.
-    # HA_ACCESS_TOKEN) is available when resolving servers from the standalone CLI.
+    # Importing config loads the .env file, so an auth token placed there is
+    # available when resolving servers from the standalone CLI.
     import reachy_mini_conversation_app.config  # noqa: F401
 
     command = getattr(args, "mcp_servers_command", None)
