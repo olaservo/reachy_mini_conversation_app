@@ -145,8 +145,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self.partial_debounce_delay = 0.5  # seconds
         self.input_transcript_chunks_by_item = InputTranscriptChunksByItem()
 
-        # Internal lifecycle flags
-        self._connected_event: asyncio.Event = asyncio.Event()
+        # Internal lifecycle flags + shared event-injection plumbing
+        self._init_event_injection()
 
         # Background tool manager
         self.tool_manager = BackgroundToolManager()
@@ -408,7 +408,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         # Long-lived events->injection loop (morning-briefing demo). Launched at start_up
         # scope so the bridge subscription survives realtime session restarts; cancelled
         # when start_up exits. inject_user_turn waits on _connected_event across reconnects.
-        events_task = self._maybe_start_events_loop()
+        self._events_task = self._maybe_start_events_loop()
         try:
             max_attempts = 3
             for attempt in range(1, max_attempts + 1):
@@ -440,14 +440,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     except Exception:
                         pass
         finally:
-            if events_task is not None:
-                events_task.cancel()
-                try:
-                    await events_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as exc:
-                    logger.debug("Events loop task ended with: %s", exc)
+            await self._stop_events_loop(self._events_task)
+            self._events_task = None
 
     async def _restart_session(self) -> None:
         """Force-close the current session and start a fresh one in background.
@@ -520,24 +514,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         await self.output_queue.put(AdditionalOutputs({"role": "user", "content": text}))
         await self._safe_response_create()
         logger.info("Injected user turn (%d chars) and requested response", len(text))
-
-    def _maybe_start_events_loop(self) -> "asyncio.Task[None] | None":
-        """Start the ha-events-bridge injection loop if enabled (morning-briefing demo).
-
-        Opt-in via config.HA_EVENTS_ENABLED. Returns the task (cancelled on start_up exit)
-        or None when disabled / on failure. Never raises into the startup path.
-        """
-        if not getattr(config, "HA_EVENTS_ENABLED", False):
-            return None
-        try:
-            from reachy_mini_conversation_app.events_loop import run_events_injection_loop
-
-            task = asyncio.create_task(run_events_injection_loop(self), name="events-injection")
-            logger.info("Started HA events injection loop (bridge=%s)", config.HA_EVENTS_BRIDGE_URL)
-            return task
-        except Exception as exc:
-            logger.warning("Failed to start HA events injection loop: %s", exc)
-            return None
 
     async def _response_sender_loop(self) -> None:
         """Dedicated worker that sends ``response.create()`` calls serially.

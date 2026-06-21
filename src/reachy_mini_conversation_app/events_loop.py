@@ -6,8 +6,10 @@ Reachy speaks. Gating (morning window, once-per-morning, debounce) keeps it from
 on every toggle.
 
 This is the events->session wiring; the events protocol lives in ``events_client.py`` and
-the injection primitive (``inject_user_turn``) lives in ``base_realtime.py``. Started as an
-asyncio task from ``BaseRealtimeHandler.start_up`` when ``config.HA_EVENTS_ENABLED``.
+the injection primitive (``inject_user_turn``) is a sanctioned hook on any
+``ConversationHandler`` (realtime backends + Gemini). Started as an asyncio task from a
+handler's ``start_up`` (via ``ConversationHandler._maybe_start_events_loop``) when
+``config.HA_EVENTS_ENABLED``.
 """
 
 from __future__ import annotations
@@ -15,17 +17,25 @@ from __future__ import annotations
 import time
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import Protocol, runtime_checkable
 from datetime import date, datetime
 from dataclasses import dataclass
 
 from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.events_client import EventsClient, EventsClientError
 
-if TYPE_CHECKING:
-    from reachy_mini_conversation_app.base_realtime import BaseRealtimeHandler
-
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class UserTurnInjector(Protocol):
+    """Minimal interface the events loop needs: a backend that can inject a user turn.
+
+    Decouples the loop from any concrete handler class so it depends only on the
+    sanctioned ``inject_user_turn`` hook (see ``ConversationHandler``).
+    """
+
+    async def inject_user_turn(self, text: str) -> None: ...
 
 _EVENT_NAME = "ha.state_changed"
 _RECONNECT_BASE_DELAY_S = 2.0
@@ -134,7 +144,7 @@ def _is_matching_occurrence(message: dict, settings: EventsSettings) -> bool:
     return True
 
 
-async def run_events_injection_loop(handler: "BaseRealtimeHandler") -> None:
+async def run_events_injection_loop(handler: UserTurnInjector) -> None:
     """Subscribe to the bridge and inject a briefing turn on qualifying fires.
 
     Runs until cancelled. Reconnects with capped exponential backoff if the SSE stream

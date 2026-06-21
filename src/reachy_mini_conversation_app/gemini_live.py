@@ -173,8 +173,8 @@ class GeminiLiveHandler(ConversationHandler):
         self._key_source: Literal["env", "textbox"] = "env"
         self._provided_api_key: str | None = None
 
-        # Internal lifecycle flags
-        self._connected_event: asyncio.Event = asyncio.Event()
+        # Internal lifecycle flags + shared event-injection plumbing
+        self._init_event_injection()
 
         # Background tool manager
         self.tool_manager = BackgroundToolManager()
@@ -302,6 +302,12 @@ class GeminiLiveHandler(ConversationHandler):
 
         self.client = genai.Client(api_key=gemini_api_key)
 
+        # Long-lived events->injection loop (morning-briefing demo). Launched here but torn
+        # down in shutdown(), NOT in this method: _restart_session re-enters start_up, so a
+        # start_up-scoped teardown would kill the loop on every voice/personality restart.
+        # The launcher is idempotent (reuses the live task), so re-entry never leaks a second.
+        self._events_task = self._maybe_start_events_loop()
+
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
@@ -359,6 +365,37 @@ class GeminiLiveHandler(ConversationHandler):
                 logger.warning("Gemini Live session restart timed out; continuing in background.")
         except Exception as e:
             logger.warning("_restart_session failed: %s", e)
+
+    async def inject_user_turn(self, text: str, *, connect_timeout: float = 10.0) -> None:
+        """Inject a user turn into the live Gemini session and trigger a response.
+
+        Used by the events loop (events_loop.run_events_injection_loop) to wake the agent
+        on an ha-events-bridge push. Mirrors the realtime path: waits briefly for a live
+        session, sends the turn with turn_complete=True (which makes Gemini respond
+        directly — there is no separate response.create step), then queues the user-turn
+        echo for the UI. Waits on _connected_event so an injection landing during a restart
+        blocks instead of being dropped.
+        """
+        try:
+            await asyncio.wait_for(self._connected_event.wait(), timeout=connect_timeout)
+        except asyncio.TimeoutError:
+            logger.warning("inject_user_turn: no live Gemini session; dropping injected turn")
+            return
+        if not self.session:
+            logger.warning("inject_user_turn: session cleared; dropping injected turn")
+            return
+
+        self.last_activity_time = time.monotonic()
+        try:
+            await self.session.send_client_content(
+                turns=types.Content(role="user", parts=[types.Part(text=text)]),
+                turn_complete=True,
+            )
+        except Exception as exc:
+            logger.warning("inject_user_turn: send_client_content failed: %s", exc)
+            return
+        await self.output_queue.put(AdditionalOutputs({"role": "user", "content": text}))
+        logger.info("Injected user turn (%d chars) into Gemini session", len(text))
 
     def _build_live_config(self) -> types.LiveConnectConfig:
         """Build the LiveConnectConfig for a Gemini Live session."""
@@ -696,6 +733,11 @@ class GeminiLiveHandler(ConversationHandler):
     async def shutdown(self) -> None:
         """Shutdown the handler."""
         self._stop_event.set()
+
+        # Events->injection loop is launched in start_up but owned across session restarts,
+        # so it's cancelled here at true shutdown (mirrors tool_manager teardown below).
+        await self._stop_events_loop(self._events_task)
+        self._events_task = None
 
         await self.tool_manager.shutdown()
 
