@@ -748,3 +748,141 @@ def format_skillbooks_block(manifests: list[SkillManifest], *, read_tool_name: s
     for manifest in sorted(manifests, key=lambda m: m.name):
         lines.append(f"- **{manifest.name}**: {manifest.description}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# CLI: `skillbooks add/list/remove` (mirrors tool_spaces.handle_tool_spaces_command)
+# ---------------------------------------------------------------------------
+
+_SKILLBOOK_DIR_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def _safe_skillbook_dir_name(name: str) -> str:
+    if _SKILLBOOK_DIR_RE.fullmatch(name) is None:
+        raise ValueError(f"Invalid skillbook name for local install: {name}")
+    return name
+
+
+def _resolve_skill_client(source: str, name: str | None) -> tuple["RemoteMcpToolClient", str]:
+    """Resolve a source (tool-space slug or direct http(s) MCP URL) to a client + display label."""
+    parsed = urlparse(source)
+    if parsed.scheme in {"http", "https"}:
+        from reachy_mini_conversation_app.mcp_client import (
+            RemoteMcpToolClient,
+            RemoteMcpServerConfig,
+            apply_name_normalization,
+        )
+
+        host = parsed.hostname or "skills"
+        alias = apply_name_normalization(name or host) or "skills"
+        if alias[0].isdigit():
+            alias = f"s_{alias}"
+        return RemoteMcpToolClient(RemoteMcpServerConfig(alias=alias, url=source)), source
+
+    from reachy_mini_conversation_app.tool_spaces import resolve_public_tool_space_sync
+
+    resolved = resolve_public_tool_space_sync(source)
+    return resolved.client, source
+
+
+def handle_skillbooks_command(args: Any, *, instance_path: str | Path | None = None) -> int:
+    """Handle ``skillbooks`` subcommands from the main CLI."""
+    command = getattr(args, "skillbooks_command", None)
+    if command == "add":
+        return _skillbooks_add(args, instance_path)
+    if command == "list":
+        return _skillbooks_list(instance_path)
+    if command == "remove":
+        return _skillbooks_remove(args, instance_path)
+    raise RuntimeError(f"Unknown skillbooks command: {command}")
+
+
+def _skillbooks_add(args: Any, instance_path: str | Path | None) -> int:
+    import asyncio
+
+    client, label = _resolve_skill_client(args.source, getattr(args, "name", None))
+    registry = asyncio.run(scan_skill_registry(client))
+    if registry is None:
+        logger.error("'%s' does not advertise the SEP-2640 skills extension.", label)
+        return 1
+    if not registry:
+        logger.error("'%s' serves no skills (missing or empty skill://index.json).", label)
+        return 1
+
+    selectors = list(getattr(args, "skills", None) or [])
+    if not selectors:
+        logger.info("Skills available on %s:", label)
+        for i, skill in enumerate(registry, 1):
+            logger.info("  %d. %s — %s", i, skill.name, (skill.description or "").strip())
+        logger.info("Re-run 'skillbooks add %s <skill-name> [...]' to install one or more.", args.source)
+        return 0
+
+    chosen: list[RegistrySkill] = []
+    for selector in selectors:
+        skill = select_registry_skill(registry, selector)
+        if skill is None:
+            logger.error("No skill matching '%s' on %s.", selector, label)
+            return 1
+        chosen.append(skill)
+
+    skillbook_name = getattr(args, "name", None) or client.server.alias
+    try:
+        dest_root = get_skillbooks_dir(instance_path) / _safe_skillbook_dir_name(skillbook_name)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return 1
+    dest_root.mkdir(parents=True, exist_ok=True)
+
+    installed: list[str] = []
+    for skill in chosen:
+        try:
+            path = asyncio.run(install_skill(client, skill, destination_root=dest_root))
+            logger.info("Installed skill '%s' -> %s", skill.name, path)
+            installed.append(skill.name)
+        except FileExistsError:
+            logger.info("Skill '%s' already installed in skillbook '%s'; skipping.", skill.name, skillbook_name)
+            installed.append(skill.name)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to install skill '%s': %s", skill.name, exc)
+            return 1
+
+    manifest = read_installed_skillbooks(instance_path)
+    others = [b for b in manifest.skillbooks if b.name != skillbook_name]
+    prior = next((b for b in manifest.skillbooks if b.name == skillbook_name), None)
+    skills = sorted({*(prior.skills if prior else []), *installed})
+    book = InstalledSkillbook(name=skillbook_name, source_url=client.server.url, server_alias=client.server.alias, skills=skills)
+    path = write_installed_skillbooks(
+        instance_path,
+        InstalledSkillbooksManifest(version=manifest.version, skillbooks=sorted([*others, book], key=lambda b: b.name)),
+    )
+    logger.info("Skillbook '%s' now bundles: %s", skillbook_name, skills)
+    logger.info("Manifest: %s", path)
+    return 0
+
+
+def _skillbooks_list(instance_path: str | Path | None) -> int:
+    manifest = read_installed_skillbooks(instance_path)
+    logger.info("Manifest: %s", get_installed_skillbooks_path(instance_path))
+    if not manifest.skillbooks:
+        logger.info("No installed skillbooks.")
+        return 0
+    for book in manifest.skillbooks:
+        logger.info("%s  (source: %s)", book.name, book.source_url)
+        for skill_name in book.skills:
+            logger.info("    - %s", skill_name)
+    return 0
+
+
+def _skillbooks_remove(args: Any, instance_path: str | Path | None) -> int:
+    name = args.name
+    manifest = read_installed_skillbooks(instance_path)
+    remaining = [b for b in manifest.skillbooks if b.name != name]
+    if len(remaining) == len(manifest.skillbooks):
+        logger.warning("Skillbook not installed: %s", name)
+        return 1
+    book_dir = get_skillbooks_dir(instance_path) / name
+    if book_dir.is_dir():
+        shutil.rmtree(book_dir)
+    write_installed_skillbooks(instance_path, InstalledSkillbooksManifest(version=manifest.version, skillbooks=remaining))
+    logger.info("Removed skillbook: %s", name)
+    return 0

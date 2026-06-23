@@ -75,6 +75,22 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
     remove_parser.add_argument("space_slug", help="Installed Hugging Face Space slug in the form owner/space-name")
 
     tool_spaces_subparsers.add_parser("list", help="List installed Space tool sources")
+
+    skillbooks_parser = subparsers.add_parser(
+        "skillbooks", help="Install SEP-2640 skills (skillbooks) served over MCP"
+    )
+    skillbooks_subparsers = skillbooks_parser.add_subparsers(dest="skillbooks_command", required=True)
+    sb_add = skillbooks_subparsers.add_parser("add", help="Install skill(s) from an MCP source as a skillbook")
+    sb_add.add_argument(
+        "source", help="Skill source: a tool-space slug (owner/space-name) or a direct MCP URL (http(s)://...)."
+    )
+    sb_add.add_argument(
+        "skills", nargs="*", help="Skill name(s) or 1-based index(es) to install. Omit to list what is available."
+    )
+    sb_add.add_argument("--name", dest="name", default=None, metavar="NAME", help="Skillbook name (defaults to the server alias).")
+    sb_remove = skillbooks_subparsers.add_parser("remove", help="Remove an installed skillbook")
+    sb_remove.add_argument("name", help="Installed skillbook name")
+    skillbooks_subparsers.add_parser("list", help="List installed skillbooks and their skills")
     return parser.parse_known_args()
 
 

@@ -66,6 +66,15 @@ def main() -> None:
         except Exception as exc:
             logger.error("tool-spaces command failed: %s", exc)
             raise SystemExit(1) from exc
+    if args.command == "skillbooks":
+        from reachy_mini_conversation_app.skillbooks import handle_skillbooks_command
+
+        logger = setup_logger(args.debug)
+        try:
+            raise SystemExit(handle_skillbooks_command(args))
+        except Exception as exc:
+            logger.error("skillbooks command failed: %s", exc)
+            raise SystemExit(1) from exc
     run(args)
 
 
