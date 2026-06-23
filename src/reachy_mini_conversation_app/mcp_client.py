@@ -17,7 +17,9 @@ from urllib.parse import urlparse
 if TYPE_CHECKING:
     from mcp import ClientSession
     from mcp.types import Tool as McpTool
+    from mcp.types import Resource as McpResource
     from mcp.types import CallToolResult as McpCallToolResult
+    from mcp.types import Implementation, ReadResourceResult, ServerCapabilities, ListResourcesResult
 
 
 _NAME_SEGMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -223,6 +225,26 @@ class RemoteToolSpec:
 
 
 @dataclass(frozen=True)
+class RemoteResourceSpec:
+    """App-facing representation of a remote MCP resource (SEP-2640 skills ride on these)."""
+
+    uri: str
+    name: str | None
+    description: str | None
+    mime_type: str | None
+
+    @classmethod
+    def from_mcp_resource(cls, resource: "McpResource") -> "RemoteResourceSpec":
+        """Build a spec from an MCP SDK resource descriptor."""
+        return cls(
+            uri=str(getattr(resource, "uri", "")),
+            name=(getattr(resource, "name", None) or None),
+            description=(getattr(resource, "description", None) or None),
+            mime_type=(getattr(resource, "mimeType", None) or None),
+        )
+
+
+@dataclass(frozen=True)
 class RemoteToolCallResponse:
     """Mapped result for a remote MCP tool call."""
 
@@ -277,6 +299,10 @@ class RemoteMcpToolClient:
         """Store one allowlisted server configuration and an in-memory tool cache."""
         self.server = server
         self._tool_index: dict[str, RemoteToolSpec] = {}
+        # Populated from the most recent ``initialize`` handshake (see ``_session``).
+        # Used for SEP-2640 capability detection without changing the tool path.
+        self._server_capabilities: "ServerCapabilities | None" = None
+        self._server_info: "Implementation | None" = None
 
     async def list_tool_specs(self) -> list[RemoteToolSpec]:
         """Discover remote tools and translate them into app-facing specs."""
@@ -352,6 +378,93 @@ class RemoteMcpToolClient:
             if cursor is None:
                 return tools
 
+    # ------------------------------------------------------------------
+    # SEP-2640 Resources transport (skills ride on the Resources primitive)
+    # ------------------------------------------------------------------
+
+    async def get_server_capabilities(self) -> "ServerCapabilities | None":
+        """Return the server's declared capabilities from the initialize handshake.
+
+        Opens a session (cheap; reuses the same transport as tool discovery) which
+        records ``_server_capabilities`` as a side effect. SEP-2640 servers advertise
+        the ``io.modelcontextprotocol/skills`` extension here.
+        """
+        try:
+            async with self._session():
+                pass
+        except McpDependencyError:
+            raise
+        except Exception as exc:
+            raise McpTransportError(
+                f"Failed to initialize MCP server '{self.server.alias}' at {self.server.url}: {exc}"
+            ) from exc
+        return self._server_capabilities
+
+    def server_version(self) -> str | None:
+        """Best-effort server version from the last handshake (call after a session)."""
+        return getattr(self._server_info, "version", None)
+
+    async def list_resources(self) -> list[RemoteResourceSpec]:
+        """Discover the server's resources (paginated)."""
+        try:
+            async with self._session() as session:
+                discovered = await self._list_all_resources(session)
+        except McpDependencyError:
+            raise
+        except Exception as exc:
+            raise McpTransportError(
+                f"Failed to list MCP resources from '{self.server.alias}' at {self.server.url}: {exc}"
+            ) from exc
+        return [RemoteResourceSpec.from_mcp_resource(resource) for resource in discovered]
+
+    async def read_resource(self, uri: str) -> "ReadResourceResult":
+        """Read a single resource by URI (used for ``skill://...`` SKILL.md/index/archives)."""
+        from pydantic import AnyUrl
+
+        try:
+            async with self._session() as session:
+                return await session.read_resource(AnyUrl(uri))
+        except McpDependencyError:
+            raise
+        except Exception as exc:
+            raise McpToolInvocationError(
+                f"Failed to read MCP resource '{uri}' from '{self.server.alias}': {exc}"
+            ) from exc
+
+    async def read_directory(self, uri: str, cursor: str | None = None) -> "ListResourcesResult":
+        """List the direct children of a directory resource (SEP-2640 ``resources/directory/read``).
+
+        Non-standard method with no typed wrapper in the base MCP SDK, so it is issued as a raw
+        request (``BaseSession.send_request`` serializes any pydantic model whose dump carries the
+        ``method``/``params`` shape). Callers should only use it against servers that declared
+        ``directoryRead``, and should prefer archive distribution (a single ``read_resource``) when
+        an archive form is available.
+        """
+        from pydantic import AnyUrl
+        from mcp.types import ListResourcesResult
+
+        request_model, params_model = _directory_read_models()
+        request = request_model(params=params_model(uri=AnyUrl(uri), cursor=cursor))
+        try:
+            async with self._session() as session:
+                return await session.send_request(request, ListResourcesResult)
+        except McpDependencyError:
+            raise
+        except Exception as exc:
+            raise McpToolInvocationError(
+                f"Failed to read MCP directory '{uri}' from '{self.server.alias}': {exc}"
+            ) from exc
+
+    async def _list_all_resources(self, session: "ClientSession") -> list["McpResource"]:
+        resources: list[McpResource] = []
+        cursor: str | None = None
+        while True:
+            page = await session.list_resources(cursor=cursor)
+            resources.extend(page.resources)
+            cursor = getattr(page, "nextCursor", None)
+            if cursor is None:
+                return resources
+
     @asynccontextmanager
     async def _session(self) -> AsyncIterator["ClientSession"]:
         client_session_cls, streamable_http_client = _load_mcp_sdk()
@@ -366,8 +479,37 @@ class RemoteMcpToolClient:
             async with streamable_http_client(self.server.url, http_client=http_client) as transport:
                 read_stream, write_stream, _ = transport
                 async with client_session_cls(read_stream, write_stream) as session:
-                    await session.initialize()
+                    init_result = await session.initialize()
+                    # Stash the handshake so callers can inspect declared capabilities
+                    # (SEP-2640 advertises the skills extension here) without a second round trip.
+                    self._server_capabilities = getattr(init_result, "capabilities", None)
+                    self._server_info = getattr(init_result, "serverInfo", None)
                     yield session
+
+
+_DIRECTORY_READ_MODELS: tuple[type, type] | None = None
+
+
+def _directory_read_models() -> tuple[type, type]:
+    """Lazily build the (request, params) pydantic models for ``resources/directory/read``.
+
+    Built on first use so importing this module stays free of a hard ``pydantic`` dependency
+    (only the optional ``remote_tools`` extra pulls it in, same as ``mcp``/``httpx``).
+    """
+    global _DIRECTORY_READ_MODELS
+    if _DIRECTORY_READ_MODELS is None:
+        from pydantic import AnyUrl, BaseModel
+
+        class _DirectoryReadParams(BaseModel):
+            uri: AnyUrl
+            cursor: str | None = None
+
+        class _DirectoryReadRequest(BaseModel):
+            method: str = "resources/directory/read"
+            params: _DirectoryReadParams
+
+        _DIRECTORY_READ_MODELS = (_DirectoryReadRequest, _DirectoryReadParams)
+    return _DIRECTORY_READ_MODELS
 
 
 def _index_remote_tools(specs: list[RemoteToolSpec]) -> dict[str, RemoteToolSpec]:
