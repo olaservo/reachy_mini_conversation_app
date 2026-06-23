@@ -1,3 +1,4 @@
+import time
 import random
 import asyncio
 import logging
@@ -35,7 +36,6 @@ async def _run_openai_handler_with_events(
     events: list[Any],
     *,
     movement_manager: MagicMock | None = None,
-    gradio_mode: bool = False,
     handler_setup: Callable[[OpenaiRealtimeHandler], None] | None = None,
 ) -> OpenaiRealtimeHandler:
     """Run an OpenAI realtime handler against a fixed event sequence."""
@@ -104,7 +104,7 @@ async def _run_openai_handler_with_events(
         reachy_mini=MagicMock(),
         movement_manager=movement_manager or MagicMock(),
     )
-    handler = OpenaiRealtimeHandler(deps, gradio_mode=gradio_mode)
+    handler = OpenaiRealtimeHandler(deps)
     handler.client = FakeClient()
     if handler_setup is not None:
         handler_setup(handler)
@@ -286,6 +286,29 @@ async def test_idle_signal_starts_local_tool_without_model_turn(monkeypatch: Any
 
 
 @pytest.mark.asyncio
+async def test_idle_emit_updates_idle_clock_without_refreshing_activity(monkeypatch: Any) -> None:
+    """Idle behavior should not postpone app inactivity timeout."""
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    deps.movement_manager.is_idle.return_value = True
+    handler = OpenaiRealtimeHandler(deps)
+    now = time.monotonic()
+    previous_activity_time = now - 181.0
+    previous_idle_behavior_time = now - 181.0
+    handler.last_activity_time = previous_activity_time
+    handler.last_idle_behavior_time = previous_idle_behavior_time
+    handler._response_done_event.set()
+    send_idle_signal = AsyncMock()
+    monkeypatch.setattr(handler, "send_idle_signal", send_idle_signal)
+    monkeypatch.setattr(base_rt_mod, "wait_for_item", AsyncMock(return_value=None))
+
+    await handler.emit()
+
+    send_idle_signal.assert_awaited_once()
+    assert handler.last_activity_time == previous_activity_time
+    assert handler.last_idle_behavior_time > previous_idle_behavior_time
+
+
+@pytest.mark.asyncio
 async def test_idle_tool_result_is_not_sent_to_realtime_model(monkeypatch: Any) -> None:
     """Locally selected idle tool completions should stay out of the model conversation."""
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
@@ -293,6 +316,7 @@ async def test_idle_tool_result_is_not_sent_to_realtime_model(monkeypatch: Any) 
 
     fake_item = SimpleNamespace(create=AsyncMock())
     handler.connection = SimpleNamespace(conversation=SimpleNamespace(item=fake_item))
+    handler.last_activity_time = 1.0
     safe_response_create = AsyncMock()
     monkeypatch.setattr(handler, "_safe_response_create", safe_response_create)
 
@@ -308,6 +332,7 @@ async def test_idle_tool_result_is_not_sent_to_realtime_model(monkeypatch: Any) 
 
     fake_item.create.assert_not_awaited()
     safe_response_create.assert_not_awaited()
+    assert handler.last_activity_time == 1.0
 
 
 @pytest.mark.asyncio
@@ -333,6 +358,69 @@ async def test_tool_result_followup_uses_bare_response_create(monkeypatch: Any) 
 
     fake_item.create.assert_awaited_once()
     safe_response_create.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_tool_result_waits_for_response_done_before_model_output(monkeypatch: Any) -> None:
+    """Tool output should wait until the function-call item is committed by response.done."""
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    handler = OpenaiRealtimeHandler(deps)
+
+    fake_item = SimpleNamespace(create=AsyncMock())
+    handler.connection = SimpleNamespace(conversation=SimpleNamespace(item=fake_item))
+    handler._response_done_event.clear()
+    safe_response_create = AsyncMock()
+    monkeypatch.setattr(handler, "_safe_response_create", safe_response_create)
+
+    task = asyncio.create_task(
+        handler._handle_tool_result(
+            ToolNotification(
+                id="call_weather",
+                tool_name="weather",
+                is_idle_tool_call=False,
+                status=ToolState.COMPLETED,
+                result={"forecast": "sunny"},
+            )
+        )
+    )
+    await asyncio.sleep(0)
+
+    fake_item.create.assert_not_awaited()
+
+    handler._response_done_event.set()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    fake_item.create.assert_awaited_once()
+    safe_response_create.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_tool_result_timeout_does_not_force_response_done(monkeypatch: Any) -> None:
+    """A tool-result wait timeout should not lie about response lifecycle state."""
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    handler = OpenaiRealtimeHandler(deps)
+
+    fake_item = SimpleNamespace(create=AsyncMock())
+    handler.connection = SimpleNamespace(conversation=SimpleNamespace(item=fake_item))
+    handler._response_done_event.clear()
+    safe_response_create = AsyncMock()
+    monkeypatch.setattr(handler, "_safe_response_create", safe_response_create)
+    monkeypatch.setattr(handler, "_response_done_timeout", lambda: 0.01)
+
+    await handler._handle_tool_result(
+        ToolNotification(
+            id="call_weather",
+            tool_name="weather",
+            is_idle_tool_call=False,
+            status=ToolState.COMPLETED,
+            result={"forecast": "sunny"},
+        )
+    )
+
+    assert not handler._response_done_event.is_set()
+    fake_item.create.assert_not_awaited()
+    safe_response_create.assert_not_awaited()
+    assert not handler.output_queue.empty()
 
 
 @pytest.mark.asyncio
@@ -412,13 +500,31 @@ async def test_apply_personality_preserves_manual_voice_override(monkeypatch: An
     restart = AsyncMock()
     monkeypatch.setattr(handler, "_restart_session", restart)
 
-    status = await handler.apply_personality("example")
+    status = await handler.apply_personality("mars_rover")
 
     assert status == "Applied personality and restarted realtime session."
     assert handler.get_current_voice() == "marin"
     restart.assert_awaited_once()
     session = update.await_args.kwargs["session"]
     assert session["audio"]["output"]["voice"] == "marin"
+
+
+@pytest.mark.asyncio
+async def test_apply_personality_forces_tool_registry_reload(monkeypatch: Any) -> None:
+    """Applying a profile must rebuild the tool roster even when the profile name is unchanged."""
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=None: "cedar")
+    monkeypatch.setattr("reachy_mini_conversation_app.config.set_custom_profile", lambda _profile: None)
+    reload = MagicMock()
+    monkeypatch.setattr(ct_mod, "initialize_tools", reload)
+
+    handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler.connection = SimpleNamespace(session=SimpleNamespace(update=AsyncMock()))
+    monkeypatch.setattr(handler, "_restart_session", AsyncMock())
+
+    await handler.apply_personality("example")
+
+    reload.assert_called_once_with(force=True)
 
 
 def test_handler_uses_startup_voice_at_startup(monkeypatch: Any) -> None:
@@ -584,32 +690,6 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
     # Optional: confirm we logged the unexpected close once
     warnings = [r for r in caplog.records if r.levelname == "WARNING" and "closed unexpectedly" in r.msg]
     assert len(warnings) == 1
-
-
-@pytest.mark.asyncio
-async def test_start_up_openai_gradio_collects_textbox_api_key(monkeypatch: Any) -> None:
-    """OpenAI should own Gradio textbox credential collection."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
-    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
-
-    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
-    handler = rt_mod.OpenaiRealtimeHandler(deps, gradio_mode=True)
-    handler.latest_args = ["profile", "voice", "unused", "sk-textbox-secret"]
-
-    build_client = AsyncMock(return_value=MagicMock())
-    run_realtime_session = AsyncMock(return_value=None)
-    wait_for_args = AsyncMock(return_value=None)
-
-    monkeypatch.setattr(handler, "_build_realtime_client", build_client)
-    monkeypatch.setattr(handler, "_run_realtime_session", run_realtime_session)
-    monkeypatch.setattr(handler, "wait_for_args", wait_for_args)
-
-    await handler.start_up()
-
-    wait_for_args.assert_awaited_once()
-    build_client.assert_awaited_once_with()
-    run_realtime_session.assert_awaited_once()
-    assert handler._provided_api_key == "sk-textbox-secret"
 
 
 @pytest.mark.asyncio
@@ -881,7 +961,7 @@ async def test_response_sender_retries_on_active_response_rejection(monkeypatch:
 
     # 400 near-simultaneous tool results coalesce into far fewer response.create sends.
     N_TOOL_RESULTS = 400
-    REJECT_EVERY = 4  # deterministically reject every 4th send to exercise retry
+    INTENTIONAL_REJECTIONS = 1  # deterministically exercise the retry path even when sends coalesce heavily
 
     response_create_log: list[tuple[int, dict[str, Any]]] = []
     handler_ref: list[rt_mod.OpenaiRealtimeHandler] = []
@@ -923,6 +1003,7 @@ async def test_response_sender_retries_on_active_response_rejection(monkeypatch:
         def __init__(self) -> None:
             self._call_count = 0
             self._serialization_violations: list[int] = []
+            self._intentional_rejections_remaining = INTENTIONAL_REJECTIONS
 
         async def create(self, **kwargs: Any) -> None:
             self._call_count += 1
@@ -951,9 +1032,12 @@ async def test_response_sender_retries_on_active_response_rejection(monkeypatch:
                 await event_queue.put(FakeEvent("response.done", response=MagicMock()))
                 return
 
-            # Intentional rejections (simulating a race where another
-            # response sneaks in right after our check).
-            if n % REJECT_EVERY == 0:
+            # Intentional rejection (simulating a race where another response
+            # sneaks in right after our check). Rejecting the first eligible
+            # send keeps the retry assertion deterministic on event loops that
+            # coalesce the tool-result burst into only a few response.create calls.
+            if self._intentional_rejections_remaining > 0:
+                self._intentional_rejections_remaining -= 1
                 await event_queue.put(
                     FakeEvent(
                         "error",
