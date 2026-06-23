@@ -483,6 +483,16 @@ def _load_profile_tools(tool_names: list[str], remote_tool_names: set[str]) -> L
     return loaded_tool_classes
 
 
+def _has_installed_skillbooks(instance_path: str | Path | None) -> bool:
+    """Whether any SEP-2640 skillbook is installed (gates exposing the ``read_skill`` tool)."""
+    try:
+        from reachy_mini_conversation_app import skillbooks
+
+        return bool(skillbooks.load_installed_skill_manifests(instance_path))
+    except Exception:  # noqa: BLE001 - skills are additive; never block tool init.
+        return False
+
+
 def initialize_tools(instance_path: str | Path | None = None, *, force: bool = False) -> None:
     """Populate or refresh the active-profile tool registry.
 
@@ -507,6 +517,9 @@ def initialize_tools(instance_path: str | Path | None = None, *, force: bool = F
         logger.info("Reloading tool registry for active profile/configuration change.")
 
     tool_names = _read_profile_tool_names()
+    if "read_skill" not in tool_names and _has_installed_skillbooks(effective_instance_path):
+        # Expose the SEP-2640 skill loader whenever any skillbook is installed, regardless of profile.
+        tool_names.append("read_skill")
     remote_tools = _resolve_remote_tools(tool_names, effective_instance_path)
     remote_tool_names = {tool.name for tool in remote_tools}
     loaded_tool_classes = _load_profile_tools(tool_names, remote_tool_names)
