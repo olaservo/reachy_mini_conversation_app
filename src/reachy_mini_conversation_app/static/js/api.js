@@ -95,6 +95,8 @@ const ERROR_MESSAGES = Object.freeze({
   missing_hf_session_url: "Couldn't reach the Hugging Face Space. Check it's running.",
   invalid_name: "Enter a valid profile name.",
   missing_voice: "Choose a voice first.",
+  empty_token: "Enter a token first.",
+  unknown_server: "That MCP server is no longer configured.",
   profile_locked: "Profile switching is locked by the administrator.",
   loop_unavailable: "Reachy is still starting up. Try again in a moment.",
 });
