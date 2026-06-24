@@ -1,4 +1,4 @@
-/** Modal to create or edit a personality (name + instructions + tools). Returns { name, instructions, tools } or null. */
+/** Modal to create or edit a personality. Returns { name, instructions, greeting, tools } or null. */
 
 import { h } from "../ui.js";
 
@@ -7,11 +7,11 @@ const NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 /**
  * @param {{
  *   mode?: "create" | "edit",
- *   initial?: { name?: string, instructions?: string, enabledTools?: string[] },
+ *   initial?: { name?: string, instructions?: string, greeting?: string, enabledTools?: string[] },
  *   availableTools?: string[],
  *   signal?: AbortSignal,
  * }} [options]
- * @returns {Promise<{ name: string, instructions: string, tools: string[] }|null>}
+ * @returns {Promise<{ name: string, instructions: string, greeting: string, tools: string[] }|null>}
  */
 export function openProfileModal({ mode = "create", initial = {}, availableTools = [], signal } = {}) {
   const isEdit = mode === "edit";
@@ -98,6 +98,7 @@ export function openProfileModal({ mode = "create", initial = {}, availableTools
       // The name is locked in edit mode (renaming would mean a new profile dir), so keep the original.
       const name = isEdit ? String(initial.name || "") : String(formData.get("name") || "").trim();
       const instructions = String(formData.get("instructions") || "").trim();
+      const greeting = String(formData.get("greeting") || "").trim();
 
       if (!isEdit) {
         if (!name) return showError(errorBox, "Please pick a name.");
@@ -108,7 +109,7 @@ export function openProfileModal({ mode = "create", initial = {}, availableTools
       if (!instructions) return showError(errorBox, "Please write some instructions.");
 
       const tools = Array.from(dialog.querySelectorAll('input[name="tool"]:checked')).map((el) => el.value);
-      close({ name, instructions, tools });
+      close({ name, instructions, greeting, tools });
     });
   });
 }
@@ -178,6 +179,21 @@ function buildDialog({ isEdit, initial, toolChoices, isToolChecked }) {
             class: "modal__textarea",
           },
           initial.instructions || ""
+        )
+      ),
+      h(
+        "label",
+        { class: "modal__field" },
+        h("span", { class: "modal__label" }, "Startup greeting prompt"),
+        h(
+          "textarea",
+          {
+            name: "greeting",
+            rows: "3",
+            placeholder: "Start the conversation with a short greeting in character.",
+            class: "modal__textarea",
+          },
+          initial.greeting || ""
         )
       ),
       buildToolsField(toolChoices, isToolChecked),

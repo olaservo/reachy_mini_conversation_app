@@ -122,6 +122,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
       const saveResult = await savePersonality({
         name: created.name,
         instructions: created.instructions,
+        greeting: created.greeting || null,
         tools_text: created.tools.join("\n"),
         voice: "", // falls back to backend default; user can change in Settings
       });
@@ -157,6 +158,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
       initial: {
         name,
         instructions: data?.instructions || "",
+        greeting: data?.greeting || "",
         enabledTools: data?.enabled_tools || [],
       },
       signal,
@@ -169,6 +171,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
         // Strip the prefix: the save endpoint always writes under user_personalities/<name>.
         name: stripUserPrefix(name),
         instructions: edited.instructions,
+        greeting: edited.greeting,
         tools_text: edited.tools.join("\n"),
         voice: data?.voice || "", // keep the profile's existing voice
       });
