@@ -195,6 +195,13 @@ def _resolve_auth_headers(server: InstalledMcpServer) -> dict[str, str]:
             raise RuntimeError(
                 f"Env var '{server.auth.token_env}' for MCP server '{server.alias}' is not set or empty."
             )
+        if server.url.lower().startswith("http://"):
+            logger.warning(
+                "MCP server '%s' sends its bearer token over plain HTTP (%s); the token is "
+                "visible to anyone on the local network. Prefer HTTPS.",
+                server.alias,
+                server.url,
+            )
         return {"Authorization": f"Bearer {token}"}
     # Unreachable: McpServerAuth validates the type, but keep this defensive.
     raise RuntimeError(f"Unsupported MCP auth type '{server.auth.type}' for server '{server.alias}'.")

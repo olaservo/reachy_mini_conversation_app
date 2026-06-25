@@ -17,6 +17,7 @@ from reachy_mini_conversation_app.mcp_servers import (
     InstalledMcpServer,
     InstalledToolSpaceTool,
     InstalledMcpServersManifest,
+    build_server_config,
     read_mcp_servers,
     write_mcp_servers,
     find_server_token_env,
@@ -282,6 +283,34 @@ def test_find_server_token_env(tmp_path: Path) -> None:
     )
     assert find_server_token_env(tmp_path, "example") == TOKEN_ENV
     assert find_server_token_env(tmp_path, "nope") is None
+
+
+def test_build_server_config_warns_on_bearer_over_plain_http(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Attaching a bearer token to a plain-HTTP endpoint should warn about cleartext exposure."""
+    monkeypatch.setenv(TOKEN_ENV, TOKEN_VALUE)
+    http_server = InstalledMcpServer(
+        alias="example", url=DEMO_URL, auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV)
+    )
+    with caplog.at_level("WARNING", logger=mcp_servers_mod.logger.name):
+        config = build_server_config(http_server)
+    assert config.headers["Authorization"] == f"Bearer {TOKEN_VALUE}"
+    assert any("plain HTTP" in record.getMessage() for record in caplog.records)
+
+
+def test_build_server_config_no_warning_over_https(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An HTTPS endpoint carries the token encrypted and must not warn."""
+    monkeypatch.setenv(TOKEN_ENV, TOKEN_VALUE)
+    https_server = InstalledMcpServer(
+        alias="example", url="https://example.com/mcp", auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV)
+    )
+    with caplog.at_level("WARNING", logger=mcp_servers_mod.logger.name):
+        config = build_server_config(https_server)
+    assert config.headers["Authorization"] == f"Bearer {TOKEN_VALUE}"
+    assert not any("plain HTTP" in record.getMessage() for record in caplog.records)
 
 
 def _reload_core_tools() -> ModuleType:
