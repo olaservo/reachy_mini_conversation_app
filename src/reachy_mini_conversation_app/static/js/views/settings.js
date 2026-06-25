@@ -357,9 +357,9 @@ function buildMcpSection({ onSaved } = {}) {
           status.classList.remove("is-error");
           status.textContent = `Saving token for ${server.alias}…`;
           try {
-            await saveMcpServerToken(server.alias, token);
+            const result = await saveMcpServerToken(server.alias, token);
             input.value = "";
-            status.textContent = `Saved token for ${server.alias}.`;
+            status.textContent = result?.message || `Saved token for ${server.alias}.`;
             await onSaved?.();
           } catch (error) {
             status.classList.add("is-error");

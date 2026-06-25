@@ -738,7 +738,20 @@ class LocalStream:
             if not token_env:
                 return JSONResponse({"ok": False, "error": "unknown_server"}, status_code=404)
             self._persist_env_value(token_env, token)
-            return JSONResponse({"ok": True, **_status_payload()})
+
+            # Re-resolve tools so a server that failed discovery at startup (missing
+            # token) now loads, then reconnect the live backend so the new tools are
+            # exposed to the running session. Without this the saved token only takes
+            # effect on the next unrelated force-rebuild (e.g. a personality switch).
+            message = f"Saved token for {alias}."
+            try:
+                initialize_tools(force=True)
+            except Exception as exc:
+                logger.warning("Could not rebuild tools after saving MCP token for '%s': %s", alias, exc)
+            if self._can_rebuild_handler():
+                self._mark_restart_requested("mcp_server_token_changed")
+                message = f"Saved token for {alias}. Reconnecting to load its tools."
+            return JSONResponse({"ok": True, "message": message, **_status_payload()})
 
         @self._settings_app.post("/backend_config")
         def _set_backend(payload: BackendPayload) -> JSONResponse:
