@@ -38,7 +38,7 @@ EXAMPLE_TOOL = "example__DoThing"
 
 
 async def _mock_list_tool_specs(self: object) -> list[RemoteToolSpec]:
-    """Return fake HA tools namespaced to whatever alias the client was configured with."""
+    """Return fake remote tools namespaced to whatever alias the client was configured with."""
     alias = self.server.alias  # type: ignore[attr-defined]
     schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": []}
     return [

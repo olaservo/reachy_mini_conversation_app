@@ -247,7 +247,7 @@ def list_token_requirements(instance_path: str | Path | None) -> list[McpTokenRe
 def find_server_token_env(instance_path: str | Path | None, alias: str) -> str | None:
     """Return the token env-var name for a configured MCP server alias, or None."""
     for server in read_mcp_servers(instance_path).servers:
-        if server.alias == alias and server.auth is not None:
+        if server.alias == alias and server.auth is not None and server.auth.type == BEARER_AUTH_TYPE:
             return server.auth.token_env
     return None
 
