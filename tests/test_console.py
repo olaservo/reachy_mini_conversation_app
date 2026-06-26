@@ -932,6 +932,9 @@ def test_mcp_server_token_persists_and_rebuilds_tools(
     data = response.json()
     assert data["ok"] is True
     assert "example" in data["message"]
+    # No handler_factory was provided, so tools only load after a full restart; the
+    # message must say so rather than implying the token took effect immediately.
+    assert "restart" in data["message"].lower()
 
     # The token was persisted to the instance .env and exported to the environment...
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")

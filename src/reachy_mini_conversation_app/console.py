@@ -743,7 +743,9 @@ class LocalStream:
             # token) now loads, then reconnect the live backend so the new tools are
             # exposed to the running session. Without this the saved token only takes
             # effect on the next unrelated force-rebuild (e.g. a personality switch).
-            message = f"Saved token for {alias}."
+            # When the live handler can't be rebuilt in place, the refreshed tools
+            # only reach a running session after a full restart, so say so.
+            message = f"Saved token for {alias}. Restart the app to load its tools."
             try:
                 initialize_tools(force=True)
             except Exception as exc:

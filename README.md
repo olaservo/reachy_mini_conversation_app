@@ -425,7 +425,9 @@ Notes:
   listing those names in a profile's `tools.txt`.
 - **Auth / secrets:** pass `--token-env NAME` to send `Authorization: Bearer <value>`, where the
   value is read from the named environment variable **at runtime**. The token value is **never**
-  written to disk or logged — only the env-var name is stored.
+  written to disk or logged — only the env-var name is stored. Give each server its **own** env var:
+  the token is keyed by env-var name, so two servers sharing one name share the secret (saving a
+  token for one overwrites the other's, and the settings UI shows both as set).
 - **Local-network HTTP:** plain `http://` is allowed for loopback, private (e.g. `10.x`,
   `192.168.x`), link-local, and `*.local` hosts. Public hosts must use `https://`.
 - The configuration is written to:
