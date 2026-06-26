@@ -77,7 +77,7 @@ def _is_local_http_host(host: str) -> bool:
     """Return whether plain HTTP is acceptable for this host (local network only)."""
     if not host:
         return False
-    if host in _LOCAL_HTTP_HOSTS or host == "localhost" or host.endswith(".localhost"):
+    if host in _LOCAL_HTTP_HOSTS or host.endswith(".localhost"):  # "localhost" is already in the set
         return True
     if host.endswith(".local"):  # mDNS, e.g. my-mcp-server.local
         return True

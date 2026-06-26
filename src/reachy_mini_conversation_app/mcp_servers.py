@@ -30,7 +30,7 @@ from reachy_mini_conversation_app.tool_spaces import (
     TERMINAL_EXTERNAL_CONTENT_DIRECTORY,
     InstalledToolSpaceTool,
     _append_tools_to_profile,
-    read_installed_tool_spaces,
+    installed_space_aliases,
 )
 
 
@@ -162,6 +162,14 @@ def read_mcp_servers(instance_path: str | Path | None) -> InstalledMcpServersMan
     if not isinstance(version, int):
         raise RuntimeError(f"Invalid MCP servers payload in {manifest_path}: 'version' must be an int.")
     return InstalledMcpServersManifest(version=version, servers=servers)
+
+
+def configured_server_aliases(instance_path: str | Path | None) -> set[str]:
+    """Aliases claimed by configured MCP servers, for cross-source collision checks. Empty on read failure."""
+    try:
+        return {server.alias for server in read_mcp_servers(instance_path).servers}
+    except Exception:
+        return set()
 
 
 def write_mcp_servers(instance_path: str | Path | None, manifest: InstalledMcpServersManifest) -> Path:
@@ -330,11 +338,7 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
         if any(existing.alias == server.alias for existing in manifest.servers):
             logger.error("MCP server alias '%s' is already configured. Remove it first to reconfigure.", server.alias)
             return 1
-        try:
-            space_aliases = {space.alias for space in read_installed_tool_spaces(instance_path).spaces}
-        except Exception:
-            space_aliases = set()
-        if server.alias in space_aliases:
+        if server.alias in installed_space_aliases(instance_path):
             logger.error(
                 "Cannot add MCP server '%s': its alias collides with an installed tool space. "
                 "Choose a different alias.",

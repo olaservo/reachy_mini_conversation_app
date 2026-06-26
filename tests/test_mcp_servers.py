@@ -3,6 +3,7 @@ import sys
 import json
 import importlib
 from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock
 from pathlib import Path
 
 import pytest
@@ -368,3 +369,69 @@ def test_generic_mcp_tool_registers_in_active_profile(
 
     assert EXAMPLE_TOOL in core_tools_mod.ALL_TOOLS
     assert EXAMPLE_TOOL in {spec["name"] for spec in core_tools_mod.get_tool_specs()}
+
+
+@pytest.mark.asyncio
+async def test_generic_mcp_tool_dispatch_tags_mcp_source_and_omits_space_slug(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dispatching a generic MCP tool tags the result with its mcp: source and never leaks the Space-only tool_space_slug field."""
+    external_profiles_root = tmp_path / "external_profiles"
+    profile_dir = external_profiles_root / "demo_profile"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "instructions.txt").write_text("hi\n", encoding="utf-8")
+    (profile_dir / "tools.txt").write_text(f"{EXAMPLE_TOOL}\n", encoding="utf-8")
+
+    client = AsyncMock()
+    client.call_tool.return_value = {
+        "status": "ok",
+        "server_alias": "example",
+        "remote_tool_name": "DoThing",
+        "namespaced_tool_name": EXAMPLE_TOOL,
+        "content_blocks": [],
+        "text": "done",
+    }
+
+    server = InstalledMcpServer(alias="example", url=DEMO_URL)
+    monkeypatch.setattr(
+        mcp_servers_mod,
+        "read_mcp_servers",
+        lambda instance_path: InstalledMcpServersManifest(servers=[server]),
+    )
+    monkeypatch.setattr(
+        mcp_servers_mod,
+        "resolve_mcp_server_sync",
+        lambda srv: ResolvedMcpServer(
+            alias=srv.alias,
+            url=srv.url,
+            tools=[
+                InstalledToolSpaceTool(
+                    local_name=EXAMPLE_TOOL,
+                    client_tool_name=EXAMPLE_TOOL,
+                    remote_name="DoThing",
+                    description="Turn a device on",
+                    parameters_schema={"type": "object", "properties": {}, "required": []},
+                )
+            ],
+            client=client,
+        ),
+    )
+
+    monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", "demo_profile")
+    monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", external_profiles_root)
+    monkeypatch.setattr(config_mod.config, "TOOLS_DIRECTORY", None)
+    monkeypatch.setattr(config_mod.config, "AUTOLOAD_EXTERNAL_TOOLS", False)
+
+    core_tools_mod = _reload_core_tools()
+
+    result = await core_tools_mod.dispatch_tool_call(
+        EXAMPLE_TOOL,
+        json.dumps({"name": "lamp"}),
+        core_tools_mod.ToolDependencies(reachy_mini=object(), movement_manager=object()),
+    )
+
+    # Generic MCP results carry the mcp: origin and must not gain the Space-only field.
+    assert result["remote_source"] == "mcp:example"
+    assert "tool_space_slug" not in result
+    assert result["namespaced_tool_name"] == EXAMPLE_TOOL
+    client.call_tool.assert_awaited_once_with(EXAMPLE_TOOL, {"name": "lamp"})
