@@ -197,6 +197,39 @@ def test_tool_spaces_add_rejects_alias_collision(
     )
 
 
+def test_tool_spaces_add_rejects_alias_collision_with_mcp_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Space whose alias collides with a configured MCP server must be rejected."""
+    from reachy_mini_conversation_app.mcp_servers import (
+        InstalledMcpServer,
+        InstalledMcpServersManifest,
+        write_mcp_servers,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "reachy_mini_conversation_app.tool_spaces.HfApi.space_info",
+        lambda self, slug, **kwargs: _mock_public_space_info(slug),
+    )
+    monkeypatch.setattr(
+        "reachy_mini_conversation_app.tool_spaces.RemoteMcpToolClient.list_tool_specs",
+        _mock_list_tool_specs,
+    )
+
+    # Pre-configure an MCP server using the alias the Space would normalize to.
+    write_mcp_servers(
+        None,
+        InstalledMcpServersManifest(
+            servers=[InstalledMcpServer(alias=SEARCH_ALIAS, url="http://192.168.1.50:8000/mcp")]
+        ),
+    )
+
+    assert _run_cli(monkeypatch, ["app", "tool-spaces", "add", SEARCH_SPACE_SLUG, "--install-only"]) == 1
+    assert read_installed_tool_spaces(None).spaces == []
+
+
 def _setup_profile(tmp_path: Path, profile: str, existing_tools: list[str] | None = None) -> Path:
     """Create a profile directory with an optional tools.txt."""
     profile_dir = tmp_path / profile

@@ -878,3 +878,107 @@ def test_local_stream_launch_waits_for_manual_openai_key_without_download(
     init_settings_ui.assert_called_once()
     media.start_recording.assert_not_called()
     media.start_playing.assert_not_called()
+
+
+def _configure_mcp_server(tmp_path: Path, token_env: str) -> None:
+    """Write a manifest with one bearer-auth MCP server for token-endpoint tests."""
+    from reachy_mini_conversation_app.mcp_servers import (
+        McpServerAuth,
+        InstalledMcpServer,
+        InstalledMcpServersManifest,
+        write_mcp_servers,
+    )
+
+    write_mcp_servers(
+        tmp_path,
+        InstalledMcpServersManifest(
+            servers=[
+                InstalledMcpServer(
+                    alias="example",
+                    url="http://192.168.1.50:8000/mcp",
+                    auth=McpServerAuth(type="bearer", token_env=token_env),
+                )
+            ]
+        ),
+    )
+
+
+def test_mcp_server_token_persists_and_rebuilds_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Saving a token persists it, reports token_set, and rebuilds the tool registry."""
+    token_env = "EXAMPLE_MCP_TOKEN"
+    monkeypatch.delenv(token_env, raising=False)
+    _configure_mcp_server(tmp_path, token_env)
+
+    # Stub the rebuild so the endpoint doesn't attempt real network discovery.
+    rebuilt = MagicMock()
+    monkeypatch.setattr("reachy_mini_conversation_app.console.initialize_tools", rebuilt)
+
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+    client = TestClient(app)
+
+    # Before saving, the status payload reports the server with no token set.
+    before = client.get("/status").json()["mcp_servers"]
+    assert before == [{"alias": "example", "token_env": token_env, "token_set": False}]
+
+    response = client.post("/mcp_server_token", json={"alias": "example", "token": "secret-token"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert "example" in data["message"]
+
+    # The token was persisted to the instance .env and exported to the environment...
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert f"{token_env}=secret-token" in env_text
+    # ...and the tool registry was rebuilt so a previously-failed server can now load.
+    rebuilt.assert_called_once_with(force=True)
+
+    # The follow-up status now reflects the saved token.
+    after = client.get("/status").json()["mcp_servers"]
+    assert after == [{"alias": "example", "token_env": token_env, "token_set": True}]
+
+
+def test_mcp_server_token_rejects_unknown_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Posting a token for an unconfigured alias returns 404 unknown_server."""
+    monkeypatch.delenv("EXAMPLE_MCP_TOKEN", raising=False)
+    _configure_mcp_server(tmp_path, "EXAMPLE_MCP_TOKEN")
+    monkeypatch.setattr("reachy_mini_conversation_app.console.initialize_tools", MagicMock())
+
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+
+    response = TestClient(app).post("/mcp_server_token", json={"alias": "nope", "token": "secret"})
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "unknown_server"
+
+
+def test_mcp_server_token_rejects_empty_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty/whitespace token is rejected before touching the environment."""
+    monkeypatch.delenv("EXAMPLE_MCP_TOKEN", raising=False)
+    _configure_mcp_server(tmp_path, "EXAMPLE_MCP_TOKEN")
+    monkeypatch.setattr("reachy_mini_conversation_app.console.initialize_tools", MagicMock())
+
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+
+    response = TestClient(app).post("/mcp_server_token", json={"alias": "example", "token": "   "})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "empty_token"

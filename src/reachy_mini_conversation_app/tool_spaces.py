@@ -324,6 +324,24 @@ def handle_tool_spaces_command(args: argparse.Namespace, *, instance_path: str |
                 )
                 return 1
 
+            # A Space and a generic MCP server must not share an alias: both would
+            # claim the same '<alias>__*' tool namespace, and the tool registry
+            # rejects duplicate tool names (failing to load the whole profile).
+            try:
+                from reachy_mini_conversation_app.mcp_servers import read_mcp_servers
+
+                mcp_aliases = {server.alias for server in read_mcp_servers(instance_path).servers}
+            except Exception:
+                mcp_aliases = set()
+            if resolved_space.alias in mcp_aliases:
+                logger.error(
+                    "Cannot install '%s': its local alias '%s' collides with a configured MCP server. "
+                    "Remove that MCP server first, or rename the Space to get a distinct alias.",
+                    resolved_space.slug,
+                    resolved_space.alias,
+                )
+                return 1
+
             updated_spaces = sorted(
                 [*manifest.spaces, InstalledToolSpace(slug=resolved_space.slug, alias=resolved_space.alias)],
                 key=lambda space: space.slug,
