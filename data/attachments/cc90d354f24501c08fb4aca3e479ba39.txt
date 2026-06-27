@@ -1,0 +1,2 @@
+2026-06-27 14:46:43,832 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: slow (id=c1)
+2026-06-27 14:46:43,882 INFO reachy_mini_conversation_app.tools.background_tool_manager:250 | Cancelled tool: slow (id=slow-c1-100.374245547)

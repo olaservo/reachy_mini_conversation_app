@@ -1,0 +1,2 @@
+2026-06-27 14:46:45,023 INFO reachy_mini_conversation_app.tools.play_emotion:264 | Tool call: play_emotion emotion=contento
+2026-06-27 14:46:45,023 INFO reachy_mini_conversation_app.tools.play_emotion:277 | play_emotion: 'contento' did not resolve; using random curated
