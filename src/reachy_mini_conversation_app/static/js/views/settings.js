@@ -7,6 +7,7 @@ import {
   getStatus,
   listVoices,
   saveBackendConfig,
+  saveMcpServerToken,
   untilReady,
 } from "../api.js";
 import { h } from "../ui.js";
@@ -28,9 +29,12 @@ export async function mountSettingsView({ outlet, signal }) {
   const connectionSection = buildConnectionSection({
     onSaved: () =>
       Promise.all([
-        refreshStatus({ statusSection, connectionSection, signal }),
+        refreshStatus({ statusSection, connectionSection, mcpSection, signal }),
         refreshVoices({ voiceSection, signal }),
       ]),
+  });
+  const mcpSection = buildMcpSection({
+    onSaved: () => refreshStatus({ statusSection, connectionSection, mcpSection, signal }),
   });
   const voiceSection = buildVoiceSection();
   const statusSection = buildStatusSection();
@@ -45,13 +49,14 @@ export async function mountSettingsView({ outlet, signal }) {
       h("p", { class: "view-subtitle" }, "Connection and voice for Reachy Mini.")
     ),
     connectionSection.element,
+    mcpSection.element,
     voiceSection.element,
     statusSection.element
   );
   outlet.replaceChildren(view);
 
   await Promise.all([
-    refreshStatus({ statusSection, connectionSection, signal }),
+    refreshStatus({ statusSection, connectionSection, mcpSection, signal }),
     refreshVoices({ voiceSection, signal }),
   ]);
 }
@@ -228,6 +233,92 @@ function buildVoiceSection() {
   };
 }
 
+function buildMcpSection({ onSaved } = {}) {
+  const list = h("div", { class: "settings-form" });
+  const status = h("p", { class: "settings-status", role: "status", "aria-live": "polite" });
+  const element = h(
+    "section",
+    { class: "settings-section", hidden: true },
+    h("h2", { class: "settings-section-title" }, "MCP server tokens"),
+    h(
+      "p",
+      { class: "settings-hint" },
+      "Some connected MCP servers need an access token. Paste it once and it is stored " +
+        "locally in this instance's .env; it is never uploaded."
+    ),
+    list,
+    status
+  );
+
+  // Only rebuild when the server set or saved-state changes, so a background status
+  // refresh doesn't clobber a token the user is in the middle of typing.
+  let signature = null;
+
+  function render(payload) {
+    const servers = Array.isArray(payload?.mcp_servers) ? payload.mcp_servers : [];
+    if (servers.length === 0) {
+      element.hidden = true;
+      signature = null;
+      return;
+    }
+    element.hidden = false;
+
+    const nextSignature = JSON.stringify(servers.map((s) => [s.alias, !!s.token_set]));
+    if (nextSignature === signature) return;
+    signature = nextSignature;
+
+    list.replaceChildren(
+      ...servers.map((server) => {
+        const input = h("input", {
+          type: "password",
+          autocomplete: "off",
+          class: "settings-input",
+          placeholder: server.token_set
+            ? "•••••• (saved — paste to replace)"
+            : `token for ${server.token_env}`,
+        });
+        const button = h(
+          "button",
+          { type: "button", class: "btn btn--primary" },
+          server.token_set ? "Replace token" : "Save token"
+        );
+
+        button.addEventListener("click", async () => {
+          const token = (input.value || "").trim();
+          if (!token) {
+            status.classList.add("is-error");
+            status.textContent = `Enter a token for ${server.alias}.`;
+            return;
+          }
+          button.disabled = true;
+          status.classList.remove("is-error");
+          status.textContent = `Saving token for ${server.alias}…`;
+          try {
+            const result = await saveMcpServerToken(server.alias, token);
+            input.value = "";
+            status.textContent = result?.message || `Saved token for ${server.alias}.`;
+            await onSaved?.();
+          } catch (error) {
+            status.classList.add("is-error");
+            status.textContent = `Could not save token for ${server.alias}: ${describeError(error)}`;
+          } finally {
+            button.disabled = false;
+          }
+        });
+
+        return h(
+          "label",
+          { class: "settings-field" },
+          h("span", { class: "settings-label" }, server.alias),
+          h("div", { class: "settings-field-row" }, input, button)
+        );
+      })
+    );
+  }
+
+  return { element, render };
+}
+
 function buildStatusSection() {
   const list = h("dl", { class: "settings-status-grid" });
   const element = h(
@@ -277,12 +368,13 @@ function formatHfTarget(payload) {
   return `${host}:${port || DEFAULT_HF_PORT}`;
 }
 
-async function refreshStatus({ statusSection, connectionSection, signal }) {
+async function refreshStatus({ statusSection, connectionSection, mcpSection, signal }) {
   try {
     const payload = await untilReady(getStatus, signal);
     if (signal.aborted) return;
     statusSection.render(payload);
     connectionSection.syncFromStatus(payload);
+    mcpSection.render(payload);
   } catch {
     // Status panel just stays empty; not critical for the rest of the UI.
   }

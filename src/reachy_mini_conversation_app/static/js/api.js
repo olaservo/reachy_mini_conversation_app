@@ -79,6 +79,9 @@ export const deletePersonality = (name) =>
 export const getMicState = () => request("GET", `${API_PREFIX}/mic`);
 export const setMicMuted = (muted) => request("POST", `${API_PREFIX}/mic`, { body: { muted } });
 
+export const saveMcpServerToken = (alias, token) =>
+  request("POST", `${API_PREFIX}/mcp_server_token`, { body: { alias, token } });
+
 export const listVoices = () => request("GET", `${API_PREFIX}/voices`);
 export const getCurrentVoice = () => request("GET", `${API_PREFIX}/voices/current`);
 export const applyVoice = (voice) =>
@@ -99,6 +102,8 @@ const ERROR_MESSAGES = Object.freeze({
   profile_in_use: "This personality is active or set to load at startup. Switch to another one first.",
   not_deletable: "This personality can't be deleted.",
   loop_unavailable: "Reachy is still starting up. Try again in a moment.",
+  empty_token: "Enter a token first.",
+  unknown_server: "That MCP server is no longer configured.",
 });
 
 /** Map a thrown error to user-facing copy, falling back to its raw message. */

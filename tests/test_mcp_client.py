@@ -27,6 +27,41 @@ def test_validate_http_mcp_url_rejects_non_local_plain_http() -> None:
         validate_http_mcp_url("http://example.com/mcp")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000/mcp",
+        "http://localhost:8000/mcp",
+        "http://dev.localhost:8000/mcp",
+        "http://[::1]:8000/mcp",
+        "http://192.168.1.50:8000/mcp",
+        "http://10.0.0.5/mcp",
+        "http://172.16.0.1/mcp",
+        "http://169.254.10.10/mcp",
+        "http://my-mcp-server.local:8000/mcp",
+        "https://example.com/mcp",
+    ],
+)
+def test_validate_http_mcp_url_accepts_local_network_endpoints(url: str) -> None:
+    """Plain HTTP is fine on the local network (loopback, private, link-local, mDNS); HTTPS always is."""
+    assert validate_http_mcp_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.com/mcp",
+        "http://8.8.8.8/mcp",
+        "http://my-server.example.org:8000/mcp",
+        "http://intranet-host:8000/mcp",
+    ],
+)
+def test_validate_http_mcp_url_rejects_public_plain_http(url: str) -> None:
+    """Plain HTTP to public or unresolvable-name hosts is rejected."""
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        validate_http_mcp_url(url)
+
+
 def test_build_namespaced_tool_name_normalizes_tool_segment() -> None:
     """Remote tool names are normalized into app-safe tool IDs."""
     assert build_namespaced_tool_name("gradio_docs", "search-docs") == "gradio_docs__search_docs"

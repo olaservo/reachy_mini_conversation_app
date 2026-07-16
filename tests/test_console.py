@@ -1,5 +1,6 @@
 """Tests for the headless console stream."""
 
+import os
 import asyncio
 import threading
 from types import SimpleNamespace
@@ -247,6 +248,114 @@ def test_backend_config_persists_local_hf_selection_and_status(
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "HF_REALTIME_CONNECTION_MODE=local" in env_text
     assert "HF_REALTIME_WS_URL=ws://localhost:8765/v1/realtime" in env_text
+
+
+def _write_mcp_server_manifest(instance_path: Path, alias: str, token_env: str) -> None:
+    from reachy_mini_conversation_app.mcp_servers import (
+        McpServerAuth,
+        InstalledMcpServer,
+        InstalledMcpServersManifest,
+        write_mcp_servers,
+    )
+
+    write_mcp_servers(
+        instance_path,
+        InstalledMcpServersManifest(
+            servers=[
+                InstalledMcpServer(
+                    alias=alias,
+                    url="http://192.168.1.50:8000/mcp",
+                    auth=McpServerAuth(type="bearer", token_env=token_env),
+                )
+            ]
+        ),
+    )
+
+
+def test_status_reports_mcp_server_token_requirements(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The status payload lists configured MCP servers and whether their tokens are set."""
+    token_env = "MCP_CONSOLE_STATUS_TOKEN"
+    monkeypatch.setenv(token_env, "")
+    _write_mcp_server_manifest(tmp_path, "example", token_env)
+
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+
+    payload = TestClient(app).get("/api/v1/status").json()
+
+    assert payload["mcp_servers"] == [{"alias": "example", "token_env": token_env, "token_set": False}]
+
+
+def test_mcp_server_token_route_persists_token_and_reports_saved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Saving a token persists it to the environment and instance .env, then rebuilds tools."""
+    token_env = "MCP_CONSOLE_SAVE_TOKEN"
+    monkeypatch.setenv(token_env, "")
+    _write_mcp_server_manifest(tmp_path, "example", token_env)
+    rebuilds: list[bool] = []
+    monkeypatch.setattr(
+        "reachy_mini_conversation_app.console.initialize_tools",
+        lambda **kwargs: rebuilds.append(kwargs.get("force", False)),
+    )
+
+    app = FastAPI()
+    handler = MagicMock()
+    handler.shutdown = AsyncMock()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(
+        handler,
+        robot,
+        settings_app=app,
+        instance_path=str(tmp_path),
+        handler_factory=lambda _voice: handler,
+    )
+    stream._init_settings_ui_if_needed()
+
+    response = TestClient(app).post(
+        "/api/v1/mcp_server_token",
+        json={"alias": "example", "token": "new-secret"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["message"] == "Token saved. Reconnecting to load its tools."
+    assert data["mcp_servers"] == [{"alias": "example", "token_env": token_env, "token_set": True}]
+    assert os.environ[token_env] == "new-secret"
+    assert f"{token_env}=new-secret" in (tmp_path / ".env").read_text(encoding="utf-8")
+    assert rebuilds == [True]
+    assert stream._restart_requested.is_set()
+
+
+def test_mcp_server_token_route_rejects_bad_requests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty tokens and unknown aliases fail with distinct error codes."""
+    token_env = "MCP_CONSOLE_REJECT_TOKEN"
+    monkeypatch.setenv(token_env, "")
+    _write_mcp_server_manifest(tmp_path, "example", token_env)
+
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+    client = TestClient(app)
+
+    empty = client.post("/api/v1/mcp_server_token", json={"alias": "example", "token": "   "})
+    assert empty.status_code == 400
+    assert empty.json()["error"] == "empty_token"
+
+    unknown = client.post("/api/v1/mcp_server_token", json={"alias": "missing", "token": "value"})
+    assert unknown.status_code == 404
+    assert unknown.json()["error"] == "unknown_server"
 
 
 def test_backend_config_persists_deployed_mode_without_clearing_local_hf_ws_url(

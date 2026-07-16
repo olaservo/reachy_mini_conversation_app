@@ -101,14 +101,19 @@ _REMOTE_TOOL_RETRY_DELAY_S = 0.25
 
 
 class RemoteMcpTool(Tool):
-    """Adapter exposing one remote MCP tool through the local Tool interface."""
+    """Adapter exposing one remote MCP tool through the local Tool interface.
+
+    Wraps a tool from either an installed Hugging Face Space (``slug``) or a
+    configured generic MCP server (``server_alias``); exactly one must be set.
+    """
 
     _auto_register: ClassVar[bool] = False
 
     def __init__(
         self,
         *,
-        slug: str,
+        slug: str | None = None,
+        server_alias: str | None = None,
         name: str,
         description: str,
         parameters_schema: Dict[str, Any],
@@ -116,13 +121,21 @@ class RemoteMcpTool(Tool):
         client: "RemoteMcpToolClient",
     ) -> None:
         """Store the resolved local/remote names and the shared MCP client."""
+        if (slug is None) == (server_alias is None):
+            raise ValueError("RemoteMcpTool needs exactly one of 'slug' or 'server_alias'.")
         self.name = name
         self.description = description
         self.parameters_schema = parameters_schema
         self._space_slug = slug
+        self._server_alias = server_alias
         self._client_tool_name = client_tool_name
         self._client = client
-        self._registry_source = f"space:{slug}:{client_tool_name}"
+        if slug is not None:
+            self._source_label = slug
+            self._registry_source = f"space:{slug}:{client_tool_name}"
+        else:
+            self._source_label = str(server_alias)
+            self._registry_source = f"mcp:{server_alias}:{client_tool_name}"
 
     async def __call__(self, deps: ToolDependencies, **kwargs: Any) -> Dict[str, Any]:
         """Invoke the underlying remote MCP tool."""
@@ -132,13 +145,16 @@ class RemoteMcpTool(Tool):
             # Timeout subclasses the retryable error, but retrying it would just double the wait.
             raise
         except McpToolInvocationError as exc:
-            logger.warning("Remote MCP tool failed once; retrying %s from %s: %s", self.name, self._space_slug, exc)
+            logger.warning("Remote MCP tool failed once; retrying %s from %s: %s", self.name, self._source_label, exc)
             await asyncio.sleep(_REMOTE_TOOL_RETRY_DELAY_S)
             result = await self._client.call_tool(self._client_tool_name, kwargs)
         payload = dict(result)
         if payload.get("namespaced_tool_name") == self._client_tool_name:
             payload["namespaced_tool_name"] = self.name
-        payload.setdefault("tool_space_slug", self._space_slug)
+        if self._space_slug is not None:
+            payload.setdefault("tool_space_slug", self._space_slug)
+        else:
+            payload.setdefault("mcp_server_alias", self._server_alias)
         return payload
 
 
@@ -424,6 +440,58 @@ def _resolve_remote_tools(tool_names: list[str], instance_path: str | Path | Non
     return remote_tools
 
 
+def _resolve_generic_mcp_tools(tool_names: list[str], instance_path: str | Path | None) -> list[RemoteMcpTool]:
+    """Build generic MCP server tools enabled by the active profile from the cached manifest, without network calls."""
+    # Local import: mcp_servers imports tool_spaces (which this module also uses),
+    # so keep the dependency lazy to avoid import-order surprises at startup.
+    from reachy_mini_conversation_app.mcp_servers import read_mcp_servers, build_generic_remote_client
+
+    try:
+        manifest = read_mcp_servers(instance_path)
+    except RuntimeError as exc:
+        # A corrupt manifest must not take down the whole tool registry at boot.
+        logger.error("Skipping generic MCP servers: %s", exc)
+        return []
+
+    remote_tools: list[RemoteMcpTool] = []
+    for server in manifest.servers:
+        enabled_tool_names = {name for name in tool_names if name.startswith(f"{server.alias}__")}
+        if not enabled_tool_names:
+            continue
+
+        discovered_tool_names = {tool.local_name for tool in server.tools}
+        missing_tool_names = sorted(enabled_tool_names - discovered_tool_names)
+        if missing_tool_names:
+            logger.warning(
+                "Tools enabled from MCP server '%s' are missing from the manifest and will be skipped: %s. "
+                "Re-run 'mcp-servers add %s %s' to refresh.",
+                server.alias,
+                ", ".join(missing_tool_names),
+                server.alias,
+                server.url,
+            )
+
+        client = build_generic_remote_client(server)
+        for remote_tool in server.tools:
+            if remote_tool.local_name not in enabled_tool_names:
+                continue
+            cache_key = ("remote", f"mcp:{server.alias}:{remote_tool.local_name}:{remote_tool.client_tool_name}")
+            cached_tool = _LOADED_REMOTE_TOOL_CACHE.get(cache_key)
+            if cached_tool is None:
+                cached_tool = RemoteMcpTool(
+                    server_alias=server.alias,
+                    name=remote_tool.local_name,
+                    description=remote_tool.description,
+                    parameters_schema=remote_tool.parameters_schema,
+                    client_tool_name=remote_tool.client_tool_name,
+                    client=client,
+                )
+                _LOADED_REMOTE_TOOL_CACHE[cache_key] = cached_tool
+            remote_tools.append(cached_tool)
+
+    return remote_tools
+
+
 def _load_profile_tools(tool_names: list[str], remote_tool_names: set[str]) -> List[type[Tool]]:
     """Load local profile/shared tools while skipping resolved remote tool IDs."""
     profile = config.REACHY_MINI_CUSTOM_PROFILE or "default"
@@ -508,7 +576,9 @@ def initialize_tools(instance_path: str | Path | None = None, *, force: bool = F
         logger.info("Reloading tool registry for active profile/configuration change.")
 
     tool_names = _read_profile_tool_names()
-    remote_tools = _resolve_remote_tools(tool_names, effective_instance_path)
+    remote_tools = _resolve_remote_tools(tool_names, effective_instance_path) + _resolve_generic_mcp_tools(
+        tool_names, effective_instance_path
+    )
     remote_tool_names = {tool.name for tool in remote_tools}
     loaded_tool_classes = _load_profile_tools(tool_names, remote_tool_names)
 

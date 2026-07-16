@@ -546,6 +546,19 @@ class LocalStream:
             hf_host: Optional[str] = None
             hf_port: Optional[int] = None
 
+        def _mcp_servers_payload() -> list[dict[str, object]]:
+            """Describe configured MCP servers' token requirements for the settings UI."""
+            try:
+                from reachy_mini_conversation_app.mcp_servers import list_token_requirements
+
+                return [
+                    {"alias": req.alias, "token_env": req.token_env, "token_set": req.token_set}
+                    for req in list_token_requirements(self._instance_path)
+                ]
+            except Exception as exc:
+                logger.warning("Could not list MCP server token requirements: %s", exc)
+                return []
+
         def _status_payload() -> dict[str, object]:
             hf_session_url = get_hf_session_url()
             hf_ws_url = get_hf_direct_ws_url()
@@ -554,6 +567,7 @@ class LocalStream:
             has_hf_connection = hf_connection_selection.has_target
             backend_connection = self._backend_connection_status()
             return {
+                "mcp_servers": _mcp_servers_payload(),
                 "backend": HF_BACKEND,
                 "has_key": has_hf_connection,
                 "has_hf_session_url": bool(hf_session_url),
@@ -638,6 +652,42 @@ class LocalStream:
                 message = "Connection saved. Reconnecting backend."
             else:
                 message = "Connection saved. Restart Reachy Mini Conversation from the desktop app to apply it."
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "message": message,
+                    **_status_payload(),
+                }
+            )
+
+        class McpServerTokenPayload(BaseModel):
+            alias: str
+            token: str
+
+        @settings_app.post(f"{SETTINGS_API_PREFIX}/mcp_server_token")
+        def _set_mcp_server_token(payload: McpServerTokenPayload) -> JSONResponse:
+            from reachy_mini_conversation_app.mcp_servers import find_server_token_env
+
+            token = payload.token.strip()
+            if not token:
+                return JSONResponse({"ok": False, "error": "empty_token"}, status_code=400)
+
+            token_env = find_server_token_env(self._instance_path, payload.alias.strip())
+            if token_env is None:
+                return JSONResponse({"ok": False, "error": "unknown_server"}, status_code=404)
+
+            self._persist_env_values({token_env: token})
+            # Re-resolve tools so a server that was skipped for a missing token loads now.
+            try:
+                initialize_tools(force=True)
+            except Exception:
+                logger.exception("Tool registry rebuild failed after MCP token save")
+
+            if self._can_rebuild_handler():
+                self._mark_restart_requested("mcp_server_token_changed")
+                message = "Token saved. Reconnecting to load its tools."
+            else:
+                message = "Token saved. Restart the app to load its tools."
             return JSONResponse(
                 {
                     "ok": True,

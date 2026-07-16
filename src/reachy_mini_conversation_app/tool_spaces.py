@@ -249,6 +249,15 @@ def read_installed_tool_spaces(instance_path: str | Path | None) -> InstalledToo
     return InstalledToolSpacesManifest(version=version, spaces=spaces)
 
 
+def installed_space_aliases(instance_path: str | Path | None) -> set[str]:
+    """Return the aliases of installed Spaces, or an empty set if the manifest is unreadable."""
+    try:
+        manifest = read_installed_tool_spaces(instance_path)
+    except RuntimeError:
+        return set()
+    return {space.alias for space in manifest.spaces}
+
+
 def write_installed_tool_spaces(
     instance_path: str | Path | None,
     manifest: InstalledToolSpacesManifest,
@@ -264,7 +273,7 @@ def write_installed_tool_spaces(
     return manifest_path
 
 
-def _append_tools_to_profile(profile: str, tool_ids: list[str]) -> list[str]:
+def append_tools_to_profile(profile: str, tool_ids: list[str]) -> list[str]:
     """Append tool IDs to a profile's tools.txt. Returns the IDs that were added."""
     tools_txt = config.resolve_profile_dir(profile) / "tools.txt"
     if not tools_txt.parent.is_dir():
@@ -289,8 +298,8 @@ def _append_tools_to_profile(profile: str, tool_ids: list[str]) -> list[str]:
     return to_add
 
 
-def _disable_space_tools_in_profiles(alias: str) -> list[tuple[str, list[str]]]:
-    """Strip a Space's tool IDs from every profile's tools.txt. Returns (profile, removed IDs) per profile touched."""
+def disable_alias_tools_in_profiles(alias: str) -> list[tuple[str, list[str]]]:
+    """Strip an alias's tool IDs from every profile's tools.txt. Returns (profile, removed IDs) per profile touched."""
     prefix = f"{alias}__"
     removed_by_profile: list[tuple[str, list[str]]] = []
     seen: set[Path] = set()
@@ -512,6 +521,20 @@ def handle_tool_spaces_command(args: argparse.Namespace, *, instance_path: str |
                 )
                 return 1
 
+            # Local import: mcp_servers imports this module at module level, so the
+            # reverse dependency must stay function-local to avoid an import cycle.
+            from reachy_mini_conversation_app.mcp_servers import configured_server_aliases
+
+            if resolved_space.alias in configured_server_aliases(instance_path):
+                logger.error(
+                    "Cannot install '%s': its local alias '%s' conflicts with a configured MCP server. "
+                    "Remove the server with 'mcp-servers remove %s' first.",
+                    resolved_space.slug,
+                    resolved_space.alias,
+                    resolved_space.alias,
+                )
+                return 1
+
             installed = InstalledToolSpace(
                 slug=resolved_space.slug,
                 alias=resolved_space.alias,
@@ -541,7 +564,7 @@ def handle_tool_spaces_command(args: argparse.Namespace, *, instance_path: str |
 
         tool_ids = [tool.local_name for tool in resolved_space.tools]
         try:
-            added = _append_tools_to_profile(target_profile, tool_ids)
+            added = append_tools_to_profile(target_profile, tool_ids)
         except RuntimeError as exc:
             logger.error("Cannot enable tools: %s", exc)
             return 1
@@ -564,7 +587,7 @@ def handle_tool_spaces_command(args: argparse.Namespace, *, instance_path: str |
             InstalledToolSpacesManifest(version=manifest.version, spaces=remaining_spaces),
         )
         logger.info("Removed Space tool source: %s", validated_slug)
-        for profile_name, disabled_tool_ids in _disable_space_tools_in_profiles(normalize_space_alias(validated_slug)):
+        for profile_name, disabled_tool_ids in disable_alias_tools_in_profiles(normalize_space_alias(validated_slug)):
             logger.info("Disabled in profile '%s': %s", profile_name, disabled_tool_ids)
         return 0
 

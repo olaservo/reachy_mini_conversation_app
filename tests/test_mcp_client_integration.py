@@ -201,3 +201,53 @@ async def test_remote_mcp_tool_client_discovers_calls_and_handles_timeout(
     )
     with pytest.raises(McpTransportError, match="Failed to discover MCP tools"):
         await unauthorized_client.list_tool_specs()
+
+
+@pytest.mark.asyncio
+async def test_mcp_servers_add_caches_tools_then_calls_without_discovery(
+    local_mcp_server: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+) -> None:
+    """Full generic-server flow: add discovers and caches tools, later calls run from the cache."""
+    from argparse import Namespace
+
+    from reachy_mini_conversation_app.mcp_servers import (
+        read_mcp_servers,
+        handle_mcp_servers_command,
+        build_generic_remote_client,
+    )
+
+    server_url, token = local_mcp_server
+    token_env = "MCP_INTEGRATION_TEST_TOKEN"
+    monkeypatch.setenv(token_env, token)
+
+    args = Namespace(
+        mcp_servers_command="add",
+        alias="local_test",
+        url=server_url,
+        token_env=token_env,
+        request_timeout=2.0,
+        tool_timeout=2.0,
+        install_only=True,
+        profile=None,
+    )
+    # handle_mcp_servers_command drives its own event loop; keep it off this test's loop.
+    exit_code = await asyncio.to_thread(handle_mcp_servers_command, args, instance_path=tmp_path)
+    assert exit_code == 0
+
+    manifest = read_mcp_servers(tmp_path)
+    assert [server.alias for server in manifest.servers] == ["local_test"]
+    cached_names = sorted(tool.local_name for tool in manifest.servers[0].tools)
+    assert cached_names == ["local_test__echo_text", "local_test__slow_echo"]
+
+    client = build_generic_remote_client(manifest.servers[0])
+
+    async def _fail_list_tool_specs() -> list[RemoteToolSpec]:
+        raise AssertionError("calls must run from the cached specs, not re-discovery")
+
+    monkeypatch.setattr(client, "list_tool_specs", _fail_list_tool_specs)
+
+    result = await client.call_tool("local_test__echo_text", {"message": "hello"})
+    assert result["status"] == "ok"
+    assert result["structured_content"] == {"echo": "hello"}

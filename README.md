@@ -360,6 +360,45 @@ These tags are advisory only. Installation still relies on successful MCP valida
 </details>
 
 <details>
+<summary><b>Custom MCP servers</b></summary>
+
+Beyond Hugging Face Spaces, you can connect the app to any MCP server that speaks Streamable HTTP — for example a home automation bridge or a service on your local network.
+
+```bash
+# configure + enable in active profile
+reachy-mini-conversation-app mcp-servers add my_server https://my-mcp-server.example/mcp
+
+# a local-network server over plain HTTP (loopback, private, or *.local hosts only)
+reachy-mini-conversation-app mcp-servers add my_server http://my-mcp-server.local:8000/mcp
+
+# a server that needs a bearer token (only the env var NAME is stored)
+reachy-mini-conversation-app mcp-servers add my_server https://my-mcp-server.example/mcp --token-env MCP_SERVER_TOKEN_MY_SERVER
+
+# enable in a specific profile / configure without enabling
+reachy-mini-conversation-app mcp-servers add my_server <url> --profile NAME
+reachy-mini-conversation-app mcp-servers add my_server <url> --install-only
+
+# list configured servers (reads the cached manifest, no network)
+reachy-mini-conversation-app mcp-servers list
+
+# remove a server (also disables its tools in every profile)
+reachy-mini-conversation-app mcp-servers remove my_server
+```
+
+`add` connects to the server first (so a bad URL, unreachable host, or missing token fails before anything is saved), caches the discovered tools, and enables them in the active profile's `tools.txt`. The server's tools are namespaced as `<alias>__<tool_name>`. Configured servers are written to:
+
+- `mcp_servers.json` in the managed app instance directory
+- `external_content/mcp_servers.json` in terminal mode
+
+Because tools are cached at add time, app startup needs no network discovery. If the server's tool set changes, re-run `mcp-servers add <alias> <same-url>` to refresh the cache. Per-server timeouts can be tuned with `--request-timeout` and `--tool-timeout` (seconds).
+
+**Auth tokens.** The token value itself is never written to the manifest — only the *name* of the environment variable that holds it (`--token-env`). Put the secret in your environment or the instance `.env`, or paste it in the settings UI ("MCP server tokens" section), which stores it in the instance `.env`. Give each server its own env var: two servers sharing one `token_env` share the same secret.
+
+**Plain HTTP policy.** `http://` URLs are only accepted for local-network hosts (loopback, RFC 1918 private and link-local addresses, `localhost`, and `*.local` mDNS names). Anything public must use HTTPS. A bearer token sent over plain HTTP logs a warning, since it is visible on the local network.
+
+</details>
+
+<details>
 <summary><b>Multiple robots on the same subnet</b></summary>
 
 If you run multiple Reachy Mini daemons on the same network, use:
