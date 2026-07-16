@@ -1,11 +1,11 @@
 ---
-title: Reachy Mini Conversation App
-emoji: 🎤
+title: Reachy Mini Conversation App (Staging)
+emoji: 🧪
 colorFrom: red
 colorTo: blue
 sdk: static
 pinned: false
-short_description: Talk with Reachy Mini!
+short_description: Staging build - custom MCP servers (434)
 suggested_storage: large
 tags:
  - reachy_mini
