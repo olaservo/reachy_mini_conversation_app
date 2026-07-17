@@ -13,7 +13,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-09T18:57:38.8106772Z"
+exclude-newer = "2026-08-10T00:15:13.7182856Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -2719,7 +2719,7 @@ wheels = [
 ]
 
 [[package]]
-name = "reachy-mini-conversation-app"
+name = "reachy-mini-conversation-app-staging"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
