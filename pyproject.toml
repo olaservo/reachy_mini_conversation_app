@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reachy_mini_conversation_app"
+name = "reachy_mini_conversation_app_staging"
 version = "1.0.0"
 authors = [{ name = "Pollen Robotics", email = "contact@pollen-robotics.com" }]
 description = ""
@@ -49,7 +49,7 @@ exclude-newer = "7 days"
 "reachy-mini-dances-library" = false
 
 [project.entry-points."reachy_mini_apps"]
-reachy_mini_conversation_app = "reachy_mini_conversation_app.main:ReachyMiniConversationApp"
+reachy_mini_conversation_app_staging = "reachy_mini_conversation_app_staging.main:ReachyMiniConversationApp"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
