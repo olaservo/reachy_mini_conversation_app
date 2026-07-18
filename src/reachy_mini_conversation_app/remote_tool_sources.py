@@ -24,6 +24,8 @@ from reachy_mini_conversation_app.mcp_client import (
 # Where terminal mode (no managed app instance) keeps manifests and downloads.
 TERMINAL_EXTERNAL_CONTENT_DIRECTORY = Path("external_content")
 
+MCP_SERVERS_FILENAME = "mcp_servers.json"
+
 
 def manifest_path(instance_path: str | Path | None, filename: str) -> Path:
     """Return a source manifest's path: the app instance dir, or external_content/ in terminal mode."""
@@ -58,6 +60,18 @@ def write_manifest_payload(path: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
+def configured_server_aliases(instance_path: str | Path | None) -> set[str]:
+    """Aliases claimed in the MCP servers manifest; raises RuntimeError so alias-collision checks fail closed."""
+    # Raw envelope read rather than mcp_servers.read_mcp_servers: this shared module
+    # must not import mcp_servers back (import cycle), and counting even invalid
+    # entries' aliases is the conservative choice for a collision check.
+    envelope = read_manifest_envelope(manifest_path(instance_path, MCP_SERVERS_FILENAME), "servers")
+    if envelope is None:
+        return set()
+    entries, _version = envelope
+    return {str(entry["alias"]) for entry in entries if isinstance(entry, dict) and entry.get("alias")}
+
+
 @dataclass(frozen=True)
 class CachedRemoteTool:
     """App-facing metadata for one remote tool cached in a source's manifest."""
@@ -82,7 +96,10 @@ def parse_cached_tools(raw_tools: object) -> list[CachedRemoteTool]:
             parameters_schema=dict(tool.get("parameters_schema") or {}),
         )
         for tool in raw_tools
-        if isinstance(tool, dict) and tool.get("local_name") and tool.get("client_tool_name")
+        if isinstance(tool, dict)
+        and tool.get("local_name")
+        and tool.get("client_tool_name")
+        and isinstance(tool.get("parameters_schema") or {}, dict)
     ]
 
 

@@ -37,6 +37,7 @@ from reachy_mini_conversation_app.mcp_client import (
 )
 from reachy_mini_conversation_app.tool_spaces import installed_space_aliases
 from reachy_mini_conversation_app.remote_tool_sources import (
+    MCP_SERVERS_FILENAME,
     CachedRemoteTool,
     manifest_path,
     parse_cached_tools,
@@ -50,7 +51,6 @@ from reachy_mini_conversation_app.remote_tool_sources import (
 
 logger = logging.getLogger(__name__)
 
-MCP_SERVERS_FILENAME = "mcp_servers.json"
 MCP_SERVERS_VERSION = 1
 BEARER_AUTH_TYPE = "bearer"
 # POSIX-style environment variable name: leading letter/underscore, then
@@ -187,15 +187,6 @@ def read_mcp_servers(instance_path: str | Path | None) -> InstalledMcpServersMan
     return InstalledMcpServersManifest(version=version, servers=servers)
 
 
-def configured_server_aliases(instance_path: str | Path | None) -> set[str]:
-    """Aliases claimed by configured MCP servers, for cross-source collision checks.
-
-    Raises RuntimeError when the manifest is unreadable: callers adding an alias must
-    fail closed, since a collision that slips through crashes tool registration at boot.
-    """
-    return {server.alias for server in read_mcp_servers(instance_path).servers}
-
-
 def write_mcp_servers(instance_path: str | Path | None, manifest: InstalledMcpServersManifest) -> Path:
     """Persist the MCP servers manifest. The token value is never stored, only token_env."""
     servers_payload: list[dict[str, Any]] = []
@@ -258,13 +249,7 @@ def build_server_config(server: InstalledMcpServer) -> RemoteMcpServerConfig:
 
 
 def build_generic_remote_client(server: InstalledMcpServer) -> RemoteMcpToolClient:
-    """Build an MCP client for a configured server from its cached tools.
-
-    Raises RuntimeError when auth cannot be resolved (missing token, or a token
-    blocked over plain HTTP): registering tools whose every call would fail
-    unauthenticated only hides the problem, so the caller skips this server's
-    tools instead and they load on the next rebuild once the token is saved.
-    """
+    """Build an MCP client from cached tools, raising RuntimeError when auth cannot be resolved."""
     return build_cached_tools_client(build_server_config(server), server.tools)
 
 
@@ -278,12 +263,7 @@ class McpTokenRequirement:
 
 
 def list_token_requirements(instance_path: str | Path | None) -> list[McpTokenRequirement]:
-    """Return the env-var token requirements for configured MCP servers.
-
-    Used by the headless settings UI to let users supply a server's token without
-    editing the instance ``.env`` by hand. ``token_set`` reflects whether the named
-    environment variable currently holds a non-empty value.
-    """
+    """Return the configured servers' auth-token requirements for the settings UI."""
     requirements: list[McpTokenRequirement] = []
     for server in read_mcp_servers(instance_path).servers:
         if server.auth is not None and server.auth.type == BEARER_AUTH_TYPE:

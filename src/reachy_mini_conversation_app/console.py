@@ -9,12 +9,13 @@ import time
 import asyncio
 import logging
 import threading
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pathlib import Path
 from collections.abc import Callable, AsyncGenerator
 
 from reachy_mini import ReachyMini
 from reachy_mini.media.media_manager import MediaBackend
+from reachy_mini_conversation_app.tools import core_tools
 from reachy_mini_conversation_app.config import (
     HF_BACKEND,
     LOCKED_PROFILE,
@@ -67,7 +68,8 @@ SETTINGS_API_PREFIX = "/api/v1"
 # `#` starts an inline comment, quotes are stripped, and backslash/whitespace
 # parsing varies. Quoting keeps the value literal — except `${VAR}`, which
 # python-dotenv interpolates in any quoting style, so those values are refused
-# in `_persist_env_values` instead.
+# in `_persist_env_values` instead. Not dotenv.set_key: it escapes quotes but
+# not backslashes, so values containing `\\` do not round-trip.
 _ENV_VALUE_CHARS_NEEDING_QUOTES = " \t#'\"$\\"
 
 
@@ -350,14 +352,15 @@ class LocalStream:
             "backend_error": None if connected else self._backend_error,
         }
 
-    def _persist_env_values(self, updates: dict[str, str]) -> bool:
+    def _persist_env_values(self, updates: dict[str, str]) -> Literal["persisted", "session", "failed"]:
         """Apply non-empty environment values to the runtime and the instance `.env`.
 
         Raises ValueError before anything is applied if a value cannot round-trip
         through the `.env`: line breaks corrupt the file, and `${` triggers
-        python-dotenv interpolation that has no escape syntax. Returns whether
-        the values were written to a `.env` file — False in terminal mode (no
-        instance path), where they only last for the current process.
+        python-dotenv interpolation that has no escape syntax. Returns "persisted"
+        when the `.env` was written, "session" when there is nothing to write to
+        (terminal mode), and "failed" when the `.env` write errored — so callers
+        can warn that the value will not survive a restart.
         """
         normalized_updates = {name: (value or "").strip() for name, value in updates.items()}
         unsafe_names = sorted(
@@ -367,7 +370,7 @@ class LocalStream:
             raise ValueError(f"Values must not contain line breaks or '${{': {', '.join(unsafe_names)}.")
         normalized_updates = {name: value for name, value in normalized_updates.items() if value}
         if not normalized_updates:
-            return False
+            return "session"
 
         for env_name, value in normalized_updates.items():
             try:
@@ -377,7 +380,7 @@ class LocalStream:
         refresh_runtime_config_from_env()
 
         if not self._instance_path:
-            return False
+            return "session"
         try:
             inst = Path(self._instance_path)
             env_path = inst / ".env"
@@ -402,10 +405,10 @@ class LocalStream:
             except Exception:
                 pass
             refresh_runtime_config_from_env()
-            return True
+            return "persisted"
         except Exception as e:
             logger.warning("Failed to persist %s: %s", ", ".join(sorted(normalized_updates)), e)
-            return False
+            return "failed"
 
     def _remove_persisted_env_values(self, env_names: tuple[str, ...]) -> None:
         """Remove keys from the instance `.env` without mutating the current runtime."""
@@ -718,33 +721,38 @@ class LocalStream:
                 return JSONResponse({"ok": False, "error": "unknown_server"}, status_code=404)
 
             try:
-                persisted = self._persist_env_values({token_env: token})
+                persist_state = self._persist_env_values({token_env: token})
             except ValueError:
                 return JSONResponse({"ok": False, "error": "invalid_token"}, status_code=400)
             # Re-resolve tools so a server that was skipped for a missing token loads now.
             try:
-                initialize_tools(force=True)
+                initialize_tools(self._instance_path, force=True)
             except Exception:
                 logger.exception("Tool registry rebuild failed after MCP token save")
 
             can_rebuild = self._can_rebuild_handler()
             if can_rebuild:
                 self._mark_restart_requested("mcp_server_token_changed")
-            if persisted:
+
+            alias = payload.alias.strip()
+            tools_loaded = any(name.startswith(f"{alias}__") for name in core_tools.ALL_TOOLS)
+            if tools_loaded:
+                load_hint = "Reconnecting to load its tools." if can_rebuild else "Restart the app to load its tools."
+            else:
+                # The rebuild ran but registered nothing for this alias (e.g. the manifest
+                # entry is broken, or its tools are not enabled in the active profile).
+                load_hint = f"However, no tools from '{alias}' are loaded; check the app logs and your profile."
+            if persist_state == "persisted":
+                message = f"Token saved. {load_hint}"
+            elif persist_state == "failed":
                 message = (
-                    "Token saved. Reconnecting to load its tools."
-                    if can_rebuild
-                    else "Token saved. Restart the app to load its tools."
-                )
-            elif can_rebuild:
-                message = (
-                    f"Token set for this session only; reconnecting to load its tools. "
-                    f"Add {token_env} to your .env file to keep it across restarts."
+                    f"Token set for this session, but saving it to the instance .env failed, "
+                    f"so it will be lost on restart; check the app logs. {load_hint}"
                 )
             else:
                 message = (
                     f"Token set for this session only. Add {token_env} to your .env file "
-                    "and restart the app to load its tools."
+                    f"to keep it across restarts. {load_hint}"
                 )
             return JSONResponse(
                 {

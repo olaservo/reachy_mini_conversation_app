@@ -30,6 +30,7 @@ from reachy_mini_conversation_app.remote_tool_sources import (
     write_manifest_payload,
     append_tools_to_profile,
     build_cached_tools_client,
+    configured_server_aliases,
     disable_alias_tools_in_profiles,
 )
 
@@ -226,11 +227,7 @@ def read_installed_tool_spaces(instance_path: str | Path | None) -> InstalledToo
 
 
 def installed_space_aliases(instance_path: str | Path | None) -> set[str]:
-    """Return the aliases of installed Spaces, for cross-source collision checks.
-
-    Raises RuntimeError when the manifest is unreadable: callers adding an alias must
-    fail closed, since a collision that slips through crashes tool registration at boot.
-    """
+    """Aliases claimed by installed Spaces; raises RuntimeError so alias-collision checks fail closed."""
     return {space.alias for space in read_installed_tool_spaces(instance_path).spaces}
 
 
@@ -437,10 +434,6 @@ def handle_tool_spaces_command(args: argparse.Namespace, *, instance_path: str |
                     alias_conflict.slug,
                 )
                 return 1
-
-            # Local import: mcp_servers imports this module at module level, so the
-            # reverse dependency must stay function-local to avoid an import cycle.
-            from reachy_mini_conversation_app.mcp_servers import configured_server_aliases
 
             # Fail closed: an unnoticed collision crashes tool registration at boot,
             # so refuse the install when the other manifest cannot be checked.

@@ -313,15 +313,17 @@ def test_mcp_server_token_route_persists_token_and_reports_saved(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Saving a token persists it to the environment and instance .env, then rebuilds tools."""
+    """Saving a token persists it to the environment and instance .env, then rebuilds tools for the instance."""
     token_env = "MCP_CONSOLE_SAVE_TOKEN"
     monkeypatch.setenv(token_env, "")
     _write_mcp_server_manifest(tmp_path, "example", token_env)
-    rebuilds: list[bool] = []
+    rebuilds: list[tuple[object, bool]] = []
     monkeypatch.setattr(
         "reachy_mini_conversation_app.console.initialize_tools",
-        lambda **kwargs: rebuilds.append(kwargs.get("force", False)),
+        lambda *args, **kwargs: rebuilds.append((args[0] if args else None, kwargs.get("force", False))),
     )
+    # The rebuild is mocked, so provide the registry state it would have produced.
+    monkeypatch.setattr("reachy_mini_conversation_app.console.core_tools.ALL_TOOLS", {"example__do_thing": object()})
 
     app = FastAPI()
     handler = MagicMock()
@@ -348,7 +350,8 @@ def test_mcp_server_token_route_persists_token_and_reports_saved(
     assert data["mcp_servers"] == [{"alias": "example", "token_env": token_env, "token_set": True}]
     assert os.environ[token_env] == "new-secret"
     assert f"{token_env}=new-secret" in (tmp_path / ".env").read_text(encoding="utf-8")
-    assert rebuilds == [True]
+    # The rebuild must target the manifest the token was resolved against, not the module-global default.
+    assert rebuilds == [(str(tmp_path), True)]
     assert stream._restart_requested.is_set()
 
 
@@ -412,7 +415,7 @@ def test_mcp_server_token_route_reports_session_only_in_terminal_mode(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(token_env, "")
     _write_mcp_server_manifest(None, "example", token_env)
-    monkeypatch.setattr("reachy_mini_conversation_app.console.initialize_tools", lambda **kwargs: None)
+    monkeypatch.setattr("reachy_mini_conversation_app.console.initialize_tools", lambda *args, **kwargs: None)
 
     app = FastAPI()
     handler = MagicMock()
@@ -438,6 +441,73 @@ def test_mcp_server_token_route_reports_session_only_in_terminal_mode(
     assert not (tmp_path / ".env").exists()
 
 
+def test_mcp_server_token_route_reports_persist_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed .env write must not masquerade as the benign terminal-mode session-only message."""
+    token_env = "MCP_CONSOLE_FAILED_TOKEN"
+    monkeypatch.setenv(token_env, "")
+    _write_mcp_server_manifest(tmp_path, "example", token_env)
+    (tmp_path / ".env").mkdir()  # the .env write fails against a directory
+    monkeypatch.setattr("reachy_mini_conversation_app.console.initialize_tools", lambda *args, **kwargs: None)
+    monkeypatch.setattr("reachy_mini_conversation_app.console.core_tools.ALL_TOOLS", {"example__do_thing": object()})
+
+    app = FastAPI()
+    handler = MagicMock()
+    handler.shutdown = AsyncMock()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(
+        handler,
+        robot,
+        settings_app=app,
+        instance_path=str(tmp_path),
+        handler_factory=lambda _voice: handler,
+    )
+    stream._init_settings_ui_if_needed()
+
+    response = TestClient(app).post("/api/v1/mcp_server_token", json={"alias": "example", "token": "new-secret"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert "lost on restart" in data["message"]
+    assert os.environ[token_env] == "new-secret"
+
+
+def test_mcp_server_token_route_warns_when_no_tools_load_for_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the rebuild registers nothing for the alias, the response must not claim its tools are loading."""
+    token_env = "MCP_CONSOLE_NO_TOOLS_TOKEN"
+    monkeypatch.setenv(token_env, "")
+    _write_mcp_server_manifest(tmp_path, "example", token_env)
+    monkeypatch.setattr("reachy_mini_conversation_app.console.initialize_tools", lambda *args, **kwargs: None)
+    monkeypatch.setattr("reachy_mini_conversation_app.console.core_tools.ALL_TOOLS", {})
+
+    app = FastAPI()
+    handler = MagicMock()
+    handler.shutdown = AsyncMock()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(
+        handler,
+        robot,
+        settings_app=app,
+        instance_path=str(tmp_path),
+        handler_factory=lambda _voice: handler,
+    )
+    stream._init_settings_ui_if_needed()
+
+    response = TestClient(app).post("/api/v1/mcp_server_token", json={"alias": "example", "token": "new-secret"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert "no tools from 'example'" in data["message"]
+    assert "Reconnecting to load its tools" not in data["message"]
+
+
 def test_persist_env_values_round_trips_special_characters_through_dotenv(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -451,7 +521,7 @@ def test_persist_env_values_round_trips_special_characters_through_dotenv(
     stream = LocalStream(MagicMock(), robot, settings_app=FastAPI(), instance_path=str(tmp_path))
 
     token = 'abc #123 it\'s "fine"'
-    assert stream._persist_env_values({token_env: token}) is True
+    assert stream._persist_env_values({token_env: token}) == "persisted"
     assert os.environ[token_env] == token
     assert dotenv_values(tmp_path / ".env")[token_env] == token
 

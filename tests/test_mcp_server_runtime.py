@@ -190,6 +190,28 @@ def test_initialize_tools_skips_generic_servers_on_corrupt_manifest(
     assert any("Skipping generic MCP servers" in record.message for record in caplog.records)
 
 
+def test_initialize_tools_skips_spaces_on_corrupt_manifest_but_keeps_generic_servers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A corrupt installed_tool_spaces.json must not take down the registry: generic MCP tools still load."""
+    monkeypatch.chdir(tmp_path)
+    _mcp_profile(tmp_path, monkeypatch)
+
+    spaces_path = tmp_path / "external_content" / "installed_tool_spaces.json"
+    spaces_path.parent.mkdir(parents=True, exist_ok=True)
+    spaces_path.write_text("{not valid json", encoding="utf-8")
+    write_mcp_servers(None, InstalledMcpServersManifest(servers=[_installed_server()]))
+
+    core_tools_mod = _reload_core_tools()
+    with caplog.at_level("ERROR"):
+        core_tools_mod.initialize_tools()
+
+    assert TOOL_ID in core_tools_mod.ALL_TOOLS
+    assert any("Skipping installed tool Spaces" in record.message for record in caplog.records)
+
+
 def test_initialize_tools_fails_on_name_collision_between_space_and_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

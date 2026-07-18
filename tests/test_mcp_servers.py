@@ -769,11 +769,6 @@ def test_read_mcp_servers_skips_corrupt_entries_and_keeps_the_rest(
     """One corrupt entry is skipped with a warning; valid servers in the same manifest still load."""
     corrupt_entries = [
         {"alias": "corrupt", "url": SERVER_URL, "request_timeout_s": None},
-        {
-            "alias": "corrupt",
-            "url": SERVER_URL,
-            "tools": [{"local_name": "x", "client_tool_name": "x", "parameters_schema": ["x"]}],
-        },
         "not-an-object",
     ]
     for corrupt_entry in corrupt_entries:
@@ -792,3 +787,26 @@ def test_read_mcp_servers_skips_corrupt_entries_and_keeps_the_rest(
 
         assert [server.alias for server in manifest.servers] == [SERVER_ALIAS]
         assert "Skipping invalid MCP server entry" in caplog.text
+
+
+def test_read_mcp_servers_drops_tools_with_non_mapping_schema(tmp_path: Path) -> None:
+    """A cached tool whose parameters_schema is not an object is dropped; the server and its other tools load."""
+    payload = {
+        "version": 1,
+        "servers": [
+            {
+                "alias": SERVER_ALIAS,
+                "url": SERVER_URL,
+                "tools": [
+                    {"local_name": "bad", "client_tool_name": "bad", "parameters_schema": ["oops"]},
+                    {"local_name": "good", "client_tool_name": "good", "parameters_schema": {"type": "object"}},
+                ],
+            }
+        ],
+    }
+    (tmp_path / "mcp_servers.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    manifest = read_mcp_servers(tmp_path)
+
+    assert [server.alias for server in manifest.servers] == [SERVER_ALIAS]
+    assert [tool.local_name for tool in manifest.servers[0].tools] == ["good"]

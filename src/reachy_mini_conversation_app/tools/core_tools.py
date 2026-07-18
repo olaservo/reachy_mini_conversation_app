@@ -453,8 +453,15 @@ def _resolve_cached_manifest_tools(
 
 def _resolve_remote_tools(tool_names: list[str], instance_path: str | Path | None) -> list[RemoteMcpTool]:
     """Build Space tools enabled by the active profile from the cached install manifest, without any network calls."""
+    try:
+        manifest = read_installed_tool_spaces(instance_path)
+    except RuntimeError as exc:
+        # A corrupt manifest must not take down the whole tool registry at boot.
+        logger.error("Skipping installed tool Spaces: %s", exc)
+        return []
+
     remote_tools: list[RemoteMcpTool] = []
-    for installed_space in read_installed_tool_spaces(instance_path).spaces:
+    for installed_space in manifest.spaces:
         remote_tools.extend(
             _resolve_cached_manifest_tools(
                 tool_names,
