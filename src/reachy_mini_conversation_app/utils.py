@@ -60,7 +60,10 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
         dest="token_env",
         default=None,
         metavar="ENV_VAR",
-        help="Name of the environment variable holding the bearer token. The token value is never stored.",
+        help=(
+            "Name of the environment variable holding the bearer token. The token value is never "
+            "stored. A re-add keeps the stored auth config unless this flag is passed."
+        ),
     )
     mcp_add_parser.add_argument(
         "--allow-insecure-token",
@@ -76,15 +79,15 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
         "--request-timeout",
         dest="request_timeout",
         type=float,
-        default=10.0,
-        help="Per-request timeout in seconds (default: 10).",
+        default=None,
+        help="Per-request timeout in seconds (default: 10; a re-add keeps the stored value).",
     )
     mcp_add_parser.add_argument(
         "--tool-timeout",
         dest="tool_timeout",
         type=float,
-        default=30.0,
-        help="Per-tool-call timeout in seconds (default: 30).",
+        default=None,
+        help="Per-tool-call timeout in seconds (default: 30; a re-add keeps the stored value).",
     )
     mcp_add_parser.add_argument(
         "--install-only",

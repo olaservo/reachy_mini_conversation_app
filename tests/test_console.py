@@ -361,6 +361,106 @@ def test_mcp_server_token_route_rejects_bad_requests(
     multiline = client.post("/api/v1/mcp_server_token", json={"alias": "example", "token": "abc\nINJECTED=1"})
     assert multiline.status_code == 400
     assert multiline.json()["error"] == "invalid_token"
+
+    # `${...}` is interpolated by python-dotenv in any quoting style, so it can't round-trip.
+    interpolated = client.post("/api/v1/mcp_server_token", json={"alias": "example", "token": "abc${HOME}def"})
+    assert interpolated.status_code == 400
+    assert interpolated.json()["error"] == "invalid_token"
+    assert not (tmp_path / ".env").exists()
+
+
+def test_mcp_server_token_route_reports_manifest_error(
+    tmp_path: Path,
+) -> None:
+    """A corrupt mcp_servers.json yields a structured error, not an unhandled 500."""
+    (tmp_path / "mcp_servers.json").write_text("{not json", encoding="utf-8")
+
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+
+    response = TestClient(app).post("/api/v1/mcp_server_token", json={"alias": "example", "token": "value"})
+    assert response.status_code == 500
+    assert response.json()["error"] == "manifest_unreadable"
+
+
+def test_mcp_server_token_route_reports_session_only_in_terminal_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without an instance path there is no .env to write, and the response must say so."""
+    token_env = "MCP_CONSOLE_TERMINAL_TOKEN"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(token_env, "")
+    _write_mcp_server_manifest(None, "example", token_env)
+    monkeypatch.setattr("reachy_mini_conversation_app.console.initialize_tools", lambda **kwargs: None)
+
+    app = FastAPI()
+    handler = MagicMock()
+    handler.shutdown = AsyncMock()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(
+        handler,
+        robot,
+        settings_app=app,
+        instance_path=None,
+        handler_factory=lambda _voice: handler,
+    )
+    stream._init_settings_ui_if_needed()
+
+    response = TestClient(app).post("/api/v1/mcp_server_token", json={"alias": "example", "token": "new-secret"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert "session only" in data["message"]
+    assert token_env in data["message"]
+    assert os.environ[token_env] == "new-secret"
+    assert not (tmp_path / ".env").exists()
+
+
+def test_persist_env_values_round_trips_special_characters_through_dotenv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Values with `#`, quotes, or spaces must survive a python-dotenv reload of the .env."""
+    from dotenv import dotenv_values
+
+    token_env = "MCP_CONSOLE_QUOTED_TOKEN"
+    monkeypatch.setenv(token_env, "")
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=FastAPI(), instance_path=str(tmp_path))
+
+    token = 'abc #123 it\'s "fine"'
+    assert stream._persist_env_values({token_env: token}) is True
+    assert os.environ[token_env] == token
+    assert dotenv_values(tmp_path / ".env")[token_env] == token
+
+    with pytest.raises(ValueError):
+        stream._persist_env_values({token_env: "abc${HOME}def"})
+
+
+def test_backend_config_rejects_hf_host_with_line_break(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A host that can't be persisted must fail the request instead of reporting success."""
+    monkeypatch.delenv("HF_REALTIME_CONNECTION_MODE", raising=False)
+    monkeypatch.delenv("HF_REALTIME_WS_URL", raising=False)
+
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+
+    response = TestClient(app).post(
+        "/api/v1/backend_config",
+        json={"hf_mode": "local", "hf_host": "exam\nple", "hf_port": 8765},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_hf_host"
     assert not (tmp_path / ".env").exists()
 
 

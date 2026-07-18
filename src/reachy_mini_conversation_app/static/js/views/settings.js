@@ -263,9 +263,16 @@ function buildMcpSection({ onSaved } = {}) {
     }
     element.hidden = false;
 
-    const nextSignature = JSON.stringify(servers.map((s) => [s.alias, !!s.token_set]));
+    const nextSignature = JSON.stringify(servers.map((s) => [s.alias, s.token_env, !!s.token_set]));
     if (nextSignature === signature) return;
     signature = nextSignature;
+
+    // A rebuild recreates every row, so carry over tokens typed but not yet saved
+    // (e.g. server B's while server A's save refreshes the status).
+    const pendingTokens = new Map();
+    for (const pendingInput of list.querySelectorAll("input[data-alias]")) {
+      if (pendingInput.value) pendingTokens.set(pendingInput.dataset.alias, pendingInput.value);
+    }
 
     list.replaceChildren(
       ...servers.map((server) => {
@@ -273,10 +280,12 @@ function buildMcpSection({ onSaved } = {}) {
           type: "password",
           autocomplete: "off",
           class: "settings-input",
+          "data-alias": server.alias,
           placeholder: server.token_set
             ? "•••••• (saved — paste to replace)"
             : `token for ${server.token_env}`,
         });
+        input.value = pendingTokens.get(server.alias) || "";
         const button = h(
           "button",
           { type: "button", class: "btn btn--primary" },

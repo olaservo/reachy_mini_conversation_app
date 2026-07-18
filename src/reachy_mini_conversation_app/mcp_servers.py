@@ -21,9 +21,12 @@ import logging
 import argparse
 from typing import Any
 from pathlib import Path
-from dataclasses import field, asdict, dataclass
+from dataclasses import field, asdict, replace, dataclass
 from collections.abc import Sequence
 
+# Importing config loads the .env file, so an auth token placed there is
+# available when resolving servers from the standalone CLI.
+from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.mcp_client import (
     McpClientError,
     RemoteToolSpec,
@@ -36,6 +39,7 @@ from reachy_mini_conversation_app.mcp_client import (
 from reachy_mini_conversation_app.tool_spaces import (
     TERMINAL_EXTERNAL_CONTENT_DIRECTORY,
     InstalledToolSpaceTool,
+    parse_cached_tools,
     append_tools_to_profile,
     installed_space_aliases,
     build_cached_tools_client,
@@ -120,7 +124,7 @@ def get_mcp_servers_path(instance_path: str | Path | None) -> Path:
     return TERMINAL_EXTERNAL_CONTENT_DIRECTORY / MCP_SERVERS_FILENAME
 
 
-def _parse_auth(raw_auth: Any, alias: str, manifest_path: Path) -> McpServerAuth | None:
+def _parse_auth(raw_auth: object, alias: str, manifest_path: Path) -> McpServerAuth | None:
     if raw_auth is None:
         return None
     if not isinstance(raw_auth, dict):
@@ -162,17 +166,7 @@ def read_mcp_servers(instance_path: str | Path | None) -> InstalledMcpServersMan
         alias = str(raw_server.get("alias", ""))
         auth = _parse_auth(raw_server.get("auth"), alias, manifest_path)
         try:
-            cached_tools = [
-                InstalledToolSpaceTool(
-                    local_name=str(tool["local_name"]),
-                    client_tool_name=str(tool["client_tool_name"]),
-                    remote_name=str(tool.get("remote_name", "")),
-                    description=str(tool.get("description", "")),
-                    parameters_schema=dict(tool.get("parameters_schema") or {}),
-                )
-                for tool in raw_server.get("tools", [])
-                if isinstance(tool, dict) and tool.get("local_name") and tool.get("client_tool_name")
-            ]
+            cached_tools = parse_cached_tools(raw_server.get("tools", []))
             server = InstalledMcpServer(
                 alias=alias,
                 url=str(raw_server.get("url", "")),
@@ -199,7 +193,8 @@ def configured_server_aliases(instance_path: str | Path | None) -> set[str]:
     """Aliases claimed by configured MCP servers, for cross-source collision checks. Empty on read failure."""
     try:
         return {server.alias for server in read_mcp_servers(instance_path).servers}
-    except Exception:
+    except RuntimeError as exc:
+        logger.warning("Could not read configured MCP servers for the alias-collision check: %s", exc)
         return set()
 
 
@@ -309,10 +304,7 @@ def list_token_requirements(instance_path: str | Path | None) -> list[McpTokenRe
 
 def find_server_token_env(instance_path: str | Path | None, alias: str) -> str | None:
     """Return the token env-var name for a configured MCP server alias, or None."""
-    for server in read_mcp_servers(instance_path).servers:
-        if server.alias == alias and server.auth is not None and server.auth.type == BEARER_AUTH_TYPE:
-            return server.auth.token_env
-    return None
+    return next((req.token_env for req in list_token_requirements(instance_path) if req.alias == alias), None)
 
 
 def _build_generic_server_tools(remote_specs: Sequence[RemoteToolSpec]) -> list[InstalledToolSpaceTool]:
@@ -337,14 +329,7 @@ async def resolve_mcp_server(server: InstalledMcpServer) -> InstalledMcpServer:
     except McpClientError as exc:
         raise RuntimeError(f"Failed to discover MCP tools for '{server.alias}': {exc}") from exc
 
-    return InstalledMcpServer(
-        alias=server.alias,
-        url=server.url,
-        auth=server.auth,
-        request_timeout_s=server.request_timeout_s,
-        tool_timeout_s=server.tool_timeout_s,
-        tools=_build_generic_server_tools(remote_specs),
-    )
+    return replace(server, tools=_build_generic_server_tools(remote_specs))
 
 
 def resolve_mcp_server_sync(server: InstalledMcpServer) -> InstalledMcpServer:
@@ -368,38 +353,49 @@ def format_mcp_server_listing(server: InstalledMcpServer) -> str:
 
 def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str | Path | None = None) -> int:
     """Handle mcp-servers subcommands from the main CLI."""
-    # Importing config loads the .env file, so an auth token placed there is
-    # available when resolving servers from the standalone CLI.
-    import reachy_mini_conversation_app.config  # noqa: F401
-
     command = getattr(args, "mcp_servers_command", None)
     if command == "add":
-        auth = None
+        manifest = read_mcp_servers(instance_path)
+        existing = next((entry for entry in manifest.servers if entry.alias == args.alias.strip()), None)
+
+        # Re-running add is the documented cache-refresh flow, so flags that are
+        # not repeated keep their stored values instead of resetting to defaults.
+        auth = existing.auth if existing is not None else None
         token_env = (getattr(args, "token_env", None) or "").strip()
         allow_insecure_token = bool(getattr(args, "allow_insecure_token", False))
-        if token_env:
-            auth = McpServerAuth(
-                type=BEARER_AUTH_TYPE,
-                token_env=token_env,
-                allow_insecure_http=allow_insecure_token,
-            )
-        elif allow_insecure_token:
-            logger.warning("--allow-insecure-token has no effect without --token-env.")
-
         try:
+            if token_env:
+                auth = McpServerAuth(
+                    type=BEARER_AUTH_TYPE,
+                    token_env=token_env,
+                    allow_insecure_http=allow_insecure_token,
+                )
+            elif allow_insecure_token:
+                logger.warning("--allow-insecure-token has no effect without --token-env.")
+
             server = InstalledMcpServer(
                 alias=args.alias,
                 url=args.url,
                 auth=auth,
-                request_timeout_s=args.request_timeout,
-                tool_timeout_s=args.tool_timeout,
+                request_timeout_s=(
+                    args.request_timeout
+                    if args.request_timeout is not None
+                    else existing.request_timeout_s
+                    if existing is not None
+                    else 10.0
+                ),
+                tool_timeout_s=(
+                    args.tool_timeout
+                    if args.tool_timeout is not None
+                    else existing.tool_timeout_s
+                    if existing is not None
+                    else 30.0
+                ),
             )
         except ValueError as exc:
             logger.error("Invalid MCP server configuration: %s", exc)
             return 1
 
-        manifest = read_mcp_servers(instance_path)
-        existing = next((entry for entry in manifest.servers if entry.alias == server.alias), None)
         if existing is not None and existing.url != server.url:
             logger.error(
                 "MCP server alias '%s' is already configured for %s. Remove it first to point it elsewhere.",
@@ -407,6 +403,8 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
                 existing.url,
             )
             return 1
+        if existing is not None and not token_env and existing.auth is not None:
+            logger.info("Keeping stored auth for '%s' (token env '%s').", server.alias, existing.auth.token_env)
         if existing is None and server.alias in installed_space_aliases(instance_path):
             logger.error(
                 "Cannot add MCP server '%s': its alias collides with an installed tool space. "
@@ -440,8 +438,6 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
 
         target_profile = args.profile
         if target_profile is None:
-            from reachy_mini_conversation_app.config import config
-
             target_profile = config.REACHY_MINI_CUSTOM_PROFILE or "default"
 
         tool_ids = [tool.local_name for tool in resolved.tools]

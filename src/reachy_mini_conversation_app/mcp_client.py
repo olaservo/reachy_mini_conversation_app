@@ -73,20 +73,30 @@ def _normalize_name_segment(label: str, value: str) -> str:
     return _require_name_segment(label, normalized)
 
 
+def _is_loopback_name(host: str) -> bool:
+    """Whether the hostname itself pins to loopback ("localhost" is already in the set)."""
+    return host in _LOCAL_HTTP_HOSTS or host.endswith(".localhost")
+
+
+def _parse_host_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse a URL host into an IP address, tolerating IPv6 brackets and zone ids."""
+    candidate = host.strip("[]").split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+
+
 def _is_local_http_host(host: str) -> bool:
     """Return whether plain HTTP is acceptable for this host (local network only)."""
     if not host:
         return False
-    if host in _LOCAL_HTTP_HOSTS or host.endswith(".localhost"):  # "localhost" is already in the set
+    if _is_loopback_name(host):
         return True
     if host.endswith(".local"):  # mDNS, e.g. my-mcp-server.local
         return True
-    candidate = host.strip("[]").split("%", 1)[0]  # strip IPv6 brackets + zone id
-    try:
-        ip = ipaddress.ip_address(candidate)
-    except ValueError:
-        return False
-    return ip.is_private or ip.is_loopback or ip.is_link_local
+    ip = _parse_host_ip(host)
+    return ip is not None and (ip.is_private or ip.is_loopback or ip.is_link_local)
 
 
 def is_loopback_mcp_url(url: str) -> bool:
@@ -94,13 +104,10 @@ def is_loopback_mcp_url(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     if not host:
         return False
-    if host in _LOCAL_HTTP_HOSTS or host.endswith(".localhost"):
+    if _is_loopback_name(host):
         return True
-    candidate = host.strip("[]").split("%", 1)[0]  # strip IPv6 brackets + zone id
-    try:
-        return ipaddress.ip_address(candidate).is_loopback
-    except ValueError:
-        return False
+    ip = _parse_host_ip(host)
+    return ip is not None and ip.is_loopback
 
 
 def validate_http_mcp_url(url: str) -> str:

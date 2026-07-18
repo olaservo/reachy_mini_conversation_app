@@ -393,7 +393,7 @@ reachy-mini-conversation-app mcp-servers remove my_server
 - `mcp_servers.json` in the managed app instance directory
 - `external_content/mcp_servers.json` in terminal mode
 
-Because tools are cached at add time, app startup needs no network discovery. If the server's tool set changes, re-run `mcp-servers add <alias> <same-url>` to refresh the cache. Per-server timeouts can be tuned with `--request-timeout` and `--tool-timeout` (seconds).
+Because tools are cached at add time, app startup needs no network discovery. If the server's tool set changes, re-run `mcp-servers add <alias> <same-url>` to refresh the cache — the stored auth config and timeouts are kept unless you pass those flags again. Per-server timeouts can be tuned with `--request-timeout` and `--tool-timeout` (seconds).
 
 **Auth tokens.** The token value itself is never written to the manifest — only the *name* of the environment variable that holds it (`--token-env`). Put the secret in your environment or the instance `.env`, or paste it in the settings UI ("MCP server tokens" section), which stores it in the instance `.env`. Give each server its own env var: two servers sharing one `token_env` share the same secret.
 

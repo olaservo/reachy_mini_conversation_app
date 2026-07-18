@@ -178,6 +178,23 @@ def _preinstalled_installed_spaces() -> list[InstalledToolSpace]:
     return spaces
 
 
+def parse_cached_tools(raw_tools: object) -> list[InstalledToolSpaceTool]:
+    """Parse a manifest entry's cached-tools list, skipping malformed items."""
+    if not isinstance(raw_tools, list):
+        return []
+    return [
+        InstalledToolSpaceTool(
+            local_name=str(tool["local_name"]),
+            client_tool_name=str(tool["client_tool_name"]),
+            remote_name=str(tool.get("remote_name", "")),
+            description=str(tool.get("description", "")),
+            parameters_schema=dict(tool.get("parameters_schema") or {}),
+        )
+        for tool in raw_tools
+        if isinstance(tool, dict) and tool.get("local_name") and tool.get("client_tool_name")
+    ]
+
+
 def read_installed_tool_spaces(instance_path: str | Path | None) -> InstalledToolSpacesManifest:
     """Read the installed tool-spaces manifest, or seed the bundled Pollen Spaces when none exists."""
     manifest_path = get_installed_tool_spaces_path(instance_path)
@@ -220,17 +237,7 @@ def read_installed_tool_spaces(instance_path: str | Path | None) -> InstalledToo
                 slug,
             )
             continue
-        cached_tools = [
-            InstalledToolSpaceTool(
-                local_name=str(tool["local_name"]),
-                client_tool_name=str(tool["client_tool_name"]),
-                remote_name=str(tool.get("remote_name", "")),
-                description=str(tool.get("description", "")),
-                parameters_schema=dict(tool.get("parameters_schema") or {}),
-            )
-            for tool in raw_space.get("tools", [])
-            if isinstance(tool, dict) and tool.get("local_name") and tool.get("client_tool_name")
-        ]
+        cached_tools = parse_cached_tools(raw_space.get("tools", []))
         seen_slugs.add(slug)
         seen_aliases.add(alias)
         spaces.append(
@@ -253,7 +260,8 @@ def installed_space_aliases(instance_path: str | Path | None) -> set[str]:
     """Return the aliases of installed Spaces, or an empty set if the manifest is unreadable."""
     try:
         manifest = read_installed_tool_spaces(instance_path)
-    except RuntimeError:
+    except RuntimeError as exc:
+        logger.warning("Could not read installed tool spaces for the alias-collision check: %s", exc)
         return set()
     return {space.alias for space in manifest.spaces}
 

@@ -269,6 +269,128 @@ def test_mcp_servers_add_refreshes_cached_tools_for_same_url(
     ]
 
 
+def test_mcp_servers_add_refresh_keeps_stored_auth_and_timeouts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The documented cache-refresh flow must not silently drop auth or reset timeouts."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(TOKEN_ENV, "secret")
+    _mock_discovery(monkeypatch, ["do_thing"])
+    assert (
+        _run_cli(
+            monkeypatch,
+            [
+                "app",
+                "mcp-servers",
+                "add",
+                SERVER_ALIAS,
+                LOOPBACK_SERVER_URL,
+                "--token-env",
+                TOKEN_ENV,
+                "--request-timeout",
+                "5",
+                "--tool-timeout",
+                "60",
+                "--install-only",
+            ],
+        )
+        == 0
+    )
+
+    _mock_discovery(monkeypatch, ["do_thing", "do_other_thing"])
+    assert (
+        _run_cli(monkeypatch, ["app", "mcp-servers", "add", SERVER_ALIAS, LOOPBACK_SERVER_URL, "--install-only"]) == 0
+    )
+
+    server = read_mcp_servers(None).servers[0]
+    assert server.auth is not None
+    assert server.auth.token_env == TOKEN_ENV
+    assert server.request_timeout_s == 5.0
+    assert server.tool_timeout_s == 60.0
+    assert [tool.local_name for tool in server.tools] == [TOOL_ID, f"{SERVER_ALIAS}__do_other_thing"]
+
+
+def test_mcp_servers_add_refresh_keeps_insecure_token_opt_in(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh must keep --allow-insecure-token, or resolving the LAN server would be blocked."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(TOKEN_ENV, "secret")
+    _mock_discovery(monkeypatch)
+    assert (
+        _run_cli(
+            monkeypatch,
+            [
+                "app",
+                "mcp-servers",
+                "add",
+                SERVER_ALIAS,
+                SERVER_URL,
+                "--token-env",
+                TOKEN_ENV,
+                "--allow-insecure-token",
+                "--install-only",
+            ],
+        )
+        == 0
+    )
+
+    assert _run_cli(monkeypatch, ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--install-only"]) == 0
+    server = read_mcp_servers(None).servers[0]
+    assert server.auth is not None
+    assert server.auth.allow_insecure_http is True
+
+
+def test_mcp_servers_add_refresh_replaces_auth_when_flag_passed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passing --token-env on a re-add updates the stored auth instead of keeping the old one."""
+    other_token_env = f"{TOKEN_ENV}_V2"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(TOKEN_ENV, "secret")
+    monkeypatch.setenv(other_token_env, "secret-v2")
+    _mock_discovery(monkeypatch)
+    assert (
+        _run_cli(
+            monkeypatch,
+            [
+                "app",
+                "mcp-servers",
+                "add",
+                SERVER_ALIAS,
+                LOOPBACK_SERVER_URL,
+                "--token-env",
+                TOKEN_ENV,
+                "--install-only",
+            ],
+        )
+        == 0
+    )
+
+    assert (
+        _run_cli(
+            monkeypatch,
+            [
+                "app",
+                "mcp-servers",
+                "add",
+                SERVER_ALIAS,
+                LOOPBACK_SERVER_URL,
+                "--token-env",
+                other_token_env,
+                "--install-only",
+            ],
+        )
+        == 0
+    )
+    server = read_mcp_servers(None).servers[0]
+    assert server.auth is not None
+    assert server.auth.token_env == other_token_env
+
+
 def test_mcp_servers_add_rejects_same_alias_different_url(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

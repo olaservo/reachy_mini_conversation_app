@@ -20,6 +20,7 @@ from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY as DE
 # Import config to ensure .env is loaded before reading REACHY_MINI_CUSTOM_PROFILE
 from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.mcp_client import McpToolTimeoutError, McpToolInvocationError
+from reachy_mini_conversation_app.mcp_servers import read_mcp_servers, build_generic_remote_client
 from reachy_mini_conversation_app.tool_spaces import build_remote_client, read_installed_tool_spaces
 from reachy_mini_conversation_app.tools.tool_constants import SystemTool
 
@@ -103,11 +104,7 @@ _REMOTE_TOOL_RETRY_DELAY_S = 0.25
 
 
 class RemoteMcpTool(Tool):
-    """Adapter exposing one remote MCP tool through the local Tool interface.
-
-    Wraps a tool from either an installed Hugging Face Space (``slug``) or a
-    configured generic MCP server (``server_alias``); exactly one must be set.
-    """
+    """Adapter exposing one remote MCP tool (Space ``slug`` or generic ``server_alias``, exactly one) locally."""
 
     _auto_register: ClassVar[bool] = False
 
@@ -472,10 +469,6 @@ def _resolve_remote_tools(tool_names: list[str], instance_path: str | Path | Non
 
 def _resolve_generic_mcp_tools(tool_names: list[str], instance_path: str | Path | None) -> list[RemoteMcpTool]:
     """Build generic MCP server tools enabled by the active profile from the cached manifest, without network calls."""
-    # Local import: mcp_servers imports tool_spaces (which this module also uses),
-    # so keep the dependency lazy to avoid import-order surprises at startup.
-    from reachy_mini_conversation_app.mcp_servers import read_mcp_servers, build_generic_remote_client
-
     try:
         manifest = read_mcp_servers(instance_path)
     except RuntimeError as exc:

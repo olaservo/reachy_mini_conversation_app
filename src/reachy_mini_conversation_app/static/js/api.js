@@ -103,7 +103,9 @@ const ERROR_MESSAGES = Object.freeze({
   not_deletable: "This personality can't be deleted.",
   loop_unavailable: "Reachy is still starting up. Try again in a moment.",
   empty_token: "Enter a token first.",
+  invalid_token: "Tokens can't contain line breaks or '${'.",
   unknown_server: "That MCP server is no longer configured.",
+  manifest_unreadable: "Couldn't read the MCP server list. Check mcp_servers.json for errors.",
 });
 
 /** Map a thrown error to user-facing copy, falling back to its raw message. */

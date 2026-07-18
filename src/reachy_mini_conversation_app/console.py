@@ -63,6 +63,22 @@ _SSE_KEEPALIVE_INTERVAL_SECONDS = 15.0  # below typical 60s proxy idle timeout
 SETTINGS_API_PREFIX = "/api/v1"
 
 
+# Unquoted, these make python-dotenv return a different value than was written:
+# `#` starts an inline comment, quotes are stripped, and backslash/whitespace
+# parsing varies. Quoting keeps the value literal — except `${VAR}`, which
+# python-dotenv interpolates in any quoting style, so those values are refused
+# in `_persist_env_values` instead.
+_ENV_VALUE_CHARS_NEEDING_QUOTES = " \t#'\"$\\"
+
+
+def _format_env_line(name: str, value: str) -> str:
+    """Format a `.env` line so the value round-trips through python-dotenv unchanged."""
+    if any(char in value for char in _ENV_VALUE_CHARS_NEEDING_QUOTES):
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        return f"{name}='{escaped}'"
+    return f"{name}={value}"
+
+
 def _detach_framework_root_routes(app: "FastAPI") -> None:
     """Strip framework routes that would shadow the settings UI."""
     routes = getattr(app, "router", None)
@@ -334,19 +350,24 @@ class LocalStream:
             "backend_error": None if connected else self._backend_error,
         }
 
-    def _persist_env_values(self, updates: dict[str, str]) -> None:
-        """Persist non-empty environment values in memory and in the instance `.env`."""
+    def _persist_env_values(self, updates: dict[str, str]) -> bool:
+        """Apply non-empty environment values to the runtime and the instance `.env`.
+
+        Raises ValueError before anything is applied if a value cannot round-trip
+        through the `.env`: line breaks corrupt the file, and `${` triggers
+        python-dotenv interpolation that has no escape syntax. Returns whether
+        the values were written to a `.env` file — False in terminal mode (no
+        instance path), where they only last for the current process.
+        """
         normalized_updates = {name: (value or "").strip() for name, value in updates.items()}
-        # A line break in a value would corrupt the `.env` (truncated value plus a stray
-        # or injected line), so such values are refused rather than written broken.
-        line_break_names = sorted(name for name, value in normalized_updates.items() if "\n" in value or "\r" in value)
-        if line_break_names:
-            logger.error("Refusing to persist %s: values must not contain line breaks.", ", ".join(line_break_names))
-        normalized_updates = {
-            name: value for name, value in normalized_updates.items() if value and name not in line_break_names
-        }
+        unsafe_names = sorted(
+            name for name, value in normalized_updates.items() if "\n" in value or "\r" in value or "${" in value
+        )
+        if unsafe_names:
+            raise ValueError(f"Values must not contain line breaks or '${{': {', '.join(unsafe_names)}.")
+        normalized_updates = {name: value for name, value in normalized_updates.items() if value}
         if not normalized_updates:
-            return
+            return False
 
         for env_name, value in normalized_updates.items():
             try:
@@ -356,7 +377,7 @@ class LocalStream:
         refresh_runtime_config_from_env()
 
         if not self._instance_path:
-            return
+            return False
         try:
             inst = Path(self._instance_path)
             env_path = inst / ".env"
@@ -365,11 +386,11 @@ class LocalStream:
                 replaced = False
                 for i, ln in enumerate(lines):
                     if ln.strip().startswith(f"{env_name}="):
-                        lines[i] = f"{env_name}={value}"
+                        lines[i] = _format_env_line(env_name, value)
                         replaced = True
                         break
                 if not replaced:
-                    lines.append(f"{env_name}={value}")
+                    lines.append(_format_env_line(env_name, value))
             final_text = "\n".join(lines) + "\n"
             env_path.write_text(final_text, encoding="utf-8")
             logger.info("Persisted %s to %s", ", ".join(sorted(normalized_updates)), env_path)
@@ -381,8 +402,10 @@ class LocalStream:
             except Exception:
                 pass
             refresh_runtime_config_from_env()
+            return True
         except Exception as e:
             logger.warning("Failed to persist %s: %s", ", ".join(sorted(normalized_updates)), e)
+            return False
 
     def _remove_persisted_env_values(self, env_names: tuple[str, ...]) -> None:
         """Remove keys from the instance `.env` without mutating the current runtime."""
@@ -645,7 +668,10 @@ class LocalStream:
                 if port < 1 or port > 65535:
                     return JSONResponse({"ok": False, "error": "invalid_hf_port"}, status_code=400)
 
-                self._persist_hf_direct_connection(host, port)
+                try:
+                    self._persist_hf_direct_connection(host, port)
+                except ValueError:
+                    return JSONResponse({"ok": False, "error": "invalid_hf_host"}, status_code=400)
             elif hf_mode == HF_DEPLOYED_CONNECTION_MODE:
                 if not bool(get_hf_session_url()):
                     return JSONResponse({"ok": False, "error": "missing_hf_session_url"}, status_code=400)
@@ -675,25 +701,44 @@ class LocalStream:
             token = payload.token.strip()
             if not token:
                 return JSONResponse({"ok": False, "error": "empty_token"}, status_code=400)
-            if "\n" in token or "\r" in token:
-                return JSONResponse({"ok": False, "error": "invalid_token"}, status_code=400)
 
-            token_env = find_server_token_env(self._instance_path, payload.alias.strip())
+            try:
+                token_env = find_server_token_env(self._instance_path, payload.alias.strip())
+            except RuntimeError as exc:
+                logger.warning("Could not read the MCP servers manifest: %s", exc)
+                return JSONResponse({"ok": False, "error": "manifest_unreadable"}, status_code=500)
             if token_env is None:
                 return JSONResponse({"ok": False, "error": "unknown_server"}, status_code=404)
 
-            self._persist_env_values({token_env: token})
+            try:
+                persisted = self._persist_env_values({token_env: token})
+            except ValueError:
+                return JSONResponse({"ok": False, "error": "invalid_token"}, status_code=400)
             # Re-resolve tools so a server that was skipped for a missing token loads now.
             try:
                 initialize_tools(force=True)
             except Exception:
                 logger.exception("Tool registry rebuild failed after MCP token save")
 
-            if self._can_rebuild_handler():
+            can_rebuild = self._can_rebuild_handler()
+            if can_rebuild:
                 self._mark_restart_requested("mcp_server_token_changed")
-                message = "Token saved. Reconnecting to load its tools."
+            if persisted:
+                message = (
+                    "Token saved. Reconnecting to load its tools."
+                    if can_rebuild
+                    else "Token saved. Restart the app to load its tools."
+                )
+            elif can_rebuild:
+                message = (
+                    f"Token set for this session only; reconnecting to load its tools. "
+                    f"Add {token_env} to your .env file to keep it across restarts."
+                )
             else:
-                message = "Token saved. Restart the app to load its tools."
+                message = (
+                    f"Token set for this session only. Add {token_env} to your .env file "
+                    "and restart the app to load its tools."
+                )
             return JSONResponse(
                 {
                     "ok": True,
