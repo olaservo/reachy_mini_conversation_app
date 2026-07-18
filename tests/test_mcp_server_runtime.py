@@ -17,10 +17,10 @@ from reachy_mini_conversation_app.mcp_servers import (
 )
 from reachy_mini_conversation_app.tool_spaces import (
     InstalledToolSpace,
-    InstalledToolSpaceTool,
     InstalledToolSpacesManifest,
     write_installed_tool_spaces,
 )
+from reachy_mini_conversation_app.remote_tool_sources import CachedRemoteTool
 
 
 SERVER_ALIAS = "example"
@@ -44,7 +44,7 @@ def _installed_server(auth: McpServerAuth | None = None) -> InstalledMcpServer:
         url=SERVER_URL,
         auth=auth,
         tools=[
-            InstalledToolSpaceTool(
+            CachedRemoteTool(
                 local_name=TOOL_ID,
                 client_tool_name=TOOL_ID,
                 remote_name="do_thing",
@@ -215,7 +215,7 @@ def test_initialize_tools_fails_on_name_collision_between_space_and_server(
     monkeypatch.setattr(config_mod.config, "TOOLS_DIRECTORY", None)
     monkeypatch.setattr(config_mod.config, "AUTOLOAD_EXTERNAL_TOOLS", False)
 
-    colliding_tool = InstalledToolSpaceTool(
+    colliding_tool = CachedRemoteTool(
         local_name=colliding_tool_id,
         client_tool_name=colliding_tool_id,
         remote_name="do_thing",

@@ -36,12 +36,12 @@ from reachy_mini_conversation_app.mcp_client import (
     _require_name_segment,
     validate_http_mcp_url,
 )
-from reachy_mini_conversation_app.tool_spaces import (
+from reachy_mini_conversation_app.tool_spaces import installed_space_aliases
+from reachy_mini_conversation_app.remote_tool_sources import (
     TERMINAL_EXTERNAL_CONTENT_DIRECTORY,
-    InstalledToolSpaceTool,
+    CachedRemoteTool,
     parse_cached_tools,
     append_tools_to_profile,
-    installed_space_aliases,
     build_cached_tools_client,
     disable_alias_tools_in_profiles,
 )
@@ -97,7 +97,7 @@ class InstalledMcpServer:
     auth: McpServerAuth | None = None
     request_timeout_s: float = 10.0
     tool_timeout_s: float = 30.0
-    tools: list[InstalledToolSpaceTool] = field(default_factory=list)
+    tools: list[CachedRemoteTool] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Validate alias, URL and timeouts once the dataclass is created."""
@@ -307,10 +307,10 @@ def find_server_token_env(instance_path: str | Path | None, alias: str) -> str |
     return next((req.token_env for req in list_token_requirements(instance_path) if req.alias == alias), None)
 
 
-def _build_generic_server_tools(remote_specs: Sequence[RemoteToolSpec]) -> list[InstalledToolSpaceTool]:
+def _build_generic_server_tools(remote_specs: Sequence[RemoteToolSpec]) -> list[CachedRemoteTool]:
     """Map discovered remote specs to app-facing tools without HF-specific name cleaning."""
     return [
-        InstalledToolSpaceTool(
+        CachedRemoteTool(
             local_name=spec.namespaced_name,
             client_tool_name=spec.namespaced_name,
             remote_name=spec.remote_name,

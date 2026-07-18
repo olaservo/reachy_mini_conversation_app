@@ -6,7 +6,6 @@ import json
 import asyncio
 import logging
 import argparse
-from typing import Any
 from pathlib import Path
 from collections import Counter
 from dataclasses import field, asdict, dataclass
@@ -24,13 +23,20 @@ from reachy_mini_conversation_app.mcp_client import (
     apply_name_normalization,
     build_namespaced_tool_name,
 )
+from reachy_mini_conversation_app.remote_tool_sources import (
+    TERMINAL_EXTERNAL_CONTENT_DIRECTORY,
+    CachedRemoteTool,
+    parse_cached_tools,
+    append_tools_to_profile,
+    build_cached_tools_client,
+    disable_alias_tools_in_profiles,
+)
 
 
 logger = logging.getLogger(__name__)
 
 INSTALLED_TOOL_SPACES_FILENAME = "installed_tool_spaces.json"
 INSTALLED_TOOL_SPACES_VERSION = 2
-TERMINAL_EXTERNAL_CONTENT_DIRECTORY = Path("external_content")
 # Bundled Pollen Spaces seeded when no manifest exists, so startup needs no Hugging Face discovery.
 PREINSTALLED_TOOL_SPACE_SPECS = {
     "pollen-robotics/reachy-mini-search-tool": (
@@ -111,15 +117,9 @@ PREINSTALLED_TOOL_SPACE_SPECS = {
 _SLUG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
-@dataclass(frozen=True)
-class InstalledToolSpaceTool:
-    """App-facing metadata for one remote tool exposed by an installed Space."""
-
-    local_name: str
-    client_tool_name: str
-    remote_name: str
-    description: str
-    parameters_schema: dict[str, Any]
+# Historical name for the cached-tool record, kept so existing imports and the
+# on-disk manifests (which only store fields, not the class name) are unaffected.
+InstalledToolSpaceTool = CachedRemoteTool
 
 
 @dataclass(frozen=True)
@@ -176,23 +176,6 @@ def _preinstalled_installed_spaces() -> list[InstalledToolSpace]:
             )
         )
     return spaces
-
-
-def parse_cached_tools(raw_tools: object) -> list[InstalledToolSpaceTool]:
-    """Parse a manifest entry's cached-tools list, skipping malformed items."""
-    if not isinstance(raw_tools, list):
-        return []
-    return [
-        InstalledToolSpaceTool(
-            local_name=str(tool["local_name"]),
-            client_tool_name=str(tool["client_tool_name"]),
-            remote_name=str(tool.get("remote_name", "")),
-            description=str(tool.get("description", "")),
-            parameters_schema=dict(tool.get("parameters_schema") or {}),
-        )
-        for tool in raw_tools
-        if isinstance(tool, dict) and tool.get("local_name") and tool.get("client_tool_name")
-    ]
 
 
 def read_installed_tool_spaces(instance_path: str | Path | None) -> InstalledToolSpacesManifest:
@@ -281,52 +264,6 @@ def write_installed_tool_spaces(
     return manifest_path
 
 
-def append_tools_to_profile(profile: str, tool_ids: list[str]) -> list[str]:
-    """Append tool IDs to a profile's tools.txt. Returns the IDs that were added."""
-    tools_txt = config.resolve_profile_dir(profile) / "tools.txt"
-    if not tools_txt.parent.is_dir():
-        raise RuntimeError(
-            f"Profile '{profile}' not found at {tools_txt.parent}. Use --install-only to skip profile wiring."
-        )
-
-    existing_content = tools_txt.read_text(encoding="utf-8") if tools_txt.exists() else ""
-    existing: set[str] = set()
-    for line in existing_content.splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            existing.add(stripped)
-
-    to_add = [tid for tid in tool_ids if tid not in existing]
-    if to_add:
-        with tools_txt.open("a", encoding="utf-8") as f:
-            if existing_content and not existing_content.endswith("\n"):
-                f.write("\n")
-            for tid in to_add:
-                f.write(f"{tid}\n")
-    return to_add
-
-
-def disable_alias_tools_in_profiles(alias: str) -> list[tuple[str, list[str]]]:
-    """Strip an alias's tool IDs from every profile's tools.txt. Returns (profile, removed IDs) per profile touched."""
-    prefix = f"{alias}__"
-    removed_by_profile: list[tuple[str, list[str]]] = []
-    seen: set[Path] = set()
-    for root in (config.PROFILES_DIRECTORY, config.user_personalities_root()):
-        for tools_txt in sorted(root.glob("*/tools.txt")):
-            resolved = tools_txt.resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            lines = tools_txt.read_text(encoding="utf-8").splitlines()
-            removed = [line.strip() for line in lines if line.strip().startswith(prefix)]
-            if not removed:
-                continue
-            kept = [line for line in lines if not line.strip().startswith(prefix)]
-            tools_txt.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8")
-            removed_by_profile.append((tools_txt.parent.name, removed))
-    return removed_by_profile
-
-
 def validate_space_slug(slug: str) -> str:
     """Validate a public HF Space slug."""
     candidate = slug.strip()
@@ -413,27 +350,6 @@ def _validate_space_info(slug: str, space_info: SpaceInfo) -> None:
         raise RuntimeError(f"Space '{slug}' is disabled and cannot be installed.")
     if (space_info.sdk or "").strip().lower() != "gradio":
         raise RuntimeError(f"Space '{slug}' is not a Gradio Space and cannot expose the standard MCP endpoint.")
-
-
-def build_cached_tools_client(
-    server_config: RemoteMcpServerConfig,
-    cached_tools: Sequence[InstalledToolSpaceTool],
-) -> RemoteMcpToolClient:
-    """Build an MCP client from a transport config and manifest-cached tool records."""
-    return RemoteMcpToolClient(
-        server_config,
-        known_tools=[
-            RemoteToolSpec(
-                server_alias=server_config.alias,
-                remote_name=tool.remote_name,
-                namespaced_name=tool.client_tool_name,
-                description=tool.description,
-                parameters_schema=tool.parameters_schema,
-            )
-            for tool in cached_tools
-            if tool.remote_name
-        ],
-    )
 
 
 def build_remote_client(

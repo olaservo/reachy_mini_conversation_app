@@ -22,10 +22,10 @@ from reachy_mini_conversation_app.mcp_servers import (
 )
 from reachy_mini_conversation_app.tool_spaces import (
     InstalledToolSpace,
-    InstalledToolSpaceTool,
     InstalledToolSpacesManifest,
     write_installed_tool_spaces,
 )
+from reachy_mini_conversation_app.remote_tool_sources import CachedRemoteTool
 
 
 SERVER_ALIAS = "example"
@@ -141,7 +141,7 @@ def test_mcp_servers_list_reads_from_cache_without_network(
                     alias=SERVER_ALIAS,
                     url=SERVER_URL,
                     tools=[
-                        InstalledToolSpaceTool(
+                        CachedRemoteTool(
                             local_name=TOOL_ID,
                             client_tool_name=TOOL_ID,
                             remote_name="do_thing",
