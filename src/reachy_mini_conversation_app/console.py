@@ -34,6 +34,7 @@ from reachy_mini_conversation_app.config import (
     refresh_runtime_config_from_env,
 )
 from reachy_mini_conversation_app.streaming import AdditionalOutputs, audio_to_float32
+from reachy_mini_conversation_app.mcp_servers import find_server_token_env, list_token_requirements
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.tools.core_tools import initialize_tools
 from reachy_mini_conversation_app.personality_routes import mount_personality_routes
@@ -336,7 +337,14 @@ class LocalStream:
     def _persist_env_values(self, updates: dict[str, str]) -> None:
         """Persist non-empty environment values in memory and in the instance `.env`."""
         normalized_updates = {name: (value or "").strip() for name, value in updates.items()}
-        normalized_updates = {name: value for name, value in normalized_updates.items() if value}
+        # A line break in a value would corrupt the `.env` (truncated value plus a stray
+        # or injected line), so such values are refused rather than written broken.
+        line_break_names = sorted(name for name, value in normalized_updates.items() if "\n" in value or "\r" in value)
+        if line_break_names:
+            logger.error("Refusing to persist %s: values must not contain line breaks.", ", ".join(line_break_names))
+        normalized_updates = {
+            name: value for name, value in normalized_updates.items() if value and name not in line_break_names
+        }
         if not normalized_updates:
             return
 
@@ -549,8 +557,6 @@ class LocalStream:
         def _mcp_servers_payload() -> list[dict[str, object]]:
             """Describe configured MCP servers' token requirements for the settings UI."""
             try:
-                from reachy_mini_conversation_app.mcp_servers import list_token_requirements
-
                 return [
                     {"alias": req.alias, "token_env": req.token_env, "token_set": req.token_set}
                     for req in list_token_requirements(self._instance_path)
@@ -666,11 +672,11 @@ class LocalStream:
 
         @settings_app.post(f"{SETTINGS_API_PREFIX}/mcp_server_token")
         def _set_mcp_server_token(payload: McpServerTokenPayload) -> JSONResponse:
-            from reachy_mini_conversation_app.mcp_servers import find_server_token_env
-
             token = payload.token.strip()
             if not token:
                 return JSONResponse({"ok": False, "error": "empty_token"}, status_code=400)
+            if "\n" in token or "\r" in token:
+                return JSONResponse({"ok": False, "error": "invalid_token"}, status_code=400)
 
             token_env = find_server_token_env(self._instance_path, payload.alias.strip())
             if token_env is None:

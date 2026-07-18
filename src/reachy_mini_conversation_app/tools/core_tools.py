@@ -11,6 +11,7 @@ import importlib.util
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Callable, ClassVar, Sequence, TypedDict
 from pathlib import Path
+from functools import partial
 from dataclasses import dataclass
 
 from reachy_mini import ReachyMini
@@ -25,6 +26,7 @@ from reachy_mini_conversation_app.tools.tool_constants import SystemTool
 
 if TYPE_CHECKING:
     from reachy_mini_conversation_app.mcp_client import RemoteMcpToolClient
+    from reachy_mini_conversation_app.tool_spaces import InstalledToolSpaceTool
     from reachy_mini_conversation_app.tools.background_tool_manager import BackgroundToolManager
 
 
@@ -395,48 +397,76 @@ def _read_profile_tool_names() -> list[str]:
     return tool_names
 
 
+def _resolve_cached_manifest_tools(
+    tool_names: list[str],
+    *,
+    alias: str,
+    source_label: str,
+    refresh_command: str,
+    cached_tools: Sequence[InstalledToolSpaceTool],
+    cache_scope: str,
+    make_client: Callable[[], RemoteMcpToolClient],
+    tool_identity: dict[str, str],
+) -> list[RemoteMcpTool]:
+    """Build the RemoteMcpTool adapters one manifest source contributes to the profile, without network calls."""
+    enabled_tool_names = {name for name in tool_names if name.startswith(f"{alias}__")}
+    if not enabled_tool_names:
+        return []
+
+    discovered_tool_names = {tool.local_name for tool in cached_tools}
+    missing_tool_names = sorted(enabled_tool_names - discovered_tool_names)
+    if missing_tool_names:
+        logger.warning(
+            "Tools enabled from %s are missing from the cached manifest and will be skipped: %s. "
+            "Re-run '%s' to refresh.",
+            source_label,
+            ", ".join(missing_tool_names),
+            refresh_command,
+        )
+
+    client = make_client()
+    remote_tools: list[RemoteMcpTool] = []
+    for remote_tool in cached_tools:
+        if remote_tool.local_name not in enabled_tool_names:
+            continue
+        cache_key = ("remote", f"{cache_scope}:{remote_tool.local_name}:{remote_tool.client_tool_name}")
+        cached_tool = _LOADED_REMOTE_TOOL_CACHE.get(cache_key)
+        if cached_tool is None:
+            cached_tool = RemoteMcpTool(
+                name=remote_tool.local_name,
+                description=remote_tool.description,
+                parameters_schema=remote_tool.parameters_schema,
+                client_tool_name=remote_tool.client_tool_name,
+                client=client,
+                **tool_identity,
+            )
+            _LOADED_REMOTE_TOOL_CACHE[cache_key] = cached_tool
+        remote_tools.append(cached_tool)
+    return remote_tools
+
+
 def _resolve_remote_tools(tool_names: list[str], instance_path: str | Path | None) -> list[RemoteMcpTool]:
     """Build Space tools enabled by the active profile from the cached install manifest, without any network calls."""
     remote_tools: list[RemoteMcpTool] = []
     for installed_space in read_installed_tool_spaces(instance_path).spaces:
-        enabled_tool_names = {name for name in tool_names if name.startswith(f"{installed_space.alias}__")}
-        if not enabled_tool_names:
-            continue
-
-        discovered_tool_names = {tool.local_name for tool in installed_space.tools}
-        missing_tool_names = sorted(enabled_tool_names - discovered_tool_names)
-        if missing_tool_names:
-            logger.warning(
-                "Tools enabled from '%s' are missing from the install manifest and will be skipped: %s. "
-                "Re-run 'tool-spaces add %s' to refresh.",
-                installed_space.slug,
-                ", ".join(missing_tool_names),
-                installed_space.slug,
+        remote_tools.extend(
+            _resolve_cached_manifest_tools(
+                tool_names,
+                alias=installed_space.alias,
+                source_label=f"Space '{installed_space.slug}'",
+                refresh_command=f"tool-spaces add {installed_space.slug}",
+                cached_tools=installed_space.tools,
+                cache_scope=installed_space.slug,
+                make_client=partial(
+                    build_remote_client,
+                    installed_space.alias,
+                    installed_space.mcp_url,
+                    private=installed_space.private,
+                    cached_tools=installed_space.tools,
+                ),
+                tool_identity={"slug": installed_space.slug},
             )
-
-        client = build_remote_client(
-            installed_space.alias,
-            installed_space.mcp_url,
-            private=installed_space.private,
-            cached_tools=installed_space.tools,
         )
-        for remote_tool in installed_space.tools:
-            if remote_tool.local_name not in enabled_tool_names:
-                continue
-            cache_key = ("remote", f"{installed_space.slug}:{remote_tool.local_name}:{remote_tool.client_tool_name}")
-            cached_tool = _LOADED_REMOTE_TOOL_CACHE.get(cache_key)
-            if cached_tool is None:
-                cached_tool = RemoteMcpTool(
-                    slug=installed_space.slug,
-                    name=remote_tool.local_name,
-                    description=remote_tool.description,
-                    parameters_schema=remote_tool.parameters_schema,
-                    client_tool_name=remote_tool.client_tool_name,
-                    client=client,
-                )
-                _LOADED_REMOTE_TOOL_CACHE[cache_key] = cached_tool
-            remote_tools.append(cached_tool)
-
     return remote_tools
 
 
@@ -455,40 +485,18 @@ def _resolve_generic_mcp_tools(tool_names: list[str], instance_path: str | Path 
 
     remote_tools: list[RemoteMcpTool] = []
     for server in manifest.servers:
-        enabled_tool_names = {name for name in tool_names if name.startswith(f"{server.alias}__")}
-        if not enabled_tool_names:
-            continue
-
-        discovered_tool_names = {tool.local_name for tool in server.tools}
-        missing_tool_names = sorted(enabled_tool_names - discovered_tool_names)
-        if missing_tool_names:
-            logger.warning(
-                "Tools enabled from MCP server '%s' are missing from the manifest and will be skipped: %s. "
-                "Re-run 'mcp-servers add %s %s' to refresh.",
-                server.alias,
-                ", ".join(missing_tool_names),
-                server.alias,
-                server.url,
+        remote_tools.extend(
+            _resolve_cached_manifest_tools(
+                tool_names,
+                alias=server.alias,
+                source_label=f"MCP server '{server.alias}'",
+                refresh_command=f"mcp-servers add {server.alias} {server.url}",
+                cached_tools=server.tools,
+                cache_scope=f"mcp:{server.alias}",
+                make_client=partial(build_generic_remote_client, server),
+                tool_identity={"server_alias": server.alias},
             )
-
-        client = build_generic_remote_client(server)
-        for remote_tool in server.tools:
-            if remote_tool.local_name not in enabled_tool_names:
-                continue
-            cache_key = ("remote", f"mcp:{server.alias}:{remote_tool.local_name}:{remote_tool.client_tool_name}")
-            cached_tool = _LOADED_REMOTE_TOOL_CACHE.get(cache_key)
-            if cached_tool is None:
-                cached_tool = RemoteMcpTool(
-                    server_alias=server.alias,
-                    name=remote_tool.local_name,
-                    description=remote_tool.description,
-                    parameters_schema=remote_tool.parameters_schema,
-                    client_tool_name=remote_tool.client_tool_name,
-                    client=client,
-                )
-                _LOADED_REMOTE_TOOL_CACHE[cache_key] = cached_tool
-            remote_tools.append(cached_tool)
-
+        )
     return remote_tools
 
 

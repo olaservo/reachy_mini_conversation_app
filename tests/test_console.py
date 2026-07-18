@@ -357,6 +357,12 @@ def test_mcp_server_token_route_rejects_bad_requests(
     assert unknown.status_code == 404
     assert unknown.json()["error"] == "unknown_server"
 
+    # An internal line break would corrupt the instance .env (truncated token plus an injected line).
+    multiline = client.post("/api/v1/mcp_server_token", json={"alias": "example", "token": "abc\nINJECTED=1"})
+    assert multiline.status_code == 400
+    assert multiline.json()["error"] == "invalid_token"
+    assert not (tmp_path / ".env").exists()
+
 
 def test_backend_config_persists_deployed_mode_without_clearing_local_hf_ws_url(
     tmp_path: Path,

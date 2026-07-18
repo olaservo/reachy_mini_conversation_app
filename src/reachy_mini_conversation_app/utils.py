@@ -63,6 +63,16 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
         help="Name of the environment variable holding the bearer token. The token value is never stored.",
     )
     mcp_add_parser.add_argument(
+        "--allow-insecure-token",
+        dest="allow_insecure_token",
+        action="store_true",
+        default=False,
+        help=(
+            "Allow sending the bearer token over plain HTTP to a non-loopback local-network host "
+            "(e.g. a Home Assistant box on your LAN). The token is visible to anyone on that network."
+        ),
+    )
+    mcp_add_parser.add_argument(
         "--request-timeout",
         dest="request_timeout",
         type=float,

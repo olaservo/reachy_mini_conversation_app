@@ -13,7 +13,6 @@ keep their raw namespaced name ``{alias}__{tool}`` with no redundant-prefix
 cleaning: arbitrary servers have no naming convention to strip.
 """
 
-from __future__ import annotations
 import os
 import re
 import json
@@ -30,6 +29,7 @@ from reachy_mini_conversation_app.mcp_client import (
     RemoteToolSpec,
     RemoteMcpToolClient,
     RemoteMcpServerConfig,
+    is_loopback_mcp_url,
     _require_name_segment,
     validate_http_mcp_url,
 )
@@ -38,6 +38,7 @@ from reachy_mini_conversation_app.tool_spaces import (
     InstalledToolSpaceTool,
     append_tools_to_profile,
     installed_space_aliases,
+    build_cached_tools_client,
     disable_alias_tools_in_profiles,
 )
 
@@ -60,6 +61,8 @@ class McpServerAuth:
 
     type: str
     token_env: str
+    # Explicit opt-in to sending the token over plain HTTP to a non-loopback host.
+    allow_insecure_http: bool = False
 
     def __post_init__(self) -> None:
         """Validate the auth descriptor."""
@@ -123,7 +126,11 @@ def _parse_auth(raw_auth: Any, alias: str, manifest_path: Path) -> McpServerAuth
     if not isinstance(raw_auth, dict):
         raise RuntimeError(f"Invalid 'auth' for MCP server '{alias}' in {manifest_path}: expected an object.")
     try:
-        return McpServerAuth(type=str(raw_auth.get("type", "")), token_env=str(raw_auth.get("token_env", "")))
+        return McpServerAuth(
+            type=str(raw_auth.get("type", "")),
+            token_env=str(raw_auth.get("token_env", "")),
+            allow_insecure_http=bool(raw_auth.get("allow_insecure_http", False)),
+        )
     except ValueError as exc:
         raise RuntimeError(f"Invalid 'auth' for MCP server '{alias}' in {manifest_path}: {exc}") from exc
 
@@ -154,18 +161,18 @@ def read_mcp_servers(instance_path: str | Path | None) -> InstalledMcpServersMan
 
         alias = str(raw_server.get("alias", ""))
         auth = _parse_auth(raw_server.get("auth"), alias, manifest_path)
-        cached_tools = [
-            InstalledToolSpaceTool(
-                local_name=str(tool["local_name"]),
-                client_tool_name=str(tool["client_tool_name"]),
-                remote_name=str(tool.get("remote_name", "")),
-                description=str(tool.get("description", "")),
-                parameters_schema=dict(tool.get("parameters_schema") or {}),
-            )
-            for tool in raw_server.get("tools", [])
-            if isinstance(tool, dict) and tool.get("local_name") and tool.get("client_tool_name")
-        ]
         try:
+            cached_tools = [
+                InstalledToolSpaceTool(
+                    local_name=str(tool["local_name"]),
+                    client_tool_name=str(tool["client_tool_name"]),
+                    remote_name=str(tool.get("remote_name", "")),
+                    description=str(tool.get("description", "")),
+                    parameters_schema=dict(tool.get("parameters_schema") or {}),
+                )
+                for tool in raw_server.get("tools", [])
+                if isinstance(tool, dict) and tool.get("local_name") and tool.get("client_tool_name")
+            ]
             server = InstalledMcpServer(
                 alias=alias,
                 url=str(raw_server.get("url", "")),
@@ -174,7 +181,7 @@ def read_mcp_servers(instance_path: str | Path | None) -> InstalledMcpServersMan
                 tool_timeout_s=float(raw_server.get("tool_timeout_s", 30.0)),
                 tools=cached_tools,
             )
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             raise RuntimeError(f"Invalid MCP server entry in {manifest_path}: {exc}") from exc
 
         if server.alias in seen_aliases:
@@ -211,6 +218,8 @@ def write_mcp_servers(instance_path: str | Path | None, manifest: InstalledMcpSe
         }
         if server.auth is not None:
             entry["auth"] = {"type": server.auth.type, "token_env": server.auth.token_env}
+            if server.auth.allow_insecure_http:
+                entry["auth"]["allow_insecure_http"] = True
         servers_payload.append(entry)
 
     payload = {"version": manifest.version, "servers": servers_payload}
@@ -228,10 +237,16 @@ def _resolve_auth_headers(server: InstalledMcpServer) -> dict[str, str]:
             raise RuntimeError(
                 f"Env var '{server.auth.token_env}' for MCP server '{server.alias}' is not set or empty."
             )
-        if server.url.lower().startswith("http://"):
+        if server.url.lower().startswith("http://") and not is_loopback_mcp_url(server.url):
+            if not server.auth.allow_insecure_http:
+                raise RuntimeError(
+                    f"MCP server '{server.alias}' would send its bearer token over plain HTTP ({server.url}), "
+                    "exposing it to anyone on the network. Use HTTPS, a loopback address, or opt in "
+                    "explicitly with 'mcp-servers add ... --allow-insecure-token'."
+                )
             logger.warning(
-                "MCP server '%s' sends its bearer token over plain HTTP (%s); the token is "
-                "visible to anyone on the local network. Prefer HTTPS.",
+                "MCP server '%s' sends its bearer token over plain HTTP (%s) per --allow-insecure-token; "
+                "the token is visible to anyone on the local network.",
                 server.alias,
                 server.url,
             )
@@ -240,12 +255,12 @@ def _resolve_auth_headers(server: InstalledMcpServer) -> dict[str, str]:
     raise RuntimeError(f"Unsupported MCP auth type '{server.auth.type}' for server '{server.alias}'.")
 
 
-def build_server_config(server: InstalledMcpServer) -> RemoteMcpServerConfig:
-    """Build a transport config for a server, resolving auth headers from the environment."""
+def build_server_config(server: InstalledMcpServer, *, headers: dict[str, str] | None = None) -> RemoteMcpServerConfig:
+    """Build a transport config for a server, resolving auth headers from the environment unless given."""
     return RemoteMcpServerConfig(
         alias=server.alias,
         url=server.url,
-        headers=_resolve_auth_headers(server),
+        headers=_resolve_auth_headers(server) if headers is None else headers,
         request_timeout_s=server.request_timeout_s,
         tool_timeout_s=server.tool_timeout_s,
     )
@@ -254,35 +269,16 @@ def build_server_config(server: InstalledMcpServer) -> RemoteMcpServerConfig:
 def build_generic_remote_client(server: InstalledMcpServer) -> RemoteMcpToolClient:
     """Build an MCP client for a configured server from its cached tools.
 
-    A missing auth token is not fatal here: startup must still register the
-    cached tools so the settings UI can report the unset token, and calls fail
-    with an auth error until the token is supplied.
+    An unresolvable auth header (missing token, or a token blocked over plain
+    HTTP) is not fatal here: startup must still register the cached tools so the
+    settings UI can report the problem, and calls fail until it is fixed.
     """
     try:
         headers = _resolve_auth_headers(server)
     except RuntimeError as exc:
-        logger.warning("%s Calls to '%s' will fail until it is set.", exc, server.alias)
+        logger.warning("%s Calls to '%s' will fail.", exc, server.alias)
         headers = {}
-    return RemoteMcpToolClient(
-        RemoteMcpServerConfig(
-            alias=server.alias,
-            url=server.url,
-            headers=headers,
-            request_timeout_s=server.request_timeout_s,
-            tool_timeout_s=server.tool_timeout_s,
-        ),
-        known_tools=[
-            RemoteToolSpec(
-                server_alias=server.alias,
-                remote_name=tool.remote_name,
-                namespaced_name=tool.client_tool_name,
-                description=tool.description,
-                parameters_schema=tool.parameters_schema,
-            )
-            for tool in server.tools
-            if tool.remote_name
-        ],
-    )
+    return build_cached_tools_client(build_server_config(server, headers=headers), server.tools)
 
 
 @dataclass(frozen=True)
@@ -380,8 +376,15 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
     if command == "add":
         auth = None
         token_env = (getattr(args, "token_env", None) or "").strip()
+        allow_insecure_token = bool(getattr(args, "allow_insecure_token", False))
         if token_env:
-            auth = McpServerAuth(type=BEARER_AUTH_TYPE, token_env=token_env)
+            auth = McpServerAuth(
+                type=BEARER_AUTH_TYPE,
+                token_env=token_env,
+                allow_insecure_http=allow_insecure_token,
+            )
+        elif allow_insecure_token:
+            logger.warning("--allow-insecure-token has no effect without --token-env.")
 
         try:
             server = InstalledMcpServer(

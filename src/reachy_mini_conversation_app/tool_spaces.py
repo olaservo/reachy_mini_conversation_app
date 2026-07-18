@@ -407,6 +407,27 @@ def _validate_space_info(slug: str, space_info: SpaceInfo) -> None:
         raise RuntimeError(f"Space '{slug}' is not a Gradio Space and cannot expose the standard MCP endpoint.")
 
 
+def build_cached_tools_client(
+    server_config: RemoteMcpServerConfig,
+    cached_tools: Sequence[InstalledToolSpaceTool],
+) -> RemoteMcpToolClient:
+    """Build an MCP client from a transport config and manifest-cached tool records."""
+    return RemoteMcpToolClient(
+        server_config,
+        known_tools=[
+            RemoteToolSpec(
+                server_alias=server_config.alias,
+                remote_name=tool.remote_name,
+                namespaced_name=tool.client_tool_name,
+                description=tool.description,
+                parameters_schema=tool.parameters_schema,
+            )
+            for tool in cached_tools
+            if tool.remote_name
+        ],
+    )
+
+
 def build_remote_client(
     alias: str,
     mcp_url: str,
@@ -417,7 +438,7 @@ def build_remote_client(
     """Build an MCP client for an installed Space, sending the HF token only to private Spaces."""
     token = config.HF_TOKEN or get_token()
     headers = {"Authorization": f"Bearer {token}"} if private and token else {}
-    return RemoteMcpToolClient(
+    return build_cached_tools_client(
         RemoteMcpServerConfig(
             alias=alias,
             url=mcp_url,
@@ -425,17 +446,7 @@ def build_remote_client(
             request_timeout_s=10.0,
             tool_timeout_s=30.0,
         ),
-        known_tools=[
-            RemoteToolSpec(
-                server_alias=alias,
-                remote_name=tool.remote_name,
-                namespaced_name=tool.client_tool_name,
-                description=tool.description,
-                parameters_schema=tool.parameters_schema,
-            )
-            for tool in cached_tools
-            if tool.remote_name
-        ],
+        cached_tools,
     )
 
 

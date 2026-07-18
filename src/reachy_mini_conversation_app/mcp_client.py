@@ -89,6 +89,20 @@ def _is_local_http_host(host: str) -> bool:
     return ip.is_private or ip.is_loopback or ip.is_link_local
 
 
+def is_loopback_mcp_url(url: str) -> bool:
+    """Return whether the MCP URL points at a loopback host, where cleartext credentials never leave the machine."""
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        return False
+    if host in _LOCAL_HTTP_HOSTS or host.endswith(".localhost"):
+        return True
+    candidate = host.strip("[]").split("%", 1)[0]  # strip IPv6 brackets + zone id
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return False
+
+
 def validate_http_mcp_url(url: str) -> str:
     """Validate that the MCP endpoint uses HTTP(S)."""
     parsed = urlparse(url)

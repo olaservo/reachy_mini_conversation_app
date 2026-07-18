@@ -374,6 +374,9 @@ reachy-mini-conversation-app mcp-servers add my_server http://my-mcp-server.loca
 # a server that needs a bearer token (only the env var NAME is stored)
 reachy-mini-conversation-app mcp-servers add my_server https://my-mcp-server.example/mcp --token-env MCP_SERVER_TOKEN_MY_SERVER
 
+# a token-authed server on your LAN without HTTPS (e.g. Home Assistant) — explicit opt-in required
+reachy-mini-conversation-app mcp-servers add ha http://homeassistant.local:8123/mcp_server/sse --token-env HA_TOKEN --allow-insecure-token
+
 # enable in a specific profile / configure without enabling
 reachy-mini-conversation-app mcp-servers add my_server <url> --profile NAME
 reachy-mini-conversation-app mcp-servers add my_server <url> --install-only
@@ -394,7 +397,7 @@ Because tools are cached at add time, app startup needs no network discovery. If
 
 **Auth tokens.** The token value itself is never written to the manifest — only the *name* of the environment variable that holds it (`--token-env`). Put the secret in your environment or the instance `.env`, or paste it in the settings UI ("MCP server tokens" section), which stores it in the instance `.env`. Give each server its own env var: two servers sharing one `token_env` share the same secret.
 
-**Plain HTTP policy.** `http://` URLs are only accepted for local-network hosts (loopback, RFC 1918 private and link-local addresses, `localhost`, and `*.local` mDNS names). Anything public must use HTTPS. A bearer token sent over plain HTTP logs a warning, since it is visible on the local network.
+**Plain HTTP policy.** `http://` URLs are only accepted for local-network hosts (loopback, RFC 1918 private and link-local addresses, `localhost`, and `*.local` mDNS names). Anything public must use HTTPS. A bearer token is additionally refused over plain HTTP unless the host is loopback, since anyone on the network could read it; for a trusted LAN device without HTTPS (a Home Assistant box, say) pass `--allow-insecure-token` to opt that one server in, which stores the opt-in in the manifest and logs a warning whenever the token is sent.
 
 </details>
 

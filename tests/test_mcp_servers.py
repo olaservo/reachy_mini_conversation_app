@@ -1,4 +1,3 @@
-from __future__ import annotations
 import sys
 import json
 from types import SimpleNamespace
@@ -32,6 +31,8 @@ from reachy_mini_conversation_app.tool_spaces import (
 SERVER_ALIAS = "example"
 SERVER_URL = "http://192.168.1.50:8000/mcp"
 OTHER_SERVER_URL = "http://192.168.1.51:8000/mcp"
+# Bearer tokens are only allowed over plain HTTP when the host is loopback.
+LOOPBACK_SERVER_URL = "http://127.0.0.1:8000/mcp"
 TOOL_ID = f"{SERVER_ALIAS}__do_thing"
 TOKEN_ENV = "MCP_SERVER_TOKEN_EXAMPLE"
 
@@ -172,7 +173,16 @@ def test_mcp_servers_add_never_persists_token_value(
     assert (
         _run_cli(
             monkeypatch,
-            ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--token-env", TOKEN_ENV, "--install-only"],
+            [
+                "app",
+                "mcp-servers",
+                "add",
+                SERVER_ALIAS,
+                LOOPBACK_SERVER_URL,
+                "--token-env",
+                TOKEN_ENV,
+                "--install-only",
+            ],
         )
         == 0
     )
@@ -433,11 +443,10 @@ def test_list_token_requirements_reflects_environment(
     assert find_server_token_env(tmp_path, "missing") is None
 
 
-def test_resolve_auth_headers_warns_on_plain_http_bearer(
+def test_resolve_auth_headers_rejects_plain_http_bearer_on_lan(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Sending a bearer token over plain HTTP is allowed locally but warned about."""
+    """A bearer token must never be sent over plain HTTP to a non-loopback host."""
     monkeypatch.setenv(TOKEN_ENV, "some-token")
     server = InstalledMcpServer(
         alias=SERVER_ALIAS,
@@ -445,8 +454,111 @@ def test_resolve_auth_headers_warns_on_plain_http_bearer(
         auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV),
     )
 
+    with pytest.raises(RuntimeError, match="plain HTTP"):
+        _resolve_auth_headers(server)
+
+
+def test_resolve_auth_headers_allows_loopback_plain_http_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Loopback endpoints never put the token on the wire, so plain HTTP is fine there."""
+    monkeypatch.setenv(TOKEN_ENV, "some-token")
+    server = InstalledMcpServer(
+        alias=SERVER_ALIAS,
+        url=LOOPBACK_SERVER_URL,
+        auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV),
+    )
+
+    assert _resolve_auth_headers(server) == {"Authorization": "Bearer some-token"}
+
+
+def test_mcp_servers_add_rejects_token_over_lan_plain_http(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configuring a bearer token for a plain-HTTP LAN endpoint must fail before persisting."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(TOKEN_ENV, "some-token")
+    _mock_discovery(monkeypatch)
+
+    assert (
+        _run_cli(
+            monkeypatch,
+            ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--token-env", TOKEN_ENV, "--install-only"],
+        )
+        == 1
+    )
+    assert not (tmp_path / "external_content" / "mcp_servers.json").exists()
+
+
+def test_mcp_servers_add_allows_token_over_lan_plain_http_with_opt_in(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--allow-insecure-token opts one server into sending its token over plain LAN HTTP and persists the opt-in."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(TOKEN_ENV, "some-token")
+    _mock_discovery(monkeypatch)
+
+    assert (
+        _run_cli(
+            monkeypatch,
+            [
+                "app",
+                "mcp-servers",
+                "add",
+                SERVER_ALIAS,
+                SERVER_URL,
+                "--token-env",
+                TOKEN_ENV,
+                "--allow-insecure-token",
+                "--install-only",
+            ],
+        )
+        == 0
+    )
+
+    manifest_text = (tmp_path / "external_content" / "mcp_servers.json").read_text(encoding="utf-8")
+    assert "some-token" not in manifest_text
+    entry = json.loads(manifest_text)["servers"][0]
+    assert entry["auth"] == {"type": "bearer", "token_env": TOKEN_ENV, "allow_insecure_http": True}
+    assert read_mcp_servers(None).servers[0].auth == McpServerAuth(
+        type="bearer", token_env=TOKEN_ENV, allow_insecure_http=True
+    )
+
+
+def test_resolve_auth_headers_warns_on_opted_in_lan_plain_http_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An opted-in server still logs a warning every time the token goes over plain LAN HTTP."""
+    monkeypatch.setenv(TOKEN_ENV, "some-token")
+    server = InstalledMcpServer(
+        alias=SERVER_ALIAS,
+        url=SERVER_URL,
+        auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV, allow_insecure_http=True),
+    )
+
     with caplog.at_level("WARNING"):
         headers = _resolve_auth_headers(server)
 
     assert headers == {"Authorization": "Bearer some-token"}
     assert any("plain HTTP" in record.message for record in caplog.records)
+
+
+def test_read_mcp_servers_wraps_corrupt_field_types_as_runtime_error(tmp_path: Path) -> None:
+    """Corrupt field types must surface as RuntimeError so boot can skip the manifest instead of crashing."""
+    corrupt_entries = [
+        {"alias": SERVER_ALIAS, "url": SERVER_URL, "request_timeout_s": None},
+        {
+            "alias": SERVER_ALIAS,
+            "url": SERVER_URL,
+            "tools": [{"local_name": "x", "client_tool_name": "x", "parameters_schema": ["x"]}],
+        },
+    ]
+    for corrupt_entry in corrupt_entries:
+        payload = {"version": 1, "servers": [corrupt_entry]}
+        (tmp_path / "mcp_servers.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="Invalid MCP server entry"):
+            read_mcp_servers(tmp_path)
