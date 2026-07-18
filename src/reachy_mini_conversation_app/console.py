@@ -577,16 +577,21 @@ class LocalStream:
             hf_host: Optional[str] = None
             hf_port: Optional[int] = None
 
-        def _mcp_servers_payload() -> list[dict[str, object]]:
-            """Describe configured MCP servers' token requirements for the settings UI."""
+        def _mcp_servers_payload() -> tuple[list[dict[str, object]], str | None]:
+            """Describe configured MCP servers' token requirements for the settings UI.
+
+            Returns (servers, error): a read failure must reach the UI as an error,
+            not as an empty list that silently hides the whole token section.
+            """
             try:
-                return [
+                servers: list[dict[str, object]] = [
                     {"alias": req.alias, "token_env": req.token_env, "token_set": req.token_set}
                     for req in list_token_requirements(self._instance_path)
                 ]
+                return servers, None
             except Exception as exc:
                 logger.warning("Could not list MCP server token requirements: %s", exc)
-                return []
+                return [], "manifest_unreadable"
 
         def _status_payload() -> dict[str, object]:
             hf_session_url = get_hf_session_url()
@@ -595,8 +600,10 @@ class LocalStream:
             hf_connection_selection = get_hf_connection_selection()
             has_hf_connection = hf_connection_selection.has_target
             backend_connection = self._backend_connection_status()
+            mcp_servers, mcp_servers_error = _mcp_servers_payload()
             return {
-                "mcp_servers": _mcp_servers_payload(),
+                "mcp_servers": mcp_servers,
+                "mcp_servers_error": mcp_servers_error,
                 "backend": HF_BACKEND,
                 "has_key": has_hf_connection,
                 "has_hf_session_url": bool(hf_session_url),

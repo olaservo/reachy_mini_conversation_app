@@ -209,12 +209,25 @@ class RemoteMcpServerConfig:
     headers: Mapping[str, str] = field(default_factory=dict)
     request_timeout_s: float = 10.0
     tool_timeout_s: float = 30.0
+    # Explicit opt-in to sending credential headers over plain HTTP to a non-loopback host.
+    allow_insecure_http: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration once the dataclass has been created."""
         object.__setattr__(self, "alias", _require_name_segment("server alias", self.alias))
         object.__setattr__(self, "url", validate_http_mcp_url(self.url))
         object.__setattr__(self, "headers", {str(k): str(v) for k, v in self.headers.items()})
+        has_credentials = any(k.lower() == "authorization" for k in self.headers)
+        if (
+            has_credentials
+            and self.url.lower().startswith("http://")
+            and not is_loopback_mcp_url(self.url)
+            and not self.allow_insecure_http
+        ):
+            raise ValueError(
+                f"MCP server '{self.alias}' would send credentials over plain HTTP ({self.url}), "
+                "exposing them to anyone on the network. Use HTTPS or a loopback address."
+            )
         if self.request_timeout_s <= 0:
             raise ValueError("request_timeout_s must be greater than zero.")
         if self.tool_timeout_s <= 0:

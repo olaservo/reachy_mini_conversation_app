@@ -19,6 +19,7 @@ from reachy_mini_conversation_app.mcp_servers import (
     find_server_token_env,
     list_token_requirements,
     handle_mcp_servers_command,
+    build_generic_remote_client,
 )
 from reachy_mini_conversation_app.tool_spaces import (
     InstalledToolSpace,
@@ -343,6 +344,97 @@ def test_mcp_servers_add_refresh_keeps_insecure_token_opt_in(
     assert server.auth.allow_insecure_http is True
 
 
+def test_mcp_servers_add_token_rotation_keeps_insecure_token_opt_in(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passing --token-env on a re-add (e.g. rotating the token) must not silently drop the stored insecure-HTTP opt-in."""
+    other_token_env = f"{TOKEN_ENV}_V2"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(TOKEN_ENV, "secret")
+    monkeypatch.setenv(other_token_env, "secret-v2")
+    _mock_discovery(monkeypatch)
+    assert (
+        _run_cli(
+            monkeypatch,
+            [
+                "app",
+                "mcp-servers",
+                "add",
+                SERVER_ALIAS,
+                SERVER_URL,
+                "--token-env",
+                TOKEN_ENV,
+                "--allow-insecure-token",
+                "--install-only",
+            ],
+        )
+        == 0
+    )
+
+    assert (
+        _run_cli(
+            monkeypatch,
+            ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--token-env", other_token_env, "--install-only"],
+        )
+        == 0
+    )
+    server = read_mcp_servers(None).servers[0]
+    assert server.auth is not None
+    assert server.auth.token_env == other_token_env
+    assert server.auth.allow_insecure_http is True
+
+
+def test_read_mcp_servers_rejects_non_bool_allow_insecure_http(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A hand-edited truthy string like "false" must never grant the insecure-HTTP opt-in."""
+    payload = {
+        "version": 1,
+        "servers": [
+            {
+                "alias": SERVER_ALIAS,
+                "url": SERVER_URL,
+                "auth": {"type": "bearer", "token_env": TOKEN_ENV, "allow_insecure_http": "false"},
+            }
+        ],
+    }
+    (tmp_path / "mcp_servers.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    with caplog.at_level("WARNING"):
+        manifest = read_mcp_servers(tmp_path)
+
+    assert manifest.servers == []
+    assert "'allow_insecure_http' must be true or false" in caplog.text
+
+
+def test_mcp_servers_add_fails_closed_when_spaces_manifest_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreadable tool-spaces manifest must block the add: an unchecked alias collision crashes the app at boot."""
+    monkeypatch.chdir(tmp_path)
+    _mock_discovery(monkeypatch)
+    (tmp_path / "external_content").mkdir()
+    (tmp_path / "external_content" / "installed_tool_spaces.json").write_text("{not json", encoding="utf-8")
+
+    assert _run_cli(monkeypatch, ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--install-only"]) == 1
+    assert read_mcp_servers(None).servers == []
+
+
+def test_build_generic_remote_client_raises_on_unresolvable_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server whose token cannot be resolved must not produce a client that silently calls unauthenticated."""
+    monkeypatch.delenv(TOKEN_ENV, raising=False)
+    server = InstalledMcpServer(
+        alias=SERVER_ALIAS,
+        url=LOOPBACK_SERVER_URL,
+        auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV),
+    )
+
+    with pytest.raises(RuntimeError, match=TOKEN_ENV):
+        build_generic_remote_client(server)
+
+
 def test_mcp_servers_add_refresh_replaces_auth_when_flag_passed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -454,8 +546,8 @@ def test_tool_spaces_add_rejects_configured_server_alias(
     assert _run_cli(monkeypatch, ["app", "tool-spaces", "add", SPACE_SLUG, "--install-only"]) == 1
 
 
-def test_read_mcp_servers_raises_on_duplicate_alias(tmp_path: Path) -> None:
-    """A manifest with two servers sharing an alias must be rejected on read."""
+def test_read_mcp_servers_skips_duplicate_alias(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A duplicate alias keeps the first entry and skips the later one, so one bad entry can't disable the rest."""
     payload = {
         "version": 1,
         "servers": [
@@ -465,8 +557,11 @@ def test_read_mcp_servers_raises_on_duplicate_alias(tmp_path: Path) -> None:
     }
     (tmp_path / "mcp_servers.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="Duplicate MCP server alias"):
-        read_mcp_servers(tmp_path)
+    with caplog.at_level("WARNING"):
+        manifest = read_mcp_servers(tmp_path)
+
+    assert [server.url for server in manifest.servers] == [SERVER_URL]
+    assert "Duplicate MCP server alias" in caplog.text
 
 
 def test_mcp_servers_manifest_uses_instance_path_when_provided(
@@ -668,19 +763,32 @@ def test_resolve_auth_headers_warns_on_opted_in_lan_plain_http_bearer(
     assert any("plain HTTP" in record.message for record in caplog.records)
 
 
-def test_read_mcp_servers_wraps_corrupt_field_types_as_runtime_error(tmp_path: Path) -> None:
-    """Corrupt field types must surface as RuntimeError so boot can skip the manifest instead of crashing."""
+def test_read_mcp_servers_skips_corrupt_entries_and_keeps_the_rest(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """One corrupt entry is skipped with a warning; valid servers in the same manifest still load."""
     corrupt_entries = [
-        {"alias": SERVER_ALIAS, "url": SERVER_URL, "request_timeout_s": None},
+        {"alias": "corrupt", "url": SERVER_URL, "request_timeout_s": None},
         {
-            "alias": SERVER_ALIAS,
+            "alias": "corrupt",
             "url": SERVER_URL,
             "tools": [{"local_name": "x", "client_tool_name": "x", "parameters_schema": ["x"]}],
         },
+        "not-an-object",
     ]
     for corrupt_entry in corrupt_entries:
-        payload = {"version": 1, "servers": [corrupt_entry]}
+        payload = {
+            "version": 1,
+            "servers": [
+                corrupt_entry,
+                {"alias": SERVER_ALIAS, "url": SERVER_URL, "request_timeout_s": 10.0, "tool_timeout_s": 30.0},
+            ],
+        }
         (tmp_path / "mcp_servers.json").write_text(json.dumps(payload), encoding="utf-8")
 
-        with pytest.raises(RuntimeError, match="Invalid MCP server entry"):
-            read_mcp_servers(tmp_path)
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            manifest = read_mcp_servers(tmp_path)
+
+        assert [server.alias for server in manifest.servers] == [SERVER_ALIAS]
+        assert "Skipping invalid MCP server entry" in caplog.text

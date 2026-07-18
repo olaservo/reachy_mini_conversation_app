@@ -253,9 +253,25 @@ function buildMcpSection({ onSaved } = {}) {
   // Only rebuild when the server set or saved-state changes, so a background status
   // refresh doesn't clobber a token the user is in the middle of typing.
   let signature = null;
+  let manifestErrorShown = false;
 
   function render(payload) {
     const servers = Array.isArray(payload?.mcp_servers) ? payload.mcp_servers : [];
+    if (payload?.mcp_servers_error) {
+      // Keep the section visible: hiding it would leave no trace of the broken manifest.
+      element.hidden = false;
+      list.replaceChildren();
+      signature = null;
+      manifestErrorShown = true;
+      status.classList.add("is-error");
+      status.textContent = describeError({ body: { error: payload.mcp_servers_error } });
+      return;
+    }
+    if (manifestErrorShown) {
+      manifestErrorShown = false;
+      status.classList.remove("is-error");
+      status.textContent = "";
+    }
     if (servers.length === 0) {
       element.hidden = true;
       signature = null;

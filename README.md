@@ -342,10 +342,7 @@ reachy-mini-conversation-app tool-spaces list
 reachy-mini-conversation-app tool-spaces remove owner/space-name
 ```
 
-The bundled Pollen Spaces are enabled by default and resolve from static specs, so startup needs no Hugging Face discovery. For custom Spaces, the app validates the slug through the Hugging Face Hub, probes the standard MCP endpoint (sending the HF token only to private Spaces), discovers tools, enables them in the active profile's `tools.txt`, and writes the installed Space to:
-
-- `installed_tool_spaces.json` in the managed app instance directory
-- `external_content/installed_tool_spaces.json` in terminal mode
+The bundled Pollen Spaces are enabled by default and resolve from static specs, so startup needs no Hugging Face discovery. For custom Spaces, the app validates the slug through the Hugging Face Hub, probes the standard MCP endpoint (sending the HF token only to private Spaces), discovers tools, enables them in the active profile's `tools.txt`, and writes the installed Space to `external_content/installed_tool_spaces.json`, relative to the directory the CLI runs in. A managed (robot) install instead reads `installed_tool_spaces.json` from the app instance directory, which the CLI cannot target — copy the generated manifest there to configure the managed app.
 
 Recommended tags for discoverability on Hugging Face:
 
@@ -388,12 +385,9 @@ reachy-mini-conversation-app mcp-servers list
 reachy-mini-conversation-app mcp-servers remove my_server
 ```
 
-`add` connects to the server first (so a bad URL, unreachable host, or missing token fails before anything is saved), caches the discovered tools, and enables them in the active profile's `tools.txt`. The server's tools are namespaced as `<alias>__<tool_name>`. Configured servers are written to:
+`add` connects to the server first (so a bad URL, unreachable host, or missing token fails before anything is saved), caches the discovered tools, and enables them in the active profile's `tools.txt`. The server's tools are namespaced as `<alias>__<tool_name>`. The CLI writes configured servers to `external_content/mcp_servers.json`, relative to the directory it runs in. A managed (robot) install instead reads `mcp_servers.json` from the app instance directory, which the CLI cannot target — to configure servers for the managed app, copy the generated manifest into the instance directory (and restart the app), or call `handle_mcp_servers_command(args, instance_path=...)` from a Python snippet on the robot.
 
-- `mcp_servers.json` in the managed app instance directory
-- `external_content/mcp_servers.json` in terminal mode
-
-Because tools are cached at add time, app startup needs no network discovery. If the server's tool set changes, re-run `mcp-servers add <alias> <same-url>` to refresh the cache — the stored auth config and timeouts are kept unless you pass those flags again. Per-server timeouts can be tuned with `--request-timeout` and `--tool-timeout` (seconds).
+Because tools are cached at add time, app startup needs no network discovery. If the server's tool set changes, re-run `mcp-servers add <alias> <same-url>` to refresh the cache — the stored auth config and timeouts are kept unless you pass those flags again, and a stored `--allow-insecure-token` opt-in persists until you `remove` the server. Per-server timeouts can be tuned with `--request-timeout` and `--tool-timeout` (seconds).
 
 **Auth tokens.** The token value itself is never written to the manifest — only the *name* of the environment variable that holds it (`--token-env`). Put the secret in your environment or the instance `.env`, or paste it in the settings UI ("MCP server tokens" section), which stores it in the instance `.env`. Give each server its own env var: two servers sharing one `token_env` share the same secret.
 

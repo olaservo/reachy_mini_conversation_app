@@ -417,7 +417,19 @@ def _resolve_cached_manifest_tools(
             refresh_command,
         )
 
-    client = make_client()
+    try:
+        client = make_client()
+    except Exception as exc:
+        # Registering tools whose every call would fail (e.g. missing token, or a
+        # bearer token refused over plain HTTP) only hides the problem; skip them
+        # and they load on the next rebuild once the configuration is fixed.
+        logger.warning(
+            "Skipping %d enabled tool(s) from %s: %s",
+            len(enabled_tool_names),
+            source_label,
+            exc,
+        )
+        return []
     remote_tools: list[RemoteMcpTool] = []
     for remote_tool in cached_tools:
         if remote_tool.local_name not in enabled_tool_names:

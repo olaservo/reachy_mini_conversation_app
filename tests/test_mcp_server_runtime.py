@@ -122,12 +122,12 @@ async def test_initialize_tools_loads_enabled_generic_mcp_tools_and_dispatches(
     client.call_tool.assert_awaited_once_with(TOOL_ID, {"message": "hello"})
 
 
-def test_initialize_tools_registers_generic_tools_with_missing_token(
+def test_initialize_tools_skips_generic_tools_with_missing_token(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A missing bearer token warns at startup but still registers the cached tools."""
+    """A missing bearer token skips the server's tools with a warning: registering tools whose every call would fail unauthenticated only hides the problem."""
     monkeypatch.chdir(tmp_path)
     _mcp_profile(tmp_path, monkeypatch)
     monkeypatch.delenv(TOKEN_ENV, raising=False)
@@ -143,8 +143,8 @@ def test_initialize_tools_registers_generic_tools_with_missing_token(
     with caplog.at_level("WARNING"):
         core_tools_mod.initialize_tools()
 
-    assert TOOL_ID in core_tools_mod.ALL_TOOLS
-    assert any(TOKEN_ENV in record.message for record in caplog.records)
+    assert TOOL_ID not in core_tools_mod.ALL_TOOLS
+    assert any("Skipping" in record.message and TOKEN_ENV in record.getMessage() for record in caplog.records)
 
 
 def test_initialize_tools_warns_when_enabled_generic_tool_missing_from_manifest(

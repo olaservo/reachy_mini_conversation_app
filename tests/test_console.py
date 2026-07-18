@@ -289,6 +289,24 @@ def test_status_reports_mcp_server_token_requirements(
     payload = TestClient(app).get("/api/v1/status").json()
 
     assert payload["mcp_servers"] == [{"alias": "example", "token_env": token_env, "token_set": False}]
+    assert payload["mcp_servers_error"] is None
+
+
+def test_status_reports_mcp_servers_error_when_manifest_unreadable(
+    tmp_path: Path,
+) -> None:
+    """A corrupt manifest must surface as an error in the status payload, not as an empty list that hides the token UI."""
+    (tmp_path / "mcp_servers.json").write_text("{not json", encoding="utf-8")
+
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+
+    payload = TestClient(app).get("/api/v1/status").json()
+
+    assert payload["mcp_servers"] == []
+    assert payload["mcp_servers_error"] == "manifest_unreadable"
 
 
 def test_mcp_server_token_route_persists_token_and_reports_saved(

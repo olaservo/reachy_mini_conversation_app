@@ -15,7 +15,6 @@ cleaning: arbitrary servers have no naming convention to strip.
 
 import os
 import re
-import json
 import asyncio
 import logging
 import argparse
@@ -38,9 +37,11 @@ from reachy_mini_conversation_app.mcp_client import (
 )
 from reachy_mini_conversation_app.tool_spaces import installed_space_aliases
 from reachy_mini_conversation_app.remote_tool_sources import (
-    TERMINAL_EXTERNAL_CONTENT_DIRECTORY,
     CachedRemoteTool,
+    manifest_path,
     parse_cached_tools,
+    read_manifest_envelope,
+    write_manifest_payload,
     append_tools_to_profile,
     build_cached_tools_client,
     disable_alias_tools_in_profiles,
@@ -119,89 +120,84 @@ class InstalledMcpServersManifest:
 
 def get_mcp_servers_path(instance_path: str | Path | None) -> Path:
     """Return the MCP servers manifest path for the current mode."""
-    if instance_path is not None:
-        return Path(instance_path) / MCP_SERVERS_FILENAME
-    return TERMINAL_EXTERNAL_CONTENT_DIRECTORY / MCP_SERVERS_FILENAME
+    return manifest_path(instance_path, MCP_SERVERS_FILENAME)
 
 
-def _parse_auth(raw_auth: object, alias: str, manifest_path: Path) -> McpServerAuth | None:
+def _parse_auth(raw_auth: object, alias: str, path: Path) -> McpServerAuth | None:
     if raw_auth is None:
         return None
     if not isinstance(raw_auth, dict):
-        raise RuntimeError(f"Invalid 'auth' for MCP server '{alias}' in {manifest_path}: expected an object.")
+        raise RuntimeError(f"Invalid 'auth' for MCP server '{alias}' in {path}: expected an object.")
+    allow_insecure_http = raw_auth.get("allow_insecure_http", False)
+    if not isinstance(allow_insecure_http, bool):
+        # Refuse truthy strings like "false": a mis-typed value must never grant the insecure opt-in.
+        raise RuntimeError(
+            f"Invalid 'auth' for MCP server '{alias}' in {path}: 'allow_insecure_http' must be true or false."
+        )
     try:
         return McpServerAuth(
             type=str(raw_auth.get("type", "")),
             token_env=str(raw_auth.get("token_env", "")),
-            allow_insecure_http=bool(raw_auth.get("allow_insecure_http", False)),
+            allow_insecure_http=allow_insecure_http,
         )
     except ValueError as exc:
-        raise RuntimeError(f"Invalid 'auth' for MCP server '{alias}' in {manifest_path}: {exc}") from exc
+        raise RuntimeError(f"Invalid 'auth' for MCP server '{alias}' in {path}: {exc}") from exc
+
+
+def _parse_server_entry(raw_server: object, path: Path) -> InstalledMcpServer:
+    if not isinstance(raw_server, dict):
+        raise RuntimeError(f"Invalid MCP servers entry in {path}: expected an object.")
+    alias = str(raw_server.get("alias", ""))
+    auth = _parse_auth(raw_server.get("auth"), alias, path)
+    try:
+        return InstalledMcpServer(
+            alias=alias,
+            url=str(raw_server.get("url", "")),
+            auth=auth,
+            request_timeout_s=float(raw_server.get("request_timeout_s", 10.0)),
+            tool_timeout_s=float(raw_server.get("tool_timeout_s", 30.0)),
+            tools=parse_cached_tools(raw_server.get("tools", [])),
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Invalid MCP server entry in {path}: {exc}") from exc
 
 
 def read_mcp_servers(instance_path: str | Path | None) -> InstalledMcpServersManifest:
-    """Read the configured MCP servers manifest if present."""
-    manifest_path = get_mcp_servers_path(instance_path)
-    if not manifest_path.exists():
+    """Read the configured MCP servers manifest if present, skipping invalid entries so one bad server cannot disable the rest."""
+    path = get_mcp_servers_path(instance_path)
+    envelope = read_manifest_envelope(path, "servers")
+    if envelope is None:
         return InstalledMcpServersManifest()
-
-    try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise RuntimeError(f"Failed to read MCP servers from {manifest_path}: {exc}") from exc
-
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"Invalid MCP servers payload in {manifest_path}: expected a JSON object.")
-
-    raw_servers = payload.get("servers", [])
-    if not isinstance(raw_servers, list):
-        raise RuntimeError(f"Invalid MCP servers payload in {manifest_path}: 'servers' must be a list.")
+    raw_servers, version = envelope
 
     servers: list[InstalledMcpServer] = []
     seen_aliases: set[str] = set()
     for raw_server in raw_servers:
-        if not isinstance(raw_server, dict):
-            raise RuntimeError(f"Invalid MCP servers entry in {manifest_path}: expected an object.")
-
-        alias = str(raw_server.get("alias", ""))
-        auth = _parse_auth(raw_server.get("auth"), alias, manifest_path)
         try:
-            cached_tools = parse_cached_tools(raw_server.get("tools", []))
-            server = InstalledMcpServer(
-                alias=alias,
-                url=str(raw_server.get("url", "")),
-                auth=auth,
-                request_timeout_s=float(raw_server.get("request_timeout_s", 10.0)),
-                tool_timeout_s=float(raw_server.get("tool_timeout_s", 30.0)),
-                tools=cached_tools,
-            )
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(f"Invalid MCP server entry in {manifest_path}: {exc}") from exc
-
-        if server.alias in seen_aliases:
-            raise RuntimeError(f"Duplicate MCP server alias '{server.alias}' found in {manifest_path}.")
+            server = _parse_server_entry(raw_server, path)
+            if server.alias in seen_aliases:
+                raise RuntimeError(f"Duplicate MCP server alias '{server.alias}' found in {path}.")
+        except RuntimeError as exc:
+            # Skipped entries are dropped if the manifest is rewritten (add/remove).
+            logger.warning("Skipping invalid MCP server entry: %s", exc)
+            continue
         seen_aliases.add(server.alias)
         servers.append(server)
 
-    version = payload.get("version", 1)
-    if not isinstance(version, int):
-        raise RuntimeError(f"Invalid MCP servers payload in {manifest_path}: 'version' must be an int.")
     return InstalledMcpServersManifest(version=version, servers=servers)
 
 
 def configured_server_aliases(instance_path: str | Path | None) -> set[str]:
-    """Aliases claimed by configured MCP servers, for cross-source collision checks. Empty on read failure."""
-    try:
-        return {server.alias for server in read_mcp_servers(instance_path).servers}
-    except RuntimeError as exc:
-        logger.warning("Could not read configured MCP servers for the alias-collision check: %s", exc)
-        return set()
+    """Aliases claimed by configured MCP servers, for cross-source collision checks.
+
+    Raises RuntimeError when the manifest is unreadable: callers adding an alias must
+    fail closed, since a collision that slips through crashes tool registration at boot.
+    """
+    return {server.alias for server in read_mcp_servers(instance_path).servers}
 
 
 def write_mcp_servers(instance_path: str | Path | None, manifest: InstalledMcpServersManifest) -> Path:
     """Persist the MCP servers manifest. The token value is never stored, only token_env."""
-    manifest_path = get_mcp_servers_path(instance_path)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     servers_payload: list[dict[str, Any]] = []
     for server in manifest.servers:
         entry: dict[str, Any] = {
@@ -218,8 +214,7 @@ def write_mcp_servers(instance_path: str | Path | None, manifest: InstalledMcpSe
         servers_payload.append(entry)
 
     payload = {"version": manifest.version, "servers": servers_payload}
-    manifest_path.write_text(f"{json.dumps(payload, indent=2, sort_keys=True)}\n", encoding="utf-8")
-    return manifest_path
+    return write_manifest_payload(get_mcp_servers_path(instance_path), payload)
 
 
 def _resolve_auth_headers(server: InstalledMcpServer) -> dict[str, str]:
@@ -250,30 +245,27 @@ def _resolve_auth_headers(server: InstalledMcpServer) -> dict[str, str]:
     raise RuntimeError(f"Unsupported MCP auth type '{server.auth.type}' for server '{server.alias}'.")
 
 
-def build_server_config(server: InstalledMcpServer, *, headers: dict[str, str] | None = None) -> RemoteMcpServerConfig:
-    """Build a transport config for a server, resolving auth headers from the environment unless given."""
+def build_server_config(server: InstalledMcpServer) -> RemoteMcpServerConfig:
+    """Build a transport config for a server, resolving auth headers from the environment."""
     return RemoteMcpServerConfig(
         alias=server.alias,
         url=server.url,
-        headers=_resolve_auth_headers(server) if headers is None else headers,
+        headers=_resolve_auth_headers(server),
         request_timeout_s=server.request_timeout_s,
         tool_timeout_s=server.tool_timeout_s,
+        allow_insecure_http=server.auth.allow_insecure_http if server.auth is not None else False,
     )
 
 
 def build_generic_remote_client(server: InstalledMcpServer) -> RemoteMcpToolClient:
     """Build an MCP client for a configured server from its cached tools.
 
-    An unresolvable auth header (missing token, or a token blocked over plain
-    HTTP) is not fatal here: startup must still register the cached tools so the
-    settings UI can report the problem, and calls fail until it is fixed.
+    Raises RuntimeError when auth cannot be resolved (missing token, or a token
+    blocked over plain HTTP): registering tools whose every call would fail
+    unauthenticated only hides the problem, so the caller skips this server's
+    tools instead and they load on the next rebuild once the token is saved.
     """
-    try:
-        headers = _resolve_auth_headers(server)
-    except RuntimeError as exc:
-        logger.warning("%s Calls to '%s' will fail.", exc, server.alias)
-        headers = {}
-    return build_cached_tools_client(build_server_config(server, headers=headers), server.tools)
+    return build_cached_tools_client(build_server_config(server), server.tools)
 
 
 @dataclass(frozen=True)
@@ -360,9 +352,15 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
 
         # Re-running add is the documented cache-refresh flow, so flags that are
         # not repeated keep their stored values instead of resetting to defaults.
+        # That includes the insecure-HTTP opt-in, which sticks until 'remove'.
         auth = existing.auth if existing is not None else None
         token_env = (getattr(args, "token_env", None) or "").strip()
-        allow_insecure_token = bool(getattr(args, "allow_insecure_token", False))
+        stored_allow_insecure = (
+            existing is not None and existing.auth is not None and existing.auth.allow_insecure_http
+        )
+        allow_insecure_token = bool(getattr(args, "allow_insecure_token", False)) or stored_allow_insecure
+        if stored_allow_insecure and not getattr(args, "allow_insecure_token", False) and token_env:
+            logger.info("Keeping the stored --allow-insecure-token opt-in for '%s'.", args.alias.strip())
         try:
             if token_env:
                 auth = McpServerAuth(
@@ -405,13 +403,26 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
             return 1
         if existing is not None and not token_env and existing.auth is not None:
             logger.info("Keeping stored auth for '%s' (token env '%s').", server.alias, existing.auth.token_env)
-        if existing is None and server.alias in installed_space_aliases(instance_path):
-            logger.error(
-                "Cannot add MCP server '%s': its alias collides with an installed tool space. "
-                "Choose a different alias.",
-                server.alias,
-            )
-            return 1
+        if existing is None:
+            # Fail closed: an unnoticed collision crashes tool registration at boot,
+            # so refuse the add when the other manifest cannot be checked.
+            try:
+                space_aliases = installed_space_aliases(instance_path)
+            except RuntimeError as exc:
+                logger.error(
+                    "Cannot add MCP server '%s': the installed tool-spaces manifest is unreadable, "
+                    "so the alias cannot be checked for collisions. Fix it first: %s",
+                    server.alias,
+                    exc,
+                )
+                return 1
+            if server.alias in space_aliases:
+                logger.error(
+                    "Cannot add MCP server '%s': its alias collides with an installed tool space. "
+                    "Choose a different alias.",
+                    server.alias,
+                )
+                return 1
 
         # Resolve first so we fail fast on bad URL, unreachable server, or missing token,
         # before persisting anything. Discovered tools are cached in the manifest so
@@ -419,7 +430,7 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
         try:
             resolved = resolve_mcp_server_sync(server)
         except Exception as exc:
-            logger.error("Could not connect to MCP server '%s' at %s: %s", server.alias, server.url, exc)
+            logger.error("Could not resolve MCP server '%s' at %s: %s", server.alias, server.url, exc)
             return 1
 
         other_servers = [entry for entry in manifest.servers if entry.alias != server.alias]

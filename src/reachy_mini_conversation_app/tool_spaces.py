@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import re
-import json
 import asyncio
 import logging
 import argparse
@@ -24,9 +23,11 @@ from reachy_mini_conversation_app.mcp_client import (
     build_namespaced_tool_name,
 )
 from reachy_mini_conversation_app.remote_tool_sources import (
-    TERMINAL_EXTERNAL_CONTENT_DIRECTORY,
     CachedRemoteTool,
+    manifest_path,
     parse_cached_tools,
+    read_manifest_envelope,
+    write_manifest_payload,
     append_tools_to_profile,
     build_cached_tools_client,
     disable_alias_tools_in_profiles,
@@ -156,9 +157,7 @@ class ResolvedInstalledToolSpace:
 
 def get_installed_tool_spaces_path(instance_path: str | Path | None) -> Path:
     """Return the installed tool-spaces manifest path for the current mode."""
-    if instance_path is not None:
-        return Path(instance_path) / INSTALLED_TOOL_SPACES_FILENAME
-    return TERMINAL_EXTERNAL_CONTENT_DIRECTORY / INSTALLED_TOOL_SPACES_FILENAME
+    return manifest_path(instance_path, INSTALLED_TOOL_SPACES_FILENAME)
 
 
 def _preinstalled_installed_spaces() -> list[InstalledToolSpace]:
@@ -180,36 +179,26 @@ def _preinstalled_installed_spaces() -> list[InstalledToolSpace]:
 
 def read_installed_tool_spaces(instance_path: str | Path | None) -> InstalledToolSpacesManifest:
     """Read the installed tool-spaces manifest, or seed the bundled Pollen Spaces when none exists."""
-    manifest_path = get_installed_tool_spaces_path(instance_path)
-    if not manifest_path.exists():
+    path = get_installed_tool_spaces_path(instance_path)
+    envelope = read_manifest_envelope(path, "spaces")
+    if envelope is None:
         return InstalledToolSpacesManifest(spaces=_preinstalled_installed_spaces())
-
-    try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise RuntimeError(f"Failed to read installed tool spaces from {manifest_path}: {exc}") from exc
-
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"Invalid installed tool spaces payload in {manifest_path}: expected a JSON object.")
-
-    raw_spaces = payload.get("spaces", [])
-    if not isinstance(raw_spaces, list):
-        raise RuntimeError(f"Invalid installed tool spaces payload in {manifest_path}: 'spaces' must be a list.")
+    raw_spaces, version = envelope
 
     spaces: list[InstalledToolSpace] = []
     seen_slugs: set[str] = set()
     seen_aliases: set[str] = set()
     for raw_space in raw_spaces:
         if not isinstance(raw_space, dict):
-            raise RuntimeError(f"Invalid installed tool spaces entry in {manifest_path}: expected an object.")
+            raise RuntimeError(f"Invalid installed tool spaces entry in {path}: expected an object.")
 
         slug = validate_space_slug(str(raw_space.get("slug", "")))
         alias = normalize_space_alias(slug)
         if slug in seen_slugs:
-            raise RuntimeError(f"Duplicate installed tool space '{slug}' found in {manifest_path}.")
+            raise RuntimeError(f"Duplicate installed tool space '{slug}' found in {path}.")
         if alias in seen_aliases:
             raise RuntimeError(
-                f"Installed tool spaces manifest contains alias collision '{alias}' in {manifest_path}. "
+                f"Installed tool spaces manifest contains alias collision '{alias}' in {path}. "
                 "Remove one of the conflicting spaces with 'tool-spaces remove'."
             )
         mcp_url = str(raw_space.get("mcp_url", "")).strip()
@@ -233,20 +222,16 @@ def read_installed_tool_spaces(instance_path: str | Path | None) -> InstalledToo
             )
         )
 
-    version = payload.get("version", 1)
-    if not isinstance(version, int):
-        raise RuntimeError(f"Invalid installed tool spaces payload in {manifest_path}: 'version' must be an int.")
     return InstalledToolSpacesManifest(version=version, spaces=spaces)
 
 
 def installed_space_aliases(instance_path: str | Path | None) -> set[str]:
-    """Return the aliases of installed Spaces, or an empty set if the manifest is unreadable."""
-    try:
-        manifest = read_installed_tool_spaces(instance_path)
-    except RuntimeError as exc:
-        logger.warning("Could not read installed tool spaces for the alias-collision check: %s", exc)
-        return set()
-    return {space.alias for space in manifest.spaces}
+    """Return the aliases of installed Spaces, for cross-source collision checks.
+
+    Raises RuntimeError when the manifest is unreadable: callers adding an alias must
+    fail closed, since a collision that slips through crashes tool registration at boot.
+    """
+    return {space.alias for space in read_installed_tool_spaces(instance_path).spaces}
 
 
 def write_installed_tool_spaces(
@@ -254,14 +239,11 @@ def write_installed_tool_spaces(
     manifest: InstalledToolSpacesManifest,
 ) -> Path:
     """Persist the installed tool-spaces manifest."""
-    manifest_path = get_installed_tool_spaces_path(instance_path)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "version": manifest.version,
         "spaces": [asdict(space) for space in manifest.spaces],
     }
-    manifest_path.write_text(f"{json.dumps(payload, indent=2, sort_keys=True)}\n", encoding="utf-8")
-    return manifest_path
+    return write_manifest_payload(get_installed_tool_spaces_path(instance_path), payload)
 
 
 def validate_space_slug(slug: str) -> str:
@@ -460,7 +442,19 @@ def handle_tool_spaces_command(args: argparse.Namespace, *, instance_path: str |
             # reverse dependency must stay function-local to avoid an import cycle.
             from reachy_mini_conversation_app.mcp_servers import configured_server_aliases
 
-            if resolved_space.alias in configured_server_aliases(instance_path):
+            # Fail closed: an unnoticed collision crashes tool registration at boot,
+            # so refuse the install when the other manifest cannot be checked.
+            try:
+                server_aliases = configured_server_aliases(instance_path)
+            except RuntimeError as exc:
+                logger.error(
+                    "Cannot install '%s': the MCP servers manifest is unreadable, so the alias "
+                    "cannot be checked for collisions. Fix it first: %s",
+                    resolved_space.slug,
+                    exc,
+                )
+                return 1
+            if resolved_space.alias in server_aliases:
                 logger.error(
                     "Cannot install '%s': its local alias '%s' conflicts with a configured MCP server. "
                     "Remove the server with 'mcp-servers remove %s' first.",

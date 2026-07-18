@@ -72,7 +72,8 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
         default=False,
         help=(
             "Allow sending the bearer token over plain HTTP to a non-loopback local-network host "
-            "(e.g. a Home Assistant box on your LAN). The token is visible to anyone on that network."
+            "(e.g. a Home Assistant box on your LAN). The token is visible to anyone on that network. "
+            "Once stored, the opt-in persists across re-adds until the server is removed."
         ),
     )
     mcp_add_parser.add_argument(

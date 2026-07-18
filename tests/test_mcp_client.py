@@ -9,10 +9,37 @@ from mcp.types import Tool, TextContent, CallToolResult
 
 from reachy_mini_conversation_app.mcp_client import (
     RemoteToolSpec,
+    RemoteMcpServerConfig,
     RemoteToolCallResponse,
     validate_http_mcp_url,
     build_namespaced_tool_name,
 )
+
+
+def test_server_config_refuses_credentials_over_plain_http_to_lan_host() -> None:
+    """The config is the last line of defense: no credential header may ride plain HTTP off-machine without an explicit opt-in."""
+    with pytest.raises(ValueError, match="credentials over plain HTTP"):
+        RemoteMcpServerConfig(
+            alias="example",
+            url="http://192.168.1.50:8000/mcp",
+            headers={"Authorization": "Bearer secret"},
+        )
+
+
+def test_server_config_allows_credentials_over_plain_http_with_opt_in_or_loopback() -> None:
+    """The explicit opt-in and loopback hosts keep credentialed plain-HTTP configs buildable."""
+    RemoteMcpServerConfig(
+        alias="example",
+        url="http://192.168.1.50:8000/mcp",
+        headers={"Authorization": "Bearer secret"},
+        allow_insecure_http=True,
+    )
+    RemoteMcpServerConfig(
+        alias="example",
+        url="http://127.0.0.1:8000/mcp",
+        headers={"Authorization": "Bearer secret"},
+    )
+    RemoteMcpServerConfig(alias="example", url="http://192.168.1.50:8000/mcp")
 
 
 def test_validate_http_mcp_url_rejects_non_http_scheme() -> None:

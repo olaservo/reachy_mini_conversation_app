@@ -7,6 +7,7 @@ wire their tool IDs into profiles. This module holds those shared pieces so the
 generic MCP-server code does not depend on Space-specific machinery.
 """
 
+import json
 from typing import Any
 from pathlib import Path
 from dataclasses import dataclass
@@ -22,6 +23,39 @@ from reachy_mini_conversation_app.mcp_client import (
 
 # Where terminal mode (no managed app instance) keeps manifests and downloads.
 TERMINAL_EXTERNAL_CONTENT_DIRECTORY = Path("external_content")
+
+
+def manifest_path(instance_path: str | Path | None, filename: str) -> Path:
+    """Return a source manifest's path: the app instance dir, or external_content/ in terminal mode."""
+    if instance_path is not None:
+        return Path(instance_path) / filename
+    return TERMINAL_EXTERNAL_CONTENT_DIRECTORY / filename
+
+
+def read_manifest_envelope(path: Path, entries_key: str) -> tuple[list[object], int] | None:
+    """Read and validate a manifest's shared JSON envelope, returning (raw entries, version) or None when absent."""
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Invalid payload in {path}: expected a JSON object.")
+    entries = payload.get(entries_key, [])
+    if not isinstance(entries, list):
+        raise RuntimeError(f"Invalid payload in {path}: '{entries_key}' must be a list.")
+    version = payload.get("version", 1)
+    if not isinstance(version, int):
+        raise RuntimeError(f"Invalid payload in {path}: 'version' must be an int.")
+    return entries, version
+
+
+def write_manifest_payload(path: Path, payload: dict[str, Any]) -> Path:
+    """Persist a manifest payload with the shared on-disk format."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{json.dumps(payload, indent=2, sort_keys=True)}\n", encoding="utf-8")
+    return path
 
 
 @dataclass(frozen=True)
