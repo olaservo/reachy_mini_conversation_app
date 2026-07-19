@@ -23,7 +23,11 @@ dependencies = [
     "reachy_mini_dances_library",
     "reachy_mini_toolbox",
     "reachy-mini>=1.9.0",
-    "mcp>=1.27.1",
+    # Exact pin per the SDK beta guidance; mcp-types is exact-pinned by the mcp
+    # wheel and declared here so uv accepts the pre-release — keep both in lockstep.
+    "mcp==2.0.0b2",
+    "mcp-types==2.0.0b2",
+    "httpx2>=2.5.0",
 ]
 
 [dependency-groups]
@@ -47,6 +51,11 @@ exclude-newer = "7 days"
 "reachy-mini" = false
 "reachy-mini-dances-library" = false
 "reachy-mini-toolbox" = false
+# The pinned mcp v2 beta (and its exact-pinned companions) ship faster than the
+# 7-day quarantine window.
+"mcp" = false
+"mcp-types" = false
+"httpx2" = false
 
 [project.entry-points."reachy_mini_apps"]
 reachy_mini_conversation_app = "reachy_mini_conversation_app.main:ReachyMiniConversationApp"

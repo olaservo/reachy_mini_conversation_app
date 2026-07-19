@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 
 
-pytest.importorskip("mcp.types")
+pytest.importorskip("mcp_types")
 
-from mcp.types import Tool, TextContent, CallToolResult
+from mcp_types import Tool, TextContent, CallToolResult
 
 from reachy_mini_conversation_app.mcp_client import (
     RemoteToolSpec,
@@ -128,7 +128,7 @@ def test_remote_tool_spec_translates_to_function_spec() -> None:
     tool = Tool(
         name="search-docs",
         description="Search the docs",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"query": {"type": "string"}},
             "required": ["query"],
@@ -155,8 +155,8 @@ def test_remote_tool_error_result_maps_to_app_payload() -> None:
     """Remote tool errors should remain visible after response mapping."""
     result = CallToolResult(
         content=[TextContent(type="text", text="Search backend unavailable")],
-        structuredContent=None,
-        isError=True,
+        structured_content=None,
+        is_error=True,
     )
 
     payload = RemoteToolCallResponse.from_call_tool_result(
