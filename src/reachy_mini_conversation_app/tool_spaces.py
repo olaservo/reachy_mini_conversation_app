@@ -193,8 +193,13 @@ def read_installed_tool_spaces(instance_path: str | Path | None) -> InstalledToo
         if not isinstance(raw_space, dict):
             raise RuntimeError(f"Invalid installed tool spaces entry in {path}: expected an object.")
 
-        slug = validate_space_slug(str(raw_space.get("slug", "")))
-        alias = normalize_space_alias(slug)
+        try:
+            slug = validate_space_slug(str(raw_space.get("slug", "")))
+            alias = normalize_space_alias(slug)
+        except ValueError as exc:
+            # Keep the reader's contract: manifest corruption always surfaces as
+            # RuntimeError, which the boot-time and add-time guards catch.
+            raise RuntimeError(f"Invalid installed tool spaces entry in {path}: {exc}") from exc
         if slug in seen_slugs:
             raise RuntimeError(f"Duplicate installed tool space '{slug}' found in {path}.")
         if alias in seen_aliases:
@@ -420,10 +425,7 @@ def handle_tool_spaces_command(args: argparse.Namespace, *, instance_path: str |
             return 1
         manifest = read_installed_tool_spaces(instance_path)
         already_installed = any(space.slug == resolved_space.slug for space in manifest.spaces)
-        if already_installed:
-            logger.info("Space already installed: %s", resolved_space.slug)
-            logger.info("%s", format_space_tool_listing(resolved_space))
-        else:
+        if not already_installed:
             alias_conflict = next((s for s in manifest.spaces if s.alias == resolved_space.alias), None)
             if alias_conflict:
                 logger.error(
@@ -457,24 +459,26 @@ def handle_tool_spaces_command(args: argparse.Namespace, *, instance_path: str |
                 )
                 return 1
 
-            installed = InstalledToolSpace(
-                slug=resolved_space.slug,
-                alias=resolved_space.alias,
-                mcp_url=resolved_space.mcp_url,
-                private=resolved_space.private,
-                tools=resolved_space.tools,
-            )
-            updated_spaces = sorted(
-                [*manifest.spaces, installed],
-                key=lambda space: space.slug,
-            )
-            manifest_path = write_installed_tool_spaces(
-                instance_path,
-                InstalledToolSpacesManifest(version=INSTALLED_TOOL_SPACES_VERSION, spaces=updated_spaces),
-            )
-            logger.info("Installed Space tool source: %s", resolved_space.slug)
-            logger.info("Manifest: %s", manifest_path)
-            logger.info("%s", format_space_tool_listing(resolved_space))
+        # Re-adding an installed Space is the documented cache-refresh flow, so the
+        # manifest entry is rewritten either way with the freshly discovered tools.
+        installed = InstalledToolSpace(
+            slug=resolved_space.slug,
+            alias=resolved_space.alias,
+            mcp_url=resolved_space.mcp_url,
+            private=resolved_space.private,
+            tools=resolved_space.tools,
+        )
+        updated_spaces = sorted(
+            [*[space for space in manifest.spaces if space.slug != installed.slug], installed],
+            key=lambda space: space.slug,
+        )
+        manifest_path = write_installed_tool_spaces(
+            instance_path,
+            InstalledToolSpacesManifest(version=INSTALLED_TOOL_SPACES_VERSION, spaces=updated_spaces),
+        )
+        logger.info("%s Space tool source: %s", "Refreshed" if already_installed else "Installed", resolved_space.slug)
+        logger.info("Manifest: %s", manifest_path)
+        logger.info("%s", format_space_tool_listing(resolved_space))
 
         if args.install_only:
             logger.info("Tools installed. Add tool IDs to a profile's tools.txt to enable them.")

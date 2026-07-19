@@ -31,9 +31,9 @@ from reachy_mini_conversation_app.mcp_client import (
     RemoteToolSpec,
     RemoteMcpToolClient,
     RemoteMcpServerConfig,
-    is_loopback_mcp_url,
-    _require_name_segment,
+    _require_alias_segment,
     validate_http_mcp_url,
+    is_plaintext_remote_url,
 )
 from reachy_mini_conversation_app.tool_spaces import installed_space_aliases
 from reachy_mini_conversation_app.remote_tool_sources import (
@@ -102,7 +102,7 @@ class InstalledMcpServer:
 
     def __post_init__(self) -> None:
         """Validate alias, URL and timeouts once the dataclass is created."""
-        object.__setattr__(self, "alias", _require_name_segment("server alias", self.alias))
+        object.__setattr__(self, "alias", _require_alias_segment("server alias", self.alias))
         object.__setattr__(self, "url", validate_http_mcp_url(self.url))
         if self.request_timeout_s <= 0:
             raise ValueError("request_timeout_s must be greater than zero.")
@@ -116,6 +116,9 @@ class InstalledMcpServersManifest:
 
     version: int = MCP_SERVERS_VERSION
     servers: list[InstalledMcpServer] = field(default_factory=list)
+    # Entries the reader dropped as invalid. A rewrite from this manifest would
+    # permanently delete them, so the CLI refuses add/remove while it is non-zero.
+    skipped_entries: int = 0
 
 
 def get_mcp_servers_path(instance_path: str | Path | None) -> Path:
@@ -172,19 +175,20 @@ def read_mcp_servers(instance_path: str | Path | None) -> InstalledMcpServersMan
 
     servers: list[InstalledMcpServer] = []
     seen_aliases: set[str] = set()
+    skipped = 0
     for raw_server in raw_servers:
         try:
             server = _parse_server_entry(raw_server, path)
             if server.alias in seen_aliases:
                 raise RuntimeError(f"Duplicate MCP server alias '{server.alias}' found in {path}.")
         except RuntimeError as exc:
-            # Skipped entries are dropped if the manifest is rewritten (add/remove).
             logger.warning("Skipping invalid MCP server entry: %s", exc)
+            skipped += 1
             continue
         seen_aliases.add(server.alias)
         servers.append(server)
 
-    return InstalledMcpServersManifest(version=version, servers=servers)
+    return InstalledMcpServersManifest(version=version, servers=servers, skipped_entries=skipped)
 
 
 def write_mcp_servers(instance_path: str | Path | None, manifest: InstalledMcpServersManifest) -> Path:
@@ -218,7 +222,7 @@ def _resolve_auth_headers(server: InstalledMcpServer) -> dict[str, str]:
             raise RuntimeError(
                 f"Env var '{server.auth.token_env}' for MCP server '{server.alias}' is not set or empty."
             )
-        if server.url.lower().startswith("http://") and not is_loopback_mcp_url(server.url):
+        if is_plaintext_remote_url(server.url):
             if not server.auth.allow_insecure_http:
                 raise RuntimeError(
                     f"MCP server '{server.alias}' would send its bearer token over plain HTTP ({server.url}), "
@@ -328,6 +332,14 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
     command = getattr(args, "mcp_servers_command", None)
     if command == "add":
         manifest = read_mcp_servers(instance_path)
+        if manifest.skipped_entries:
+            logger.error(
+                "The MCP servers manifest contains %d invalid entry(ies) that a rewrite would permanently "
+                "delete. Fix or remove them in %s first (see the warnings above).",
+                manifest.skipped_entries,
+                get_mcp_servers_path(instance_path),
+            )
+            return 1
         existing = next((entry for entry in manifest.servers if entry.alias == args.alias.strip()), None)
 
         # Re-running add is the documented cache-refresh flow, so flags that are
@@ -351,20 +363,24 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
             elif allow_insecure_token:
                 logger.warning("--allow-insecure-token has no effect without --token-env.")
 
+            # All optional flags are read with getattr so the documented programmatic
+            # call with a minimal Namespace gets the same defaults as the CLI.
+            request_timeout = getattr(args, "request_timeout", None)
+            tool_timeout = getattr(args, "tool_timeout", None)
             server = InstalledMcpServer(
                 alias=args.alias,
                 url=args.url,
                 auth=auth,
                 request_timeout_s=(
-                    args.request_timeout
-                    if args.request_timeout is not None
+                    request_timeout
+                    if request_timeout is not None
                     else existing.request_timeout_s
                     if existing is not None
                     else 10.0
                 ),
                 tool_timeout_s=(
-                    args.tool_timeout
-                    if args.tool_timeout is not None
+                    tool_timeout
+                    if tool_timeout is not None
                     else existing.tool_timeout_s
                     if existing is not None
                     else 30.0
@@ -423,11 +439,11 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
         logger.info("Manifest: %s", manifest_path)
         logger.info("%s", format_mcp_server_listing(resolved))
 
-        if args.install_only:
+        if getattr(args, "install_only", False):
             logger.info("Server configured. Add tool IDs to a profile's tools.txt to enable them.")
             return 0
 
-        target_profile = args.profile
+        target_profile = getattr(args, "profile", None)
         if target_profile is None:
             target_profile = config.REACHY_MINI_CUSTOM_PROFILE or "default"
 
@@ -444,8 +460,16 @@ def handle_mcp_servers_command(args: argparse.Namespace, *, instance_path: str |
         return 0
 
     if command == "remove":
-        alias = _require_name_segment("server alias", args.alias)
+        alias = _require_alias_segment("server alias", args.alias)
         manifest = read_mcp_servers(instance_path)
+        if manifest.skipped_entries:
+            logger.error(
+                "The MCP servers manifest contains %d invalid entry(ies) that a rewrite would permanently "
+                "delete. Fix or remove them in %s first (see the warnings above).",
+                manifest.skipped_entries,
+                get_mcp_servers_path(instance_path),
+            )
+            return 1
         remaining = [server for server in manifest.servers if server.alias != alias]
         if len(remaining) == len(manifest.servers):
             logger.warning("MCP server not configured: %s", alias)

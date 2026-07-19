@@ -129,6 +129,60 @@ def test_tool_spaces_add_list_remove_round_trip(
     assert SEARCH_SPACE_SLUG not in [space.slug for space in read_installed_tool_spaces(None).spaces]
 
 
+def test_tool_spaces_re_add_refreshes_cached_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-running add for an installed Space rewrites its cached tools, so the boot-time 'Re-run tool-spaces add' hint actually refreshes."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "reachy_mini_conversation_app.tool_spaces.HfApi.space_info",
+        lambda self, slug, **kwargs: _mock_public_space_info(slug),
+    )
+
+    def _specs(remote_names: list[str]) -> None:
+        async def _mock(self: object) -> list[RemoteToolSpec]:
+            return [
+                RemoteToolSpec(
+                    server_alias=SEARCH_ALIAS,
+                    remote_name=remote_name,
+                    namespaced_name=f"{SEARCH_ALIAS}__{remote_name}",
+                    description="Search the web",
+                    parameters_schema={"type": "object", "properties": {}, "required": []},
+                )
+                for remote_name in remote_names
+            ]
+
+        monkeypatch.setattr(
+            "reachy_mini_conversation_app.tool_spaces.RemoteMcpToolClient.list_tool_specs",
+            _mock,
+        )
+
+    _specs([SEARCH_REMOTE_NAME])
+    assert _run_cli(monkeypatch, ["app", "tool-spaces", "add", SEARCH_SPACE_SLUG, "--install-only"]) == 0
+    entry = next(s for s in read_installed_tool_spaces(None).spaces if s.slug == SEARCH_SPACE_SLUG)
+    assert [tool.local_name for tool in entry.tools] == [SEARCH_TOOL_ID]
+
+    _specs([SEARCH_REMOTE_NAME, "search_tool_search_news"])
+    assert _run_cli(monkeypatch, ["app", "tool-spaces", "add", SEARCH_SPACE_SLUG, "--install-only"]) == 0
+    entry = next(s for s in read_installed_tool_spaces(None).spaces if s.slug == SEARCH_SPACE_SLUG)
+    assert [tool.local_name for tool in entry.tools] == [SEARCH_TOOL_ID, f"{SEARCH_ALIAS}__search_news"]
+
+
+def test_read_installed_tool_spaces_wraps_invalid_slug_as_runtime_error(tmp_path: Path) -> None:
+    """Manifest corruption must always surface as RuntimeError, which the boot-time and add-time guards catch."""
+    payload = {
+        "version": 2,
+        "spaces": [
+            {"slug": "no-slash", "alias": "x", "mcp_url": "https://x.hf.space/gradio_api/mcp/", "private": False}
+        ],
+    }
+    (tmp_path / "installed_tool_spaces.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Invalid Space slug"):
+        read_installed_tool_spaces(tmp_path)
+
+
 def test_tool_spaces_add_installs_private_space_with_token(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -636,6 +636,67 @@ def test_read_mcp_servers_skips_corrupt_entries_and_keeps_the_rest(
         assert "Skipping invalid MCP server entry" in caplog.text
 
 
+def test_mcp_servers_add_and_remove_refuse_rewrite_when_entries_were_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unrelated add/remove must not rewrite a manifest whose skipped invalid entries the rewrite would permanently delete."""
+    monkeypatch.chdir(tmp_path)
+    _mock_discovery(monkeypatch)
+    assert _run_cli(monkeypatch, ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--install-only"]) == 0
+
+    manifest_path = tmp_path / "external_content" / "mcp_servers.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["servers"].append(
+        {"alias": "broken", "url": SERVER_URL, "auth": {"type": "bearer", "token_env": "BAD NAME"}}
+    )
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    before = manifest_path.read_text(encoding="utf-8")
+
+    assert _run_cli(monkeypatch, ["app", "mcp-servers", "add", "other", OTHER_SERVER_URL, "--install-only"]) == 1
+    assert _run_cli(monkeypatch, ["app", "mcp-servers", "remove", SERVER_ALIAS]) == 1
+    assert manifest_path.read_text(encoding="utf-8") == before
+
+
+def test_handle_mcp_servers_command_accepts_minimal_namespace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The documented programmatic call works with only the required fields, defaulting every optional flag."""
+    _mock_discovery(monkeypatch)
+    profiles_dir = tmp_path / "profiles"
+    (profiles_dir / "default").mkdir(parents=True)
+    monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", profiles_dir)
+    monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", None)
+
+    args = Namespace(mcp_servers_command="add", alias=SERVER_ALIAS, url=SERVER_URL)
+    assert handle_mcp_servers_command(args, instance_path=tmp_path) == 0
+
+    server = read_mcp_servers(tmp_path).servers[0]
+    assert server.auth is None
+    assert server.request_timeout_s == 10.0
+    assert server.tool_timeout_s == 30.0
+    assert TOOL_ID in (profiles_dir / "default" / "tools.txt").read_text(encoding="utf-8")
+
+
+def test_cli_rejects_unrecognized_mcp_servers_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typo in a security-sensitive flag must fail the command instead of being silently dropped by parse_known_args."""
+    monkeypatch.chdir(tmp_path)
+    _mock_discovery(monkeypatch)
+
+    assert (
+        _run_cli(
+            monkeypatch,
+            ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--token_env", TOKEN_ENV, "--install-only"],
+        )
+        == 2
+    )
+    assert not (tmp_path / "external_content" / "mcp_servers.json").exists()
+
+
 def test_read_mcp_servers_drops_tools_with_non_mapping_schema(tmp_path: Path) -> None:
     """A cached tool whose parameters_schema is not an object is dropped; the server and its other tools load."""
     payload = {

@@ -254,12 +254,23 @@ function buildMcpSection({ onSaved } = {}) {
   // refresh doesn't clobber a token the user is in the middle of typing.
   let signature = null;
   let manifestErrorShown = false;
+  // Tokens typed but not yet saved, carried across every rebuild — including a
+  // transient manifest-error render that empties the row list.
+  const pendingTokens = new Map();
+
+  function harvestPendingTokens() {
+    for (const pendingInput of list.querySelectorAll("input[data-alias]")) {
+      if (pendingInput.value) pendingTokens.set(pendingInput.dataset.alias, pendingInput.value);
+      else pendingTokens.delete(pendingInput.dataset.alias);
+    }
+  }
 
   function render(payload) {
     const servers = Array.isArray(payload?.mcp_servers) ? payload.mcp_servers : [];
     if (payload?.mcp_servers_error) {
       // Keep the section visible: hiding it would leave no trace of the broken manifest.
       element.hidden = false;
+      harvestPendingTokens();
       list.replaceChildren();
       signature = null;
       manifestErrorShown = true;
@@ -283,12 +294,9 @@ function buildMcpSection({ onSaved } = {}) {
     if (nextSignature === signature) return;
     signature = nextSignature;
 
-    // A rebuild recreates every row, so carry over tokens typed but not yet saved
-    // (e.g. server B's while server A's save refreshes the status).
-    const pendingTokens = new Map();
-    for (const pendingInput of list.querySelectorAll("input[data-alias]")) {
-      if (pendingInput.value) pendingTokens.set(pendingInput.dataset.alias, pendingInput.value);
-    }
+    // A rebuild recreates every row (e.g. server B's while server A's save
+    // refreshes the status), so pick up anything typed since the last render.
+    harvestPendingTokens();
 
     list.replaceChildren(
       ...servers.map((server) => {

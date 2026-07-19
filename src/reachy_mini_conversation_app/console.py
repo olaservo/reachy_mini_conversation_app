@@ -581,11 +581,7 @@ class LocalStream:
             hf_port: Optional[int] = None
 
         def _mcp_servers_payload() -> tuple[list[dict[str, object]], str | None]:
-            """Describe configured MCP servers' token requirements for the settings UI.
-
-            Returns (servers, error): a read failure must reach the UI as an error,
-            not as an empty list that silently hides the whole token section.
-            """
+            """Return (servers, error): a read failure must reach the UI as an error, not as an empty list that silently hides the token section."""
             try:
                 servers: list[dict[str, object]] = [
                     {"alias": req.alias, "token_env": req.token_env, "token_set": req.token_set}
@@ -725,10 +721,12 @@ class LocalStream:
             except ValueError:
                 return JSONResponse({"ok": False, "error": "invalid_token"}, status_code=400)
             # Re-resolve tools so a server that was skipped for a missing token loads now.
+            rebuild_failed = False
             try:
                 initialize_tools(self._instance_path, force=True)
             except Exception:
                 logger.exception("Tool registry rebuild failed after MCP token save")
+                rebuild_failed = True
 
             can_rebuild = self._can_rebuild_handler()
             if can_rebuild:
@@ -736,7 +734,14 @@ class LocalStream:
 
             alias = payload.alias.strip()
             tools_loaded = any(name.startswith(f"{alias}__") for name in core_tools.ALL_TOOLS)
-            if tools_loaded:
+            if rebuild_failed:
+                # ALL_TOOLS still holds the previous registry (old-token clients), so
+                # a success hint here would mask the failure.
+                load_hint = (
+                    "However, reloading the tool registry failed, so its tools may still "
+                    "use the previous token; check the app logs."
+                )
+            elif tools_loaded:
                 load_hint = "Reconnecting to load its tools." if can_rebuild else "Restart the app to load its tools."
             else:
                 # The rebuild ran but registered nothing for this alias (e.g. the manifest

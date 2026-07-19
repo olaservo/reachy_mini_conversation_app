@@ -54,6 +54,18 @@ def _require_name_segment(label: str, value: str) -> str:
     return candidate
 
 
+def _require_alias_segment(label: str, value: str) -> str:
+    candidate = _require_name_segment(label, value)
+    # '__' separates the alias from the tool segment in namespaced tool names, so an
+    # alias containing '__' or ending in '_' makes prefix matches (e.g. profile
+    # cleanup on remove) claim a sibling alias's tools.
+    if _NAMESPACE_SEPARATOR in candidate or candidate.endswith("_"):
+        raise ValueError(
+            f"Invalid {label} '{value}'. Aliases cannot contain '{_NAMESPACE_SEPARATOR}' or end with '_'."
+        )
+    return candidate
+
+
 def apply_name_normalization(value: str) -> str:
     """Replace non-identifier characters with underscores and collapse runs."""
     normalized = _NAME_NORMALIZER_PATTERN.sub("_", value).strip("_")
@@ -74,17 +86,23 @@ def _normalize_name_segment(label: str, value: str) -> str:
 
 
 def _is_loopback_name(host: str) -> bool:
-    """Whether the hostname itself pins to loopback ("localhost" is already in the set)."""
-    return host in _LOCAL_HTTP_HOSTS or host.endswith(".localhost")
+    """Whether the hostname itself pins to loopback. '*.localhost' subdomains do not count: RFC 6761 pinning is only a SHOULD, so a resolver may send them off-machine."""
+    return host in _LOCAL_HTTP_HOSTS
 
 
 def _parse_host_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     """Parse a URL host into an IP address, tolerating IPv6 brackets and zone ids."""
     candidate = host.strip("[]").split("%", 1)[0]
     try:
-        return ipaddress.ip_address(candidate)
+        ip = ipaddress.ip_address(candidate)
     except ValueError:
         return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        # Classify by the embedded IPv4 address: before CPython 3.11.10/3.12.4
+        # (CVE-2024-4032) is_private is true for the whole ::ffff:0:0/96 range,
+        # which would let plain HTTP through to mapped *public* addresses.
+        return ip.ipv4_mapped
+    return ip
 
 
 def _is_local_http_host(host: str) -> bool:
@@ -93,7 +111,7 @@ def _is_local_http_host(host: str) -> bool:
         return False
     if _is_loopback_name(host):
         return True
-    if host.endswith(".local"):  # mDNS, e.g. my-mcp-server.local
+    if host.endswith((".local", ".localhost")):  # mDNS names, and *.localhost dev hosts
         return True
     ip = _parse_host_ip(host)
     return ip is not None and (ip.is_private or ip.is_loopback or ip.is_link_local)
@@ -108,6 +126,11 @@ def is_loopback_mcp_url(url: str) -> bool:
         return True
     ip = _parse_host_ip(host)
     return ip is not None and ip.is_loopback
+
+
+def is_plaintext_remote_url(url: str) -> bool:
+    """Return whether the URL sends traffic in cleartext beyond the local machine (plain HTTP to a non-loopback host). Single home of the classification both credential guards rely on."""
+    return url.lower().startswith("http://") and not is_loopback_mcp_url(url)
 
 
 def validate_http_mcp_url(url: str) -> str:
@@ -129,7 +152,7 @@ def validate_http_mcp_url(url: str) -> str:
 
 def build_namespaced_tool_name(server_alias: str, tool_name: str) -> str:
     """Build a local tool name for a remote MCP tool."""
-    alias = _require_name_segment("server alias", server_alias)
+    alias = _require_alias_segment("server alias", server_alias)
     tool_segment = _normalize_name_segment("tool name", tool_name)
     return f"{alias}{_NAMESPACE_SEPARATOR}{tool_segment}"
 
@@ -214,16 +237,11 @@ class RemoteMcpServerConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration once the dataclass has been created."""
-        object.__setattr__(self, "alias", _require_name_segment("server alias", self.alias))
+        object.__setattr__(self, "alias", _require_alias_segment("server alias", self.alias))
         object.__setattr__(self, "url", validate_http_mcp_url(self.url))
         object.__setattr__(self, "headers", {str(k): str(v) for k, v in self.headers.items()})
         has_credentials = any(k.lower() == "authorization" for k in self.headers)
-        if (
-            has_credentials
-            and self.url.lower().startswith("http://")
-            and not is_loopback_mcp_url(self.url)
-            and not self.allow_insecure_http
-        ):
+        if has_credentials and is_plaintext_remote_url(self.url) and not self.allow_insecure_http:
             raise ValueError(
                 f"MCP server '{self.alias}' would send credentials over plain HTTP ({self.url}), "
                 "exposing them to anyone on the network. Use HTTPS or a loopback address."

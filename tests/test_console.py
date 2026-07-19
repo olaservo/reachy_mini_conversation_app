@@ -508,6 +508,44 @@ def test_mcp_server_token_route_warns_when_no_tools_load_for_alias(
     assert "Reconnecting to load its tools" not in data["message"]
 
 
+def test_mcp_server_token_route_reports_rebuild_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed registry rebuild must not read as success: ALL_TOOLS still holds the previous (old-token) registry."""
+    token_env = "MCP_CONSOLE_REBUILD_FAIL_TOKEN"
+    monkeypatch.setenv(token_env, "")
+    _write_mcp_server_manifest(tmp_path, "example", token_env)
+
+    def _failing_rebuild(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("registry build failed")
+
+    monkeypatch.setattr("reachy_mini_conversation_app.console.initialize_tools", _failing_rebuild)
+    # A failed rebuild leaves the previous registry (built with the old token) in place.
+    monkeypatch.setattr("reachy_mini_conversation_app.console.core_tools.ALL_TOOLS", {"example__do_thing": object()})
+
+    app = FastAPI()
+    handler = MagicMock()
+    handler.shutdown = AsyncMock()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(
+        handler,
+        robot,
+        settings_app=app,
+        instance_path=str(tmp_path),
+        handler_factory=lambda _voice: handler,
+    )
+    stream._init_settings_ui_if_needed()
+
+    response = TestClient(app).post("/api/v1/mcp_server_token", json={"alias": "example", "token": "new-secret"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert "reloading the tool registry failed" in data["message"]
+    assert "Reconnecting to load its tools" not in data["message"]
+
+
 def test_persist_env_values_round_trips_special_characters_through_dotenv(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
