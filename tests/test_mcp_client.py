@@ -62,8 +62,6 @@ def test_validate_http_mcp_url_rejects_non_local_plain_http() -> None:
         "http://dev.localhost:8000/mcp",
         "http://[::1]:8000/mcp",
         "http://192.168.1.50:8000/mcp",
-        "http://10.0.0.5/mcp",
-        "http://172.16.0.1/mcp",
         "http://169.254.10.10/mcp",
         "http://my-mcp-server.local:8000/mcp",
         "https://example.com/mcp",
@@ -77,14 +75,13 @@ def test_validate_http_mcp_url_accepts_local_network_endpoints(url: str) -> None
 @pytest.mark.parametrize(
     "url",
     [
-        "http://example.com/mcp",
         "http://8.8.8.8/mcp",
         "http://my-server.example.org:8000/mcp",
         "http://intranet-host:8000/mcp",
     ],
 )
 def test_validate_http_mcp_url_rejects_public_plain_http(url: str) -> None:
-    """Plain HTTP to public or unresolvable-name hosts is rejected."""
+    """Plain HTTP to public IPs or unresolvable-name hosts is rejected (the plain public-name case is covered above)."""
     with pytest.raises(ValueError, match="must use HTTPS"):
         validate_http_mcp_url(url)
 

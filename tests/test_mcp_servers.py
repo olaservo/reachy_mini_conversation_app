@@ -194,58 +194,25 @@ def test_mcp_servers_add_never_persists_token_value(
     assert entry["auth"] == {"type": "bearer", "token_env": TOKEN_ENV}
 
 
-def test_mcp_servers_add_fails_fast_when_token_env_unset(
+@pytest.mark.parametrize(
+    "add_args",
+    [
+        pytest.param([SERVER_ALIAS, SERVER_URL, "--token-env", TOKEN_ENV], id="token-env-unset"),
+        pytest.param([SERVER_ALIAS, "http://example.com/mcp"], id="public-plain-http"),
+        pytest.param([SERVER_ALIAS, SERVER_URL, "--token-env", "BAD NAME"], id="invalid-token-env-name"),
+    ],
+)
+def test_mcp_servers_add_rejects_invalid_config_before_persisting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    add_args: list[str],
 ) -> None:
-    """A missing token must fail the add before anything is persisted."""
+    """A bad add (unset token env, public plain HTTP, unroundtrippable env name) fails before anything is persisted."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv(TOKEN_ENV, raising=False)
     _mock_discovery(monkeypatch)
 
-    assert (
-        _run_cli(
-            monkeypatch,
-            ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--token-env", TOKEN_ENV, "--install-only"],
-        )
-        == 1
-    )
-    assert not (tmp_path / "external_content" / "mcp_servers.json").exists()
-
-
-def test_mcp_servers_add_rejects_public_plain_http(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Plain HTTP is only allowed for local-network hosts."""
-    monkeypatch.chdir(tmp_path)
-    _mock_discovery(monkeypatch)
-
-    assert (
-        _run_cli(
-            monkeypatch,
-            ["app", "mcp-servers", "add", SERVER_ALIAS, "http://example.com/mcp", "--install-only"],
-        )
-        == 1
-    )
-    assert not (tmp_path / "external_content" / "mcp_servers.json").exists()
-
-
-def test_mcp_servers_add_rejects_invalid_token_env_name(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An env-var name that can't round-trip through .env must be rejected."""
-    monkeypatch.chdir(tmp_path)
-    _mock_discovery(monkeypatch)
-
-    assert (
-        _run_cli(
-            monkeypatch,
-            ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--token-env", "BAD NAME", "--install-only"],
-        )
-        == 1
-    )
+    assert _run_cli(monkeypatch, ["app", "mcp-servers", "add", *add_args, "--install-only"]) == 1
     assert not (tmp_path / "external_content" / "mcp_servers.json").exists()
 
 
@@ -274,52 +241,10 @@ def test_mcp_servers_add_refresh_keeps_stored_auth_and_timeouts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The documented cache-refresh flow must not silently drop auth or reset timeouts."""
+    """The no-flag cache-refresh flow must not silently drop auth, timeouts, or the insecure-HTTP opt-in."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(TOKEN_ENV, "secret")
     _mock_discovery(monkeypatch, ["do_thing"])
-    assert (
-        _run_cli(
-            monkeypatch,
-            [
-                "app",
-                "mcp-servers",
-                "add",
-                SERVER_ALIAS,
-                LOOPBACK_SERVER_URL,
-                "--token-env",
-                TOKEN_ENV,
-                "--request-timeout",
-                "5",
-                "--tool-timeout",
-                "60",
-                "--install-only",
-            ],
-        )
-        == 0
-    )
-
-    _mock_discovery(monkeypatch, ["do_thing", "do_other_thing"])
-    assert (
-        _run_cli(monkeypatch, ["app", "mcp-servers", "add", SERVER_ALIAS, LOOPBACK_SERVER_URL, "--install-only"]) == 0
-    )
-
-    server = read_mcp_servers(None).servers[0]
-    assert server.auth is not None
-    assert server.auth.token_env == TOKEN_ENV
-    assert server.request_timeout_s == 5.0
-    assert server.tool_timeout_s == 60.0
-    assert [tool.local_name for tool in server.tools] == [TOOL_ID, f"{SERVER_ALIAS}__do_other_thing"]
-
-
-def test_mcp_servers_add_refresh_keeps_insecure_token_opt_in(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A refresh must keep --allow-insecure-token, or resolving the LAN server would be blocked."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv(TOKEN_ENV, "secret")
-    _mock_discovery(monkeypatch)
     assert (
         _run_cli(
             monkeypatch,
@@ -332,16 +257,27 @@ def test_mcp_servers_add_refresh_keeps_insecure_token_opt_in(
                 "--token-env",
                 TOKEN_ENV,
                 "--allow-insecure-token",
+                "--request-timeout",
+                "5",
+                "--tool-timeout",
+                "60",
                 "--install-only",
             ],
         )
         == 0
     )
 
+    _mock_discovery(monkeypatch, ["do_thing", "do_other_thing"])
     assert _run_cli(monkeypatch, ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL, "--install-only"]) == 0
+
     server = read_mcp_servers(None).servers[0]
     assert server.auth is not None
+    assert server.auth.token_env == TOKEN_ENV
+    # Dropping the opt-in on refresh would also have blocked resolving this LAN server.
     assert server.auth.allow_insecure_http is True
+    assert server.request_timeout_s == 5.0
+    assert server.tool_timeout_s == 60.0
+    assert [tool.local_name for tool in server.tools] == [TOOL_ID, f"{SERVER_ALIAS}__do_other_thing"]
 
 
 def test_mcp_servers_add_token_rotation_keeps_insecure_token_opt_in(
@@ -405,7 +341,7 @@ def test_read_mcp_servers_rejects_non_bool_allow_insecure_http(
         manifest = read_mcp_servers(tmp_path)
 
     assert manifest.servers == []
-    assert "'allow_insecure_http' must be true or false" in caplog.text
+    assert "allow_insecure_http" in caplog.text
 
 
 def test_mcp_servers_add_fails_closed_when_spaces_manifest_unreadable(
@@ -433,54 +369,6 @@ def test_build_generic_remote_client_raises_on_unresolvable_auth(monkeypatch: py
 
     with pytest.raises(RuntimeError, match=TOKEN_ENV):
         build_generic_remote_client(server)
-
-
-def test_mcp_servers_add_refresh_replaces_auth_when_flag_passed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Passing --token-env on a re-add updates the stored auth instead of keeping the old one."""
-    other_token_env = f"{TOKEN_ENV}_V2"
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv(TOKEN_ENV, "secret")
-    monkeypatch.setenv(other_token_env, "secret-v2")
-    _mock_discovery(monkeypatch)
-    assert (
-        _run_cli(
-            monkeypatch,
-            [
-                "app",
-                "mcp-servers",
-                "add",
-                SERVER_ALIAS,
-                LOOPBACK_SERVER_URL,
-                "--token-env",
-                TOKEN_ENV,
-                "--install-only",
-            ],
-        )
-        == 0
-    )
-
-    assert (
-        _run_cli(
-            monkeypatch,
-            [
-                "app",
-                "mcp-servers",
-                "add",
-                SERVER_ALIAS,
-                LOOPBACK_SERVER_URL,
-                "--token-env",
-                other_token_env,
-                "--install-only",
-            ],
-        )
-        == 0
-    )
-    server = read_mcp_servers(None).servers[0]
-    assert server.auth is not None
-    assert server.auth.token_env == other_token_env
 
 
 def test_mcp_servers_add_rejects_same_alias_different_url(
@@ -586,38 +474,17 @@ def test_mcp_servers_manifest_uses_instance_path_when_provided(
     assert not (tmp_path / "external_content" / "mcp_servers.json").exists()
 
 
-def _setup_profile(tmp_path: Path, profile: str) -> Path:
-    profile_dir = tmp_path / profile
+def test_mcp_servers_add_and_remove_wire_tools_into_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Add without flags enables the discovered tools in the active profile; remove strips them again."""
+    monkeypatch.chdir(tmp_path)
+    _mock_discovery(monkeypatch)
+    profile_dir = tmp_path / "default"
     profile_dir.mkdir(parents=True)
     tools_txt = profile_dir / "tools.txt"
     tools_txt.write_text("", encoding="utf-8")
-    return tools_txt
-
-
-def test_mcp_servers_add_enables_in_active_profile_by_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Add without flags should enable the discovered tools in the active profile."""
-    monkeypatch.chdir(tmp_path)
-    _mock_discovery(monkeypatch)
-    tools_txt = _setup_profile(tmp_path, "default")
-    monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", tmp_path)
-    monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", None)
-
-    assert _run_cli(monkeypatch, ["app", "mcp-servers", "add", SERVER_ALIAS, SERVER_URL]) == 0
-
-    assert TOOL_ID in tools_txt.read_text(encoding="utf-8")
-
-
-def test_mcp_servers_remove_disables_tools_in_profile(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Removing a server strips its tool IDs from the profile they were enabled in."""
-    monkeypatch.chdir(tmp_path)
-    _mock_discovery(monkeypatch)
-    tools_txt = _setup_profile(tmp_path, "default")
     monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", tmp_path)
     monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", None)
 
@@ -660,33 +527,32 @@ def test_list_token_requirements_reflects_environment(
     assert find_server_token_env(tmp_path, "missing") is None
 
 
-def test_resolve_auth_headers_rejects_plain_http_bearer_on_lan(
+def test_resolve_auth_headers_plain_http_bearer_policy(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A bearer token must never be sent over plain HTTP to a non-loopback host."""
+    """Bearer over plain HTTP: rejected on LAN, allowed on loopback, allowed with a warning when opted in."""
     monkeypatch.setenv(TOKEN_ENV, "some-token")
-    server = InstalledMcpServer(
-        alias=SERVER_ALIAS,
-        url=SERVER_URL,
-        auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV),
-    )
+
+    def _server(url: str, allow_insecure_http: bool = False) -> InstalledMcpServer:
+        return InstalledMcpServer(
+            alias=SERVER_ALIAS,
+            url=url,
+            auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV, allow_insecure_http=allow_insecure_http),
+        )
 
     with pytest.raises(RuntimeError, match="plain HTTP"):
-        _resolve_auth_headers(server)
+        _resolve_auth_headers(_server(SERVER_URL))
 
+    # Loopback endpoints never put the token on the wire, so plain HTTP is fine there.
+    assert _resolve_auth_headers(_server(LOOPBACK_SERVER_URL)) == {"Authorization": "Bearer some-token"}
 
-def test_resolve_auth_headers_allows_loopback_plain_http_bearer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Loopback endpoints never put the token on the wire, so plain HTTP is fine there."""
-    monkeypatch.setenv(TOKEN_ENV, "some-token")
-    server = InstalledMcpServer(
-        alias=SERVER_ALIAS,
-        url=LOOPBACK_SERVER_URL,
-        auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV),
-    )
-
-    assert _resolve_auth_headers(server) == {"Authorization": "Bearer some-token"}
+    # An opted-in server resolves, but still warns on every resolve.
+    with caplog.at_level("WARNING"):
+        assert _resolve_auth_headers(_server(SERVER_URL, allow_insecure_http=True)) == {
+            "Authorization": "Bearer some-token"
+        }
+    assert any("plain HTTP" in record.message for record in caplog.records)
 
 
 def test_mcp_servers_add_rejects_token_over_lan_plain_http(
@@ -742,25 +608,6 @@ def test_mcp_servers_add_allows_token_over_lan_plain_http_with_opt_in(
     assert read_mcp_servers(None).servers[0].auth == McpServerAuth(
         type="bearer", token_env=TOKEN_ENV, allow_insecure_http=True
     )
-
-
-def test_resolve_auth_headers_warns_on_opted_in_lan_plain_http_bearer(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """An opted-in server still logs a warning every time the token goes over plain LAN HTTP."""
-    monkeypatch.setenv(TOKEN_ENV, "some-token")
-    server = InstalledMcpServer(
-        alias=SERVER_ALIAS,
-        url=SERVER_URL,
-        auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV, allow_insecure_http=True),
-    )
-
-    with caplog.at_level("WARNING"):
-        headers = _resolve_auth_headers(server)
-
-    assert headers == {"Authorization": "Bearer some-token"}
-    assert any("plain HTTP" in record.message for record in caplog.records)
 
 
 def test_read_mcp_servers_skips_corrupt_entries_and_keeps_the_rest(

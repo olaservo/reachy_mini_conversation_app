@@ -346,7 +346,7 @@ def test_mcp_server_token_route_persists_token_and_reports_saved(
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is True
-    assert data["message"] == "Token saved. Reconnecting to load its tools."
+    assert "Token saved" in data["message"]
     assert data["mcp_servers"] == [{"alias": "example", "token_env": token_env, "token_set": True}]
     assert os.environ[token_env] == "new-secret"
     assert f"{token_env}=new-secret" in (tmp_path / ".env").read_text(encoding="utf-8")

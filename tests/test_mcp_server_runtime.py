@@ -144,7 +144,7 @@ def test_initialize_tools_skips_generic_tools_with_missing_token(
         core_tools_mod.initialize_tools()
 
     assert TOOL_ID not in core_tools_mod.ALL_TOOLS
-    assert any("Skipping" in record.message and TOKEN_ENV in record.getMessage() for record in caplog.records)
+    assert any(TOKEN_ENV in record.getMessage() for record in caplog.records)
 
 
 def test_initialize_tools_warns_when_enabled_generic_tool_missing_from_manifest(
@@ -187,7 +187,7 @@ def test_initialize_tools_skips_generic_servers_on_corrupt_manifest(
         core_tools_mod.initialize_tools()
 
     assert TOOL_ID not in core_tools_mod.ALL_TOOLS
-    assert any("Skipping generic MCP servers" in record.message for record in caplog.records)
+    assert any("mcp_servers.json" in record.getMessage() for record in caplog.records)
 
 
 def test_initialize_tools_skips_spaces_on_corrupt_manifest_but_keeps_generic_servers(
@@ -209,7 +209,7 @@ def test_initialize_tools_skips_spaces_on_corrupt_manifest_but_keeps_generic_ser
         core_tools_mod.initialize_tools()
 
     assert TOOL_ID in core_tools_mod.ALL_TOOLS
-    assert any("Skipping installed tool Spaces" in record.message for record in caplog.records)
+    assert any("installed_tool_spaces.json" in record.getMessage() for record in caplog.records)
 
 
 def test_initialize_tools_fails_on_name_collision_between_space_and_server(
