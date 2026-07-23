@@ -39,7 +39,9 @@ from reachy_mini_conversation_app.config import (
     refresh_runtime_config_from_env,
 )
 from reachy_mini_conversation_app.prompts import get_session_voice, get_session_language, get_session_instructions
+from reachy_mini_conversation_app.ptt_input import start_keyboard_listener
 from reachy_mini_conversation_app.streaming import AdditionalOutputs, audio_to_float32
+from reachy_mini_conversation_app.listen_gate import PUSH_TO_TALK, ListenGate, normalize_mode
 from reachy_mini_conversation_app.memory_routes import register_memory_methods
 from reachy_mini_conversation_app.profile_store import canonical_profile_name
 from reachy_mini_conversation_app.vision_routes import register_vision_methods
@@ -50,8 +52,7 @@ from reachy_mini_conversation_app.settings_store import (
     load_settings_into_runtime,
 )
 from reachy_mini_conversation_app.language_routes import LanguageScope, register_language_methods
-from reachy_mini_conversation_app.ptt_input import start_keyboard_listener
-from reachy_mini_conversation_app.listen_gate import PUSH_TO_TALK, ListenGate, normalize_mode
+from reachy_mini_conversation_app.physical_trigger import AntennaHoldDetector
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
 from reachy_mini_conversation_app.tool_space_routes import register_tool_space_methods
@@ -111,6 +112,7 @@ LEGACY_STARTUP_ENV_NAMES = (
 BACKEND_RETRY_DELAY_SECONDS = 5.0
 CONVERSATION_HISTORY_LIMIT = 200  # events, about 100 exchanges
 PLAYBACK_LEAD_SECONDS = 0.1  # paced chunks reach the SDK this far ahead of their slot
+PTT_ANTENNA_POLL_HZ = 30.0  # antenna hold-to-talk poll rate
 
 
 class LocalStream:
@@ -240,6 +242,57 @@ class LocalStream:
         loop = self._asyncio_loop
         if loop is not None:
             asyncio.run_coroutine_threadsafe(self.handler.on_listen_mode_changed(new_mode), loop)
+
+    def _antenna_deflection(self) -> list[float]:
+        """Return the antennas' measured minus commanded positions (rad), one per antenna.
+
+        The MovementManager sends every antenna target, so a commanded move reads
+        as roughly zero here and a hand pushing an antenna does not. Without a
+        movement manager the raw positions are returned and the detector's
+        baseline does the work.
+        """
+        present = list(self._robot.get_present_antenna_joint_positions() or [])
+        mm = getattr(getattr(self.handler, "deps", None), "movement_manager", None)
+        commanded = getattr(mm, "commanded_antennas", None)
+        if not present or not callable(commanded):
+            return present
+        return [float(p) - float(c) for p, c in zip(present, commanded())]
+
+    async def _antenna_hold_loop(self) -> None:
+        """Hold-to-talk via antenna: deflect an antenna to open the mic, release to send.
+
+        Active only in push_to_talk mode. Detection runs on the residual between
+        measured and commanded antenna positions, so the app's own antenna moves
+        (listening pose, emotions, breathing) do not read as a push.
+        """
+        detector = AntennaHoldDetector(
+            press_delta_rad=config.PTT_ANTENNA_PRESS_RAD,
+            release_delta_rad=config.PTT_ANTENNA_RELEASE_RAD,
+        )
+        poll_dt = 1.0 / PTT_ANTENNA_POLL_HZ
+        prev_held = False
+        logger.info(
+            "Antenna hold-to-talk active (press>=%.2f rad, release<=%.2f rad).",
+            config.PTT_ANTENNA_PRESS_RAD,
+            config.PTT_ANTENNA_RELEASE_RAD,
+        )
+        while not self._stop_event.is_set():
+            try:
+                if self._listen_gate.mode != PUSH_TO_TALK:
+                    detector.reset()
+                    if prev_held:
+                        self._listen_gate.set_held(False)
+                        prev_held = False
+                    await asyncio.sleep(0.1)
+                    continue
+                deflection = self._antenna_deflection()  # the SDK client caches joint state
+                held = detector.update(deflection)
+                if held != prev_held:
+                    self._listen_gate.set_held(held)
+                    prev_held = held
+            except Exception as e:
+                logger.debug("PTT antenna loop error: %s", e)
+            await asyncio.sleep(poll_dt)
 
     def _dispatch_transcript(self, role: str, text: str, final: bool) -> None:
         """Push a conversation.transcript notification, recording final ones in the history."""
@@ -939,6 +992,8 @@ class LocalStream:
                 handler_task,
                 asyncio.create_task(self.record_loop(), name="stream-record-loop"),
             ]
+            if config.PTT_ANTENNA_ENABLED:
+                self._tasks.append(asyncio.create_task(self._antenna_hold_loop(), name="stream-ptt-antenna"))
             try:
                 await asyncio.gather(
                     asyncio.sleep(1),  # give the pipelines time to start
