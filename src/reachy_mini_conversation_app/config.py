@@ -355,6 +355,20 @@ class Config:
     LOCAL_BARGE_IN_ENABLED = _env_flag("LOCAL_BARGE_IN_ENABLED", default=True)
     HF_TOKEN = os.getenv("HF_TOKEN")  # Optional, falls back to hf auth login if not set
 
+    # Listening mode: "always_on" (default, continuous server VAD) or "push_to_talk".
+    # In push_to_talk, mic audio only reaches the backend while a control source
+    # (a momentary/latching keyboard or USB-HID key, or the conversation.listen
+    # JSON-RPC toggle) holds the gate open. See listen_gate.ListenGate.
+    LISTEN_MODE = (
+        "push_to_talk"
+        if (os.getenv("REACHY_MINI_LISTEN_MODE") or "").strip().lower() == "push_to_talk"
+        else "always_on"
+    )
+    # Keyboard / USB-HID push-to-talk bindings (only used in push_to_talk mode).
+    PTT_KEYBOARD_ENABLED = _env_flag("REACHY_MINI_PTT_KEYBOARD_ENABLED", default=True)
+    PTT_KEY = (os.getenv("REACHY_MINI_PTT_KEY") or "space").strip()  # momentary hold-to-talk
+    PTT_TOGGLE_KEY = (os.getenv("REACHY_MINI_PTT_TOGGLE_KEY") or "m").strip()  # latching toggle
+
     logger.debug(
         "HF mode: %s, HF session URL set: %s, HF direct URL set: %s",
         HF_REALTIME_CONNECTION_MODE,
@@ -471,6 +485,15 @@ def refresh_runtime_config_from_env() -> None:
     config.CAMERA_ENABLED = _env_flag(CAMERA_ENABLED_ENV, default=True)
     config.LOCAL_VAD_ENABLED = _env_flag("LOCAL_VAD_ENABLED", default=True)
     config.LOCAL_BARGE_IN_ENABLED = _env_flag("LOCAL_BARGE_IN_ENABLED", default=True)
+    # Push-to-talk / listening controls (so an instance .env can override them).
+    config.LISTEN_MODE = (
+        "push_to_talk"
+        if (os.getenv("REACHY_MINI_LISTEN_MODE") or "").strip().lower() == "push_to_talk"
+        else "always_on"
+    )
+    config.PTT_KEYBOARD_ENABLED = _env_flag("REACHY_MINI_PTT_KEYBOARD_ENABLED", default=True)
+    config.PTT_KEY = (os.getenv("REACHY_MINI_PTT_KEY") or "space").strip()
+    config.PTT_TOGGLE_KEY = (os.getenv("REACHY_MINI_PTT_TOGGLE_KEY") or "m").strip()
 
 
 # Files the app writes into its instance directory, migrated once when the
