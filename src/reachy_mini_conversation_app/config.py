@@ -121,6 +121,18 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return default
 
 
+def _env_float(name: str, default: float) -> float:
+    """Parse a float environment value, falling back to ``default`` when unset/invalid."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw.strip())
+    except ValueError:
+        logger.warning("Invalid float value for %s=%r, using default=%s", name, raw, default)
+        return default
+
+
 APP_TIMEOUT_MINUTES_ENV = "REACHY_MINI_APP_TIMEOUT_MINUTES"
 DEFAULT_APP_TIMEOUT_MINUTES = 1440.0
 
@@ -330,6 +342,13 @@ class Config:
     PTT_KEYBOARD_ENABLED = _env_flag("REACHY_MINI_PTT_KEYBOARD_ENABLED", default=True)
     PTT_KEY = (os.getenv("REACHY_MINI_PTT_KEY") or "space").strip()  # momentary hold-to-talk
     PTT_TOGGLE_KEY = (os.getenv("REACHY_MINI_PTT_TOGGLE_KEY") or "m").strip()  # latching toggle
+    # Physical push-to-talk trigger: hold an antenna to talk (push_to_talk mode).
+    # This is the on-robot control (the keyboard needs a desktop input backend).
+    PTT_ANTENNA_ENABLED = _env_flag("REACHY_MINI_PTT_ANTENNA_ENABLED", default=True)
+    # Antenna deflection (rad) to start / release a hold — calibrated to match the
+    # daemon's antenna-touch detector. Tune per robot if needed.
+    PTT_ANTENNA_PRESS_RAD = _env_float("REACHY_MINI_PTT_ANTENNA_PRESS_RAD", 0.25)
+    PTT_ANTENNA_RELEASE_RAD = _env_float("REACHY_MINI_PTT_ANTENNA_RELEASE_RAD", 0.10)
 
     logger.debug(
         "HF mode: %s, HF session URL set: %s, HF direct URL set: %s",
@@ -450,6 +469,9 @@ def refresh_runtime_config_from_env() -> None:
     config.PTT_KEYBOARD_ENABLED = _env_flag("REACHY_MINI_PTT_KEYBOARD_ENABLED", default=True)
     config.PTT_KEY = (os.getenv("REACHY_MINI_PTT_KEY") or "space").strip()
     config.PTT_TOGGLE_KEY = (os.getenv("REACHY_MINI_PTT_TOGGLE_KEY") or "m").strip()
+    config.PTT_ANTENNA_ENABLED = _env_flag("REACHY_MINI_PTT_ANTENNA_ENABLED", default=True)
+    config.PTT_ANTENNA_PRESS_RAD = _env_float("REACHY_MINI_PTT_ANTENNA_PRESS_RAD", 0.25)
+    config.PTT_ANTENNA_RELEASE_RAD = _env_float("REACHY_MINI_PTT_ANTENNA_RELEASE_RAD", 0.10)
 
 
 def get_available_voices() -> list[str]:
