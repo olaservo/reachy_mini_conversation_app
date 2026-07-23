@@ -30,6 +30,11 @@ dependencies = [
     "httpx2>=2.5.0",
 ]
 
+[project.optional-dependencies]
+# Keyboard push-to-talk needs a desktop input backend; the robot runs headless
+# and uses the antenna or the conversation.listen RPC instead.
+ptt-keyboard = ["pynput>=1.7.6"]
+
 [dependency-groups]
 dev = [
   "allure-pytest==2.16.0",

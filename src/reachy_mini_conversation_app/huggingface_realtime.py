@@ -70,6 +70,7 @@ _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 _RESPONSE_REJECTION_RETRY_DELAY: Final[float] = 0.5
 # A microphone frame that cannot be sent for this long means a dead link.
 AUDIO_SEND_TIMEOUT_S: Final[float] = 5.0
+PTT_MIN_FRAMES_TO_COMMIT: Final[int] = 4  # ~100 ms of mic audio, the server's minimum for a commit
 # Server-measured stage timings the speech-to-speech backend attaches to response.done.
 _TURN_LATENCY_METADATA_KEY: Final[str] = "speech_to_speech.turn_latency"
 
@@ -222,6 +223,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         self._audio_response_id: str | None = None
         self._discarded_response_ids: deque[str] = deque(maxlen=32)
         self._playback_interrupted = False
+        self._ptt_frames_since_open = 0  # mic frames received during the current push-to-talk hold
 
     def _set_listening(self, *, local: bool | None = None, server: bool | None = None) -> None:
         if local is not None:
@@ -382,7 +384,11 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         model="gpt-4o-transcribe",
                         language=get_session_language(),
                     ),
-                    turn_detection=ServerVad(type="server_vad", interrupt_response=True),
+                    # Push-to-talk commits turns manually on key release, so disable
+                    # the server's own VAD in that mode; always_on keeps server VAD.
+                    turn_detection=None
+                    if config.LISTEN_MODE == "push_to_talk"
+                    else ServerVad(type="server_vad", interrupt_response=True),
                 ),
                 output=RealtimeAudioConfigOutputParam(
                     format=_native_rate_audio_pcm(),  # type: ignore[typeddict-item]
@@ -396,6 +402,46 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
     def _is_connected(self) -> bool:
         """Return whether the realtime connection is open."""
         return self.connection is not None
+
+    async def on_listen_open(self, *, continuous: bool) -> None:
+        """PTT gate opened: barge in.
+
+        With server VAD disabled in push_to_talk mode the model won't react to
+        audio on its own; the turn is finalised in ``on_listen_close``. The
+        input buffer is not cleared: nothing reaches it while the gate is shut,
+        and the Hugging Face server rejects ``input_audio_buffer.clear``.
+        """
+        self._ptt_frames_since_open = 0
+        if not self.connection:
+            return
+        try:
+            await self.interrupt()
+        except Exception as e:
+            logger.debug("PTT open: interrupt ignored (%s)", e)
+
+    async def on_listen_close(self, *, commit: bool) -> None:
+        """PTT gate closed: commit the captured audio and request a reply.
+
+        A hold that captured less than the server's 100 ms minimum is dropped
+        rather than committed, so a brush of the antenna does not make the model
+        answer to silence.
+        """
+        frames, self._ptt_frames_since_open = self._ptt_frames_since_open, 0
+        if not commit or not self.connection:
+            return
+        if frames < PTT_MIN_FRAMES_TO_COMMIT:
+            logger.info("PTT close: hold captured %d frame(s), nothing to commit", frames)
+            return
+        try:
+            await self.connection.input_audio_buffer.commit()
+            await self._safe_response_create()
+        except Exception as e:
+            logger.debug("PTT close: commit/response ignored (%s)", e)
+
+    async def on_listen_mode_changed(self, mode: str) -> None:
+        """Rebuild the session so server-VAD matches the new mode (fixed at connect)."""
+        logger.info("Listen mode -> %s: restarting realtime session to apply VAD config.", mode)
+        await self._restart_session()
 
     def _idle_behavior_ready(self) -> bool:
         """Hold idle behavior while a model response is still active."""
@@ -1159,6 +1205,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         sample_rate, audio_frame = frame
         if audio_frame.size == 0:
             return
+        self._ptt_frames_since_open += 1
 
         # Reshape if needed
         if audio_frame.ndim == 2:
