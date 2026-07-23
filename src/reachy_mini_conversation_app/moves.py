@@ -231,6 +231,7 @@ class MovementManager:
         self._shared_state_lock = threading.Lock()
         self._shared_last_activity_time = self.state.last_activity_time
         self._shared_is_listening = self._is_listening
+        self._shared_move_active = False
         self._status_lock = threading.Lock()
         self._freq_stats = LoopFrequencyStats()
         self._freq_snapshot = LoopFrequencyStats()
@@ -268,6 +269,17 @@ class MovementManager:
             return False
 
         return self._now() - last_activity >= self.idle_inactivity_delay
+
+    def move_active(self) -> bool:
+        """Return True while an emotion, dance or goto is playing (breathing does not count). Thread-safe."""
+        with self._shared_state_lock:
+            return self._shared_move_active
+
+    def commanded_antennas(self) -> Tuple[float, float]:
+        """Return the antenna positions last sent to the robot (rad). Thread-safe."""
+        with self._status_lock:
+            antennas = self._last_commanded_pose[1]
+        return (float(antennas[0]), float(antennas[1]))
 
     def set_listening(self, listening: bool) -> None:
         """Enable or disable listening mode without touching shared state directly.
@@ -398,6 +410,7 @@ class MovementManager:
         with self._shared_state_lock:
             self._shared_last_activity_time = self.state.last_activity_time
             self._shared_is_listening = self._is_listening
+            self._shared_move_active = self.state.current_move is not None and not self._breathing_active
 
     def _manage_move_queue(self, current_time: float) -> None:
         """Manage the primary move queue (sequential execution)."""
