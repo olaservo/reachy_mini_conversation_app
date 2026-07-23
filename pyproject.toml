@@ -23,6 +23,11 @@ dependencies = [
     "reachy_mini_dances_library",
     "reachy-mini>=1.10.0rc5",
     "mcp>=1.27.1,<2",
+
+    #Push-to-talk keyboard / USB-HID key listener (optional at runtime: imported
+    #lazily and only in push_to_talk mode; a missing/non-functional backend is
+    #logged and the JSON-RPC listen toggle still works).
+    "pynput>=1.7.6",
 ]
 
 [dependency-groups]
