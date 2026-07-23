@@ -41,6 +41,7 @@ from reachy_mini_conversation_app.prompts import get_session_voice, get_session_
 from reachy_mini_conversation_app.ptt_input import start_keyboard_listener
 from reachy_mini_conversation_app.streaming import AdditionalOutputs, audio_to_float32
 from reachy_mini_conversation_app.listen_gate import PUSH_TO_TALK, ListenGate, normalize_mode
+from reachy_mini_conversation_app.physical_trigger import AntennaHoldDetector
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.tools.core_tools import initialize_tools
 from reachy_mini_conversation_app.tool_space_routes import register_tool_space_methods
@@ -98,6 +99,7 @@ LEGACY_STARTUP_ENV_NAMES = (
     "REACHY_MINI_VOICE_OVERRIDE",
 )
 BACKEND_RETRY_DELAY_SECONDS = 5.0
+PTT_ANTENNA_POLL_HZ = 30.0  # antenna hold-to-talk poll rate
 
 
 class LocalStream:
@@ -205,6 +207,60 @@ class LocalStream:
         loop = self._asyncio_loop
         if loop is not None:
             asyncio.run_coroutine_threadsafe(self.handler.on_listen_mode_changed(new_mode), loop)
+
+    def _robot_motion_idle(self) -> bool:
+        """Best-effort: True when the robot is not executing a commanded move.
+
+        Used to pause antenna hold detection during app-driven antenna motion (the
+        SDK doesn't expose the commanded antenna target). Falls back to True
+        (detect) when the movement state can't be read.
+        """
+        try:
+            mm = getattr(getattr(self.handler, "deps", None), "movement_manager", None)
+            is_idle = getattr(mm, "is_idle", None)
+            if callable(is_idle):
+                return bool(is_idle())
+        except Exception:
+            pass
+        return True
+
+    async def _antenna_hold_loop(self) -> None:
+        """Hold-to-talk via antenna: deflect an antenna to open the mic, release to send.
+
+        Active only in push_to_talk mode. Detection pauses while the robot is
+        executing a commanded move so the app's own antenna emotions aren't read as
+        a human push, and the gate is released if a hold was in progress.
+        """
+        detector = AntennaHoldDetector(
+            press_delta_rad=config.PTT_ANTENNA_PRESS_RAD,
+            release_delta_rad=config.PTT_ANTENNA_RELEASE_RAD,
+        )
+        poll_dt = 1.0 / PTT_ANTENNA_POLL_HZ
+        prev_held = False
+        logger.info(
+            "Antenna hold-to-talk active (press>=%.2f rad, release<=%.2f rad).",
+            config.PTT_ANTENNA_PRESS_RAD,
+            config.PTT_ANTENNA_RELEASE_RAD,
+        )
+        while not self._stop_event.is_set():
+            try:
+                # Only gate the mic in push_to_talk mode, and never while the robot
+                # is animating (commanded motion) — that would read like a push.
+                if self._listen_gate.mode != PUSH_TO_TALK or not self._robot_motion_idle():
+                    detector.reset()
+                    if prev_held:
+                        self._listen_gate.set_held(False)
+                        prev_held = False
+                    await asyncio.sleep(poll_dt if self._listen_gate.mode == PUSH_TO_TALK else 0.1)
+                    continue
+                present = self._robot.get_present_antenna_joint_positions()
+                held = detector.update(list(present) if present else [])
+                if held != prev_held:
+                    self._listen_gate.set_held(held)
+                    prev_held = held
+            except Exception as e:
+                logger.debug("PTT antenna loop error: %s", e)
+            await asyncio.sleep(poll_dt)
 
     def _dispatch_transcript(self, role: str, text: str, final: bool) -> None:
         """Push a conversation.transcript notification to JSON-RPC clients."""
@@ -867,6 +923,10 @@ class LocalStream:
                 asyncio.create_task(self.record_loop(), name="stream-record-loop"),
                 asyncio.create_task(self.play_loop(), name="stream-play-loop"),
             ]
+            if config.PTT_ANTENNA_ENABLED:
+                self._tasks.append(
+                    asyncio.create_task(self._antenna_hold_loop(), name="stream-ptt-antenna")
+                )
             try:
                 await asyncio.gather(*self._tasks)
             except asyncio.CancelledError:
