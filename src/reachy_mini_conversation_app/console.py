@@ -50,6 +50,8 @@ from reachy_mini_conversation_app.settings_store import (
     load_settings_into_runtime,
 )
 from reachy_mini_conversation_app.language_routes import LanguageScope, register_language_methods
+from reachy_mini_conversation_app.ptt_input import start_keyboard_listener
+from reachy_mini_conversation_app.listen_gate import PUSH_TO_TALK, ListenGate, normalize_mode
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
 from reachy_mini_conversation_app.tool_space_routes import register_tool_space_methods
@@ -164,6 +166,11 @@ class LocalStream:
         self._conversation_seq = itertools.count(int(time.time() * 1000))
         # Per-role throttle timestamps for conversation.level (orb audio meter).
         self._last_level_emit: dict[str, float] = {}
+        # Push-to-talk gate: the single source of truth for whether mic audio
+        # reaches the handler. In always_on mode (default) it stays open, so
+        # behavior is unchanged. record_loop reads gate.enabled below.
+        self._listen_gate = ListenGate(config.LISTEN_MODE)
+        self._ptt_keyboard = None  # pynput listener handle, started in push_to_talk mode
         self._install_handler(handler)
 
     def _install_handler(self, handler: ConversationHandler) -> None:
@@ -189,6 +196,50 @@ class LocalStream:
     def _dispatch_vad(self, status: VADStatus) -> None:
         if self._rpc is not None:
             self._rpc.broadcast_threadsafe("conversation.vad", dict(status))
+
+    def _start_ptt_keyboard_if_needed(self) -> None:
+        """Start the pynput push-to-talk key listener when in push_to_talk mode."""
+        if self._ptt_keyboard is not None:
+            return
+        if self._listen_gate.mode != PUSH_TO_TALK or not config.PTT_KEYBOARD_ENABLED:
+            return
+        try:
+            self._ptt_keyboard = start_keyboard_listener(self._listen_gate)
+            logger.info(
+                "Push-to-talk keyboard listener started (hold=%s, toggle=%s).",
+                config.PTT_KEY,
+                config.PTT_TOGGLE_KEY,
+            )
+        except Exception as e:
+            logger.warning("Push-to-talk keyboard listener unavailable (%s); use the conversation.listen toggle.", e)
+
+    def _stop_ptt_keyboard(self) -> None:
+        """Stop the pynput listener if running."""
+        if self._ptt_keyboard is not None:
+            try:
+                self._ptt_keyboard.stop()
+            except Exception:
+                pass
+            self._ptt_keyboard = None
+
+    def _set_listen_mode(self, mode: str) -> None:
+        """Switch always_on <-> push_to_talk at runtime.
+
+        Updates the gate, (re)starts or stops the key listener, and rebuilds the
+        backend session so its server-VAD config matches the new mode.
+        """
+        new_mode = normalize_mode(mode)
+        if new_mode == self._listen_gate.mode:
+            return
+        self._listen_gate.set_mode(new_mode)
+        config.LISTEN_MODE = new_mode
+        if new_mode == PUSH_TO_TALK:
+            self._start_ptt_keyboard_if_needed()
+        else:
+            self._stop_ptt_keyboard()
+        loop = self._asyncio_loop
+        if loop is not None:
+            asyncio.run_coroutine_threadsafe(self.handler.on_listen_mode_changed(new_mode), loop)
 
     def _dispatch_transcript(self, role: str, text: str, final: bool) -> None:
         """Push a conversation.transcript notification, recording final ones in the history."""
@@ -622,6 +673,20 @@ class LocalStream:
                 logger.info("Microphone %s via /rpc", "muted" if self._mic_muted else "unmuted")
             return {"muted": self._mic_muted}
 
+        @rpc.method("conversation.listen")  # type: ignore[untyped-decorator]
+        def _rpc_listen(params: dict[str, object]) -> dict[str, object]:
+            # ``mode`` switches always_on <-> push_to_talk; ``enabled`` drives the
+            # push-to-talk latch (ignored in always_on, where the gate is always open).
+            if "mode" in params:
+                self._set_listen_mode(str(params["mode"]))
+            if "enabled" in params:
+                self._listen_gate.set_latched(bool(params["enabled"]))
+            return {
+                "mode": self._listen_gate.mode,
+                "enabled": self._listen_gate.enabled,
+                "latched": self._listen_gate.latched,
+            }
+
         @rpc.method("backend.config")  # type: ignore[untyped-decorator]
         def _rpc_backend_config(params: dict[str, object]) -> dict[str, object]:
             hf_selection = get_hf_connection_selection()
@@ -864,6 +929,10 @@ class LocalStream:
             # Capture loop for cross-thread personality actions
             loop = asyncio.get_running_loop()
             self._asyncio_loop = loop  # type: ignore[assignment]
+            # Push-to-talk: fire on_listen_open/close on the active handler across
+            # threads, and start the key listener (no-op in always_on mode).
+            self._listen_gate.bind(loop, lambda: self.handler)
+            self._start_ptt_keyboard_if_needed()
             # Connect the backend first so it overlaps the warmup and audio config below.
             handler_task = asyncio.create_task(self._run_handler_startup_loop(), name="realtime-handler")
             self._tasks = [
@@ -897,6 +966,7 @@ class LocalStream:
         - Cancels all pending async tasks (openai-handler, record-loop, play-loop)
         """
         logger.info("Stopping LocalStream...")
+        self._stop_ptt_keyboard()
 
         # Stop media pipelines FIRST before cancelling async tasks
         # This ensures clean shutdown before PortAudio cleanup
@@ -988,7 +1058,7 @@ class LocalStream:
                     frame = await asyncio.wait_for(frames.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     continue
-                if not self._mic_muted:
+                if not self._mic_muted and self._listen_gate.enabled:
                     await self.handler.receive(frame)
                     self._emit_level("user", frame[1])
         finally:
