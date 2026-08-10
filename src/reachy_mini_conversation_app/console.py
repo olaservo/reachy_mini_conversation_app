@@ -4,6 +4,7 @@ If the selected backend is missing its required API key, a settings page is
 served via the Reachy Mini Apps settings server so users can configure it.
 """
 
+import os
 import time
 import asyncio
 import logging
@@ -48,6 +49,7 @@ from reachy_mini_conversation_app.settings_store import (
 from reachy_mini_conversation_app.language_routes import register_language_methods
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
+from reachy_mini_conversation_app.mcp_server_routes import register_mcp_server_methods
 from reachy_mini_conversation_app.tool_space_routes import register_tool_space_methods
 from reachy_mini_conversation_app.personality_routes import (
     build_personality_ops,
@@ -313,6 +315,17 @@ class LocalStream:
             "backend_connection_state": state,
             "backend_error": None if connected else self._backend_error,
         }
+
+    def _set_session_env_values(self, updates: dict[str, str]) -> str:
+        """Expose values to this process only.
+
+        The instance `.env` is read at startup but never written by the app (see
+        `settings_store`), so a secret entered through the UI lasts for the
+        session; the caller tells the user which variable to set to keep it.
+        """
+        for env_name, value in updates.items():
+            os.environ[env_name] = value
+        return "session"
 
     def _remove_persisted_env_values(self, env_names: tuple[str, ...]) -> None:
         """Remove keys from the instance `.env` without mutating the current runtime."""
@@ -638,6 +651,17 @@ class LocalStream:
             )
         except Exception:
             logger.exception("Failed to register Tool Space methods; remote tool settings will be unavailable")
+
+        try:
+            register_mcp_server_methods(
+                rpc,
+                lambda: self._asyncio_loop,
+                self.request_backend_restart,
+                self._set_session_env_values,
+                instance_path=self._instance_path,
+            )
+        except Exception:
+            logger.exception("Failed to register MCP server methods; custom MCP settings will be unavailable")
 
         try:
             register_profile_tool_methods(
