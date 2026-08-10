@@ -97,11 +97,17 @@ def _start_inactivity_timeout_thread(
 
 def main() -> None:
     """Entrypoint for the Reachy Mini conversation app."""
-    args, _ = parse_args()
+    args, unknown_args = parse_args()
+    if args.command in ("tool-spaces", "mcp-servers"):
+        logger = setup_logger(args.debug)
+        # The app tolerates unknown args for launcher extras, but a mistyped CLI flag
+        # must not configure a server without its auth or opt-in.
+        if unknown_args:
+            logger.error("Unrecognized arguments: %s", " ".join(str(arg) for arg in unknown_args))
+            raise SystemExit(2)
     if args.command == "tool-spaces":
         from reachy_mini_conversation_app.tool_spaces import handle_tool_spaces_command
 
-        logger = setup_logger(args.debug)
         try:
             raise SystemExit(handle_tool_spaces_command(args))
         except Exception as exc:
@@ -110,7 +116,6 @@ def main() -> None:
     if args.command == "mcp-servers":
         from reachy_mini_conversation_app.mcp_servers import handle_mcp_servers_command
 
-        logger = setup_logger(args.debug)
         try:
             raise SystemExit(handle_mcp_servers_command(args))
         except Exception as exc:

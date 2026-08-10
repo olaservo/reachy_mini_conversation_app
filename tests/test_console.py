@@ -1501,3 +1501,22 @@ def test_invalid_speech_switch_saves_nothing(
     assert read_settings(tmp_path).local_vad_enabled is None
     assert read_settings(tmp_path).local_barge_in_enabled is None
     assert not stream._restart_requested.is_set()
+
+
+def test_set_session_env_values_exposes_values_to_the_process_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A secret entered through the UI reaches this process; the instance `.env` is read, never written."""
+    import os
+
+    token_env = "MCP_CONSOLE_SESSION_TOKEN"
+    monkeypatch.delenv(token_env, raising=False)
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=FastAPI(), instance_path=str(tmp_path))
+
+    token = "abc #123 it's fine"
+    assert stream._set_session_env_values({token_env: token}) is None
+    assert os.environ[token_env] == token
+    assert not (tmp_path / ".env").exists()
+    monkeypatch.delenv(token_env, raising=False)
