@@ -197,7 +197,7 @@ const ERROR_MESSAGES = Object.freeze({
     "mcp_servers.json has entries that can't be read. Fix them before adding or removing servers.",
   unknown_mcp_server: "That MCP server is no longer configured.",
   empty_token: "Enter a token first.",
-  invalid_token: "Tokens can't contain line breaks or '${'.",
+  invalid_token: "That token can't be stored as entered.",
   token_save_failed: "Couldn't store that token.",
 });
 

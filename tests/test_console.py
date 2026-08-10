@@ -1045,3 +1045,22 @@ def test_rpc_settings_methods() -> None:
     assert isinstance(r2["result"], list)
     assert "spaces" in r3["result"]
     assert "enabled_tools" in r4["result"]
+
+
+def test_set_session_env_values_exposes_values_to_the_process_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A secret entered through the UI reaches this process; the instance `.env` is read, never written."""
+    import os
+
+    token_env = "MCP_CONSOLE_SESSION_TOKEN"
+    monkeypatch.delenv(token_env, raising=False)
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=FastAPI(), instance_path=str(tmp_path))
+
+    token = "abc #123 it's fine"
+    assert stream._set_session_env_values({token_env: token}) == "session"
+    assert os.environ[token_env] == token
+    assert not (tmp_path / ".env").exists()
+    monkeypatch.delenv(token_env, raising=False)

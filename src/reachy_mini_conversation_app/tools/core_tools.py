@@ -25,7 +25,7 @@ from reachy_mini_conversation_app.tools.tool_constants import SystemTool
 
 if TYPE_CHECKING:
     from reachy_mini_conversation_app.mcp_client import RemoteMcpToolClient
-    from reachy_mini_conversation_app.remote_tool_sources import CachedRemoteTool
+    from reachy_mini_conversation_app.remote_tool_sources import CachedToolRecord
     from reachy_mini_conversation_app.tools.background_tool_manager import BackgroundToolManager
 
 
@@ -339,7 +339,7 @@ def _resolve_cached_manifest_tools(
     source_id: str,
     source_label: str,
     refresh_command: str,
-    cached_tools: Sequence["CachedRemoteTool"],
+    cached_tools: Sequence["CachedToolRecord"],
     make_client: Callable[[], "RemoteMcpToolClient"],
 ) -> list[RemoteMcpTool]:
     """Build the RemoteMcpTool adapters one manifest source contributes to the profile, without network calls."""
