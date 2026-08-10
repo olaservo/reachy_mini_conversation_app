@@ -27,7 +27,6 @@ from reachy_mini_conversation_app.mcp_client import (
     build_namespaced_tool_name,
 )
 from reachy_mini_conversation_app.profile_store import DEFAULT_PROFILE_NAME, list_profile_names
-from reachy_mini_conversation_app.remote_tool_sources import configured_server_aliases
 from reachy_mini_conversation_app.profile_toolsets import (
     ProfileToolsets,
     enable_profile_tools,
@@ -39,6 +38,7 @@ from reachy_mini_conversation_app.profile_toolsets import (
     disable_profile_tools_by_prefix,
     read_profile_default_tool_names,
 )
+from reachy_mini_conversation_app.remote_tool_sources import configured_server_aliases
 
 
 logger = logging.getLogger(__name__)
