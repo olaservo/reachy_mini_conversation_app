@@ -12,9 +12,43 @@ from reachy_mini_conversation_app.mcp_client import (
     RemoteMcpToolClient,
     RemoteMcpServerConfig,
     RemoteToolCallResponse,
+    _describe_exception,
     validate_http_mcp_url,
     build_namespaced_tool_name,
 )
+
+
+@pytest.mark.parametrize(
+    ("url", "with_token", "allow_insecure_http", "accepted"),
+    [
+        pytest.param("http://192.168.1.50:8000/mcp", True, False, False, id="lan-token"),
+        pytest.param("http://192.168.1.50:8000/mcp", True, True, True, id="lan-token-opt-in"),
+        pytest.param("http://192.168.1.50:8000/mcp", False, False, True, id="lan-no-token"),
+        pytest.param("http://127.0.0.1:8000/mcp", True, False, True, id="loopback-token"),
+        # RFC 6761 only says resolvers SHOULD pin *.localhost, so a subdomain is not loopback.
+        pytest.param("http://dev.localhost:8000/mcp", True, False, False, id="localhost-subdomain-token"),
+        pytest.param("http://dev.localhost:8000/mcp", True, True, True, id="localhost-subdomain-opt-in"),
+    ],
+)
+def test_server_config_credentials_over_plain_http(
+    url: str, with_token: bool, allow_insecure_http: bool, accepted: bool
+) -> None:
+    """A credential header rides plain HTTP only to loopback, or with the explicit opt-in."""
+    headers = {"Authorization": "Bearer secret"} if with_token else {}
+    if accepted:
+        RemoteMcpServerConfig(alias="example", url=url, headers=headers, allow_insecure_http=allow_insecure_http)
+    else:
+        with pytest.raises(ValueError, match="credentials over plain HTTP"):
+            RemoteMcpServerConfig(alias="example", url=url, headers=headers, allow_insecure_http=allow_insecure_http)
+
+
+def test_alias_rejects_namespace_ambiguous_forms() -> None:
+    """An alias containing '__' or ending in '_' blurs the namespace separator."""
+    for bad_alias in ("ha_", "h__a"):
+        with pytest.raises(ValueError, match="Aliases cannot"):
+            build_namespaced_tool_name(bad_alias, "light")
+        with pytest.raises(ValueError, match="Aliases cannot"):
+            RemoteMcpServerConfig(alias=bad_alias, url="http://127.0.0.1:8000/mcp")
 
 
 def test_validate_http_mcp_url_rejects_non_http_scheme() -> None:
@@ -27,6 +61,45 @@ def test_validate_http_mcp_url_rejects_non_local_plain_http() -> None:
     """Remote servers must use HTTPS unless they are local development endpoints."""
     with pytest.raises(ValueError, match="must use HTTPS"):
         validate_http_mcp_url("http://example.com/mcp")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000/mcp",
+        "http://localhost:8000/mcp",
+        "http://dev.localhost:8000/mcp",
+        "http://[::1]:8000/mcp",
+        "http://192.168.1.50:8000/mcp",
+        "http://169.254.10.10/mcp",
+        "http://my-mcp-server.local:8000/mcp",
+        "https://example.com/mcp",
+    ],
+)
+def test_validate_http_mcp_url_accepts_local_network_endpoints(url: str) -> None:
+    """Plain HTTP is fine on the local network (loopback, private, link-local, mDNS); HTTPS always is."""
+    assert validate_http_mcp_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://8.8.8.8/mcp",
+        "http://my-server.example.org:8000/mcp",
+        "http://intranet-host:8000/mcp",
+    ],
+)
+def test_validate_http_mcp_url_rejects_public_plain_http(url: str) -> None:
+    """Plain HTTP to a public IP or a bare host name is rejected."""
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        validate_http_mcp_url(url)
+
+
+def test_validate_http_mcp_url_classifies_ipv4_mapped_ipv6_by_embedded_address() -> None:
+    """A mapped address is classified by its embedded IPv4 address (CVE-2024-4032)."""
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        validate_http_mcp_url("http://[::ffff:8.8.8.8]/mcp")
+    assert validate_http_mcp_url("http://[::ffff:192.168.1.50]/mcp")
 
 
 def test_build_namespaced_tool_name_normalizes_tool_segment() -> None:
@@ -151,3 +224,12 @@ async def test_list_all_tools_follows_the_pagination_cursor() -> None:
 
     assert [tool.name for tool in tools] == ["alpha", "omega"]
     assert seen_cursors == [None, "page-2"]
+
+
+def test_describe_exception_unwraps_exception_groups() -> None:
+    """A TaskGroup failure reports the leaf error, not the wrapper."""
+    leaf = RuntimeError("Client error '401 Unauthorized' for url 'https://example.com/mcp'")
+    group = BaseExceptionGroup("unhandled errors in a TaskGroup", [ExceptionGroup("inner", [leaf])])
+
+    assert _describe_exception(group) == str(leaf)
+    assert _describe_exception(ValueError("")) == "ValueError"
