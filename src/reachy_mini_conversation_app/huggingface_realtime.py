@@ -233,7 +233,11 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         model="gpt-4o-transcribe",
                         language=config.REALTIME_TRANSCRIPTION_LANGUAGE,
                     ),
-                    turn_detection=ServerVad(type="server_vad", interrupt_response=True),
+                    # Push-to-talk commits turns manually on key release, so disable
+                    # the server's own VAD in that mode; always_on keeps server VAD.
+                    turn_detection=None
+                    if config.LISTEN_MODE == "push_to_talk"
+                    else ServerVad(type="server_vad", interrupt_response=True),
                 ),
                 output=RealtimeAudioConfigOutputParam(
                     format=_native_rate_audio_pcm(),  # type: ignore[typeddict-item]
@@ -247,6 +251,40 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
     def _is_connected(self) -> bool:
         """Return whether the realtime connection is open."""
         return self.connection is not None
+
+    async def on_listen_open(self, *, continuous: bool) -> None:
+        """PTT gate opened: barge in and start from a clean input buffer.
+
+        With server VAD disabled in push_to_talk mode the model won't react to
+        audio on its own; the turn is finalised in ``on_listen_close``.
+        """
+        if not self.connection:
+            return
+        # Barge-in: stop any assistant playback so it doesn't talk over the user.
+        if self._clear_queue is not None:
+            try:
+                self._clear_queue()
+            except Exception:
+                pass
+        try:
+            await self.connection.input_audio_buffer.clear()
+        except Exception as e:
+            logger.debug("PTT open: input buffer clear ignored (%s)", e)
+
+    async def on_listen_close(self, *, commit: bool) -> None:
+        """PTT gate closed: commit the captured audio and request a reply."""
+        if not commit or not self.connection:
+            return
+        try:
+            await self.connection.input_audio_buffer.commit()
+            await self._safe_response_create()
+        except Exception as e:
+            logger.debug("PTT close: commit/response ignored (%s)", e)
+
+    async def on_listen_mode_changed(self, mode: str) -> None:
+        """Rebuild the session so server-VAD matches the new mode (fixed at connect)."""
+        logger.info("Listen mode -> %s: restarting realtime session to apply VAD config.", mode)
+        await self._restart_session()
 
     def _idle_behavior_ready(self) -> bool:
         """Hold idle behavior while a model response is still active."""

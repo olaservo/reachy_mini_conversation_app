@@ -128,6 +128,31 @@ class ConversationHandler(AsyncStreamHandler, ABC):
         """Receive an input audio frame."""
         ...
 
+    async def on_listen_open(self, *, continuous: bool) -> None:
+        """Push-to-talk gate opened: Reachy started listening.
+
+        ``continuous`` is True for a momentary hold (capture everything until
+        release, no auto-segmentation) and False for a latched open. Default:
+        no-op — always-on backends never see this.
+        """
+        return None
+
+    async def on_listen_close(self, *, commit: bool) -> None:
+        """Push-to-talk gate closed: Reachy stopped listening.
+
+        ``commit`` requests that any in-progress utterance be finalised and sent
+        (release-to-send). Default: no-op.
+        """
+        return None
+
+    async def on_listen_mode_changed(self, mode: str) -> None:
+        """React to a runtime listen-mode change (always_on <-> push_to_talk).
+
+        Realtime backends reconnect so the session's server-VAD config is rebuilt
+        for the new mode (it is fixed at connection time). Default: no-op.
+        """
+        return None
+
     @abstractmethod
     async def apply_personality(self, profile: str | None) -> str:
         """Apply a personality profile."""
