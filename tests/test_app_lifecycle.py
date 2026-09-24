@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, call
 import numpy as np
 
 from reachy_mini.reachy_mini import SLEEP_HEAD_POSE
-from reachy_mini_conversation_app import app_lifecycle
+from reachy_mini_conversation_app import daemon_api, app_lifecycle
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 
 
@@ -27,7 +27,7 @@ def test_request_stop_current_app_posts_to_daemon(monkeypatch) -> None:
         assert timeout == 2.0
         return FakeResponse()
 
-    monkeypatch.setattr(app_lifecycle.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(daemon_api.urllib.request, "urlopen", fake_urlopen)
     robot = SimpleNamespace(client=SimpleNamespace(host="192.168.1.42", port=8000))
 
     assert app_lifecycle.request_stop_current_app(robot, MagicMock())
@@ -74,3 +74,68 @@ def test_run_go_to_sleep_tool_uses_runtime_callback() -> None:
 
     assert result == expected
     go_to_sleep.assert_called_once_with()
+
+
+def test_request_stop_current_app_returns_false_on_urlerror(monkeypatch) -> None:
+    """A daemon that is unreachable is reported as a failed stop, not an exception."""
+
+    def fake_urlopen(request, timeout):
+        raise daemon_api.urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(daemon_api.urllib.request, "urlopen", fake_urlopen)
+    robot = SimpleNamespace(client=SimpleNamespace(host="192.168.1.42", port=8000))
+
+    assert not app_lifecycle.request_stop_current_app(robot, MagicMock())
+
+
+def test_wake_up_if_sleeping_handles_pose_read_failure() -> None:
+    """A robot that cannot report its pose skips the wake-up movement."""
+    robot = MagicMock()
+    robot.get_current_head_pose.side_effect = RuntimeError("no telemetry")
+
+    assert not app_lifecycle.wake_up_if_sleeping(robot, MagicMock())
+    robot.wake_up.assert_not_called()
+
+
+def test_wake_up_if_sleeping_reports_wake_up_failure() -> None:
+    """A wake-up movement that fails is reported without raising."""
+    robot = MagicMock()
+    robot.get_current_head_pose.return_value = SLEEP_HEAD_POSE.copy()
+    robot.wake_up.side_effect = RuntimeError("motor fault")
+
+    assert not app_lifecycle.wake_up_if_sleeping(robot, MagicMock())
+    robot.wake_up.assert_called_once_with()
+
+
+def test_wake_up_if_sleeping_ignores_malformed_pose() -> None:
+    """A pose that cannot be coerced to a float array is treated as not-sleeping."""
+    robot = MagicMock()
+    robot.get_current_head_pose.return_value = "not-a-pose"
+
+    assert not app_lifecycle.wake_up_if_sleeping(robot, MagicMock())
+    robot.wake_up.assert_not_called()
+
+
+def test_wake_up_if_sleeping_ignores_wrong_shape_pose() -> None:
+    """A pose that is not 4x4 is treated as not-sleeping."""
+    robot = MagicMock()
+    robot.get_current_head_pose.return_value = np.eye(3)
+
+    assert not app_lifecycle.wake_up_if_sleeping(robot, MagicMock())
+    robot.wake_up.assert_not_called()
+
+
+def test_run_go_to_sleep_tool_reports_tool_failure(monkeypatch) -> None:
+    """A crash inside the go_to_sleep tool is surfaced as an error dict, not raised."""
+
+    class _BoomTool:
+        async def __call__(self, deps: object) -> dict[str, object]:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(app_lifecycle, "GoToSleep", _BoomTool)
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+
+    result = app_lifecycle.run_go_to_sleep_tool(deps, MagicMock())
+
+    assert "error" in result
+    assert "boom" in str(result["error"])
