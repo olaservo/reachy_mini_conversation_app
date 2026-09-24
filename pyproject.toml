@@ -22,8 +22,8 @@ dependencies = [
     #Reachy mini
     "reachy_mini_dances_library",
     "reachy-mini>=1.10.0rc5",
-    "mcp==2.0.0",
-    "mcp-types==2.0.0",
+    "mcp>=2.0,<3",
+    "mcp-types>=2.0,<3",
     "httpx2>=2.5.0",
 ]
 
