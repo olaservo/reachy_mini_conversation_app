@@ -1,6 +1,7 @@
-/** Settings view: Hugging Face connection, voice, and runtime status. */
+/** Settings view: Hugging Face connection, voice, listening, and runtime status. */
 
 import {
+  LISTEN_MODES,
   applyVoice,
   describeError,
   getCurrentVoice,
@@ -8,6 +9,7 @@ import {
   listVoices,
   saveBackendConfig,
   saveSpeechConfig,
+  setListenMode,
   untilReady,
 } from "../api.js";
 import { SHOW_LATENCIES_KEY } from "../constants.js";
@@ -30,13 +32,14 @@ export async function mountSettingsView({ outlet, signal }) {
   const connectionSection = buildConnectionSection({
     onSaved: () =>
       Promise.all([
-        refreshStatus({ statusSection, connectionSection, speechSection, signal }),
+        refreshStatus({ statusSection, connectionSection, speechSection, listeningSection, signal }),
         refreshVoices({ voiceSection, signal }),
       ]),
   });
   const voiceSection = buildVoiceSection();
   const statusSection = buildStatusSection();
   const speechSection = buildSpeechSection();
+  const listeningSection = buildListeningSection();
   const developerSection = buildDeveloperSection();
 
   const view = h(
@@ -51,13 +54,14 @@ export async function mountSettingsView({ outlet, signal }) {
     connectionSection.element,
     voiceSection.element,
     speechSection.element,
+    listeningSection.element,
     statusSection.element,
     developerSection
   );
   outlet.replaceChildren(view);
 
   await Promise.all([
-    refreshStatus({ statusSection, connectionSection, speechSection, signal }),
+    refreshStatus({ statusSection, connectionSection, speechSection, listeningSection, signal }),
     refreshVoices({ voiceSection, signal }),
   ]);
 }
@@ -319,6 +323,56 @@ function buildSpeechSection() {
   };
 }
 
+function buildListeningSection() {
+  const select = h(
+    "select",
+    { class: "settings-select", name: "listen_mode", disabled: "disabled" },
+    h("option", { value: LISTEN_MODES.ALWAYS_ON }, "Always listening"),
+    h("option", { value: LISTEN_MODES.PUSH_TO_TALK }, "Push to talk")
+  );
+  const status = h("p", { class: "settings-status", role: "status", "aria-live": "polite" });
+  const submitButton = h("button", { type: "submit", class: "btn btn--primary", disabled: "disabled" }, "Save listening mode");
+  const form = h("form", { class: "settings-form" },
+    h("label", { class: "settings-field" }, h("span", { class: "settings-label" }, "Listening mode"), select),
+    h("p", { class: "settings-hint" },
+      "Push to talk keeps the microphone closed until you hold an antenna or tap the orb. Changing the mode reconnects the conversation."),
+    h("div", { class: "settings-actions" }, submitButton), status);
+  const element = h("section", { class: "settings-section" },
+    h("h2", { class: "settings-section-title" }, "Listening"), form);
+
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (submitButton.disabled) return;
+    submitButton.disabled = true;
+    select.disabled = true;
+    form.setAttribute("aria-busy", "true");
+    status.classList.remove("is-error");
+    status.textContent = "Saving…";
+    try {
+      const result = await setListenMode(select.value);
+      select.value = result.mode;
+      status.textContent = result.message || "Saved.";
+    } catch (error) {
+      status.textContent = `Failed to save: ${describeError(error)}`;
+      status.classList.add("is-error");
+    } finally {
+      submitButton.disabled = false;
+      select.disabled = false;
+      form.removeAttribute("aria-busy");
+    }
+  });
+  return {
+    element,
+    syncFromStatus(payload) {
+      if (Object.values(LISTEN_MODES).includes(payload.listen_mode)) {
+        select.value = payload.listen_mode;
+      }
+      select.disabled = false;
+      submitButton.disabled = false;
+    },
+  };
+}
+
 function buildDeveloperSection() {
   const showLatencies = h("input", {
     type: "checkbox",
@@ -429,13 +483,14 @@ function formatHfTarget(payload) {
   return `${host}:${port || DEFAULT_HF_PORT}`;
 }
 
-async function refreshStatus({ statusSection, connectionSection, speechSection, signal }) {
+async function refreshStatus({ statusSection, connectionSection, speechSection, listeningSection, signal }) {
   try {
     const payload = await untilReady(getStatus, signal);
     if (signal.aborted) return;
     statusSection.render(payload);
     connectionSection.syncFromStatus(payload);
     speechSection.syncFromStatus(payload);
+    listeningSection.syncFromStatus(payload);
   } catch (error) {
     if (signal.aborted) return;
     statusSection.renderUnavailable(error);
