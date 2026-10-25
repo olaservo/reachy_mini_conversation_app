@@ -312,7 +312,14 @@ class LocalStream:
                 held = detector.update(deflection)
                 peak = max([peak, *(abs(d) for d in deflection)])
                 if held != prev_held:
-                    logger.info("Antenna hold %s (deflection %s rad)", "started" if held else "released", deflection)
+                    # Measured alongside the residual: a hold with no hand on the robot shows up as both antennas
+                    # deflected symmetrically (seen twice on 2026-10-25), and the raw values say what moved.
+                    logger.info(
+                        "Antenna hold %s (deflection %s rad, measured %s rad)",
+                        "started" if held else "released",
+                        [round(d, 3) for d in deflection],
+                        [round(float(p), 3) for p in (self._robot.get_present_antenna_joint_positions() or [])],
+                    )
                     self._listen_gate.set_held(held)
                     prev_held = held
                 now = time.monotonic()
