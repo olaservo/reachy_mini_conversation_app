@@ -51,6 +51,7 @@ class ListenGate:
         self._lock = threading.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._get_handler: Optional[Callable[[], Optional["ConversationHandler"]]] = None
+        self._on_change: Optional[Callable[[dict[str, object]], None]] = None
         self._enabled = self._compute_enabled()
 
     def bind(
@@ -65,6 +66,10 @@ class ListenGate:
         """
         self._loop = loop
         self._get_handler = get_handler
+
+    def set_change_listener(self, callback: Optional[Callable[[dict[str, object]], None]]) -> None:
+        """Call ``callback(snapshot())`` after every visible change (any thread)."""
+        self._on_change = callback
 
     # ── state ────────────────────────────────────────────────────────────────
     def _compute_enabled(self) -> bool:
@@ -85,6 +90,10 @@ class ListenGate:
         """Whether the latching toggle/switch is on."""
         return self._latched
 
+    def snapshot(self) -> dict[str, object]:
+        """Return the state the UI shows (the conversation.listen result shape)."""
+        return {"mode": self._mode, "enabled": self._enabled, "latched": self._latched}
+
     # ── mutations (safe to call from any thread) ───────────────────────────────
     def set_mode(self, mode: str) -> None:
         """Switch listen mode; leaving push_to_talk clears the momentary key."""
@@ -98,6 +107,7 @@ class ListenGate:
                 self._held = False
             # A mode change is not a release: nothing was captured to send.
             self._apply_locked(continuous=False, commit=False)
+        self._notify()
 
     def set_held(self, held: bool) -> None:
         """Momentary push-to-talk key down (True) / up (False)."""
@@ -106,7 +116,9 @@ class ListenGate:
                 return
             self._held = bool(held)
             # A momentary press with no latch => capture continuously until release.
-            self._apply_locked(continuous=self._held and not self._latched)
+            changed = self._apply_locked(continuous=self._held and not self._latched)
+        if changed:
+            self._notify()
 
     def set_latched(self, latched: bool) -> None:
         """Set the latching toggle/switch explicitly (companion UI / SSE relay)."""
@@ -115,6 +127,7 @@ class ListenGate:
                 return
             self._latched = bool(latched)
             self._apply_locked(continuous=False)
+        self._notify()
 
     def toggle(self) -> None:
         """Flip the latching toggle (latch key / companion button)."""
@@ -122,14 +135,25 @@ class ListenGate:
             self._latched = not self._latched
             logger.info("Listen latch -> %s", self._latched)
             self._apply_locked(continuous=False)
+        self._notify()
 
     # ── internals ──────────────────────────────────────────────────────────────
-    def _apply_locked(self, *, continuous: bool, commit: bool = True) -> None:
+    def _notify(self) -> None:
+        callback = self._on_change
+        if callback is None:
+            return
+        try:
+            callback(self.snapshot())
+        except Exception as e:
+            logger.debug("ListenGate change listener failed: %s", e)
+
+    def _apply_locked(self, *, continuous: bool, commit: bool = True) -> bool:
         new_enabled = self._compute_enabled()
         if new_enabled == self._enabled:
-            return
+            return False
         self._enabled = new_enabled
         self._fire(opening=new_enabled, continuous=continuous, commit=commit)
+        return True
 
     def _fire(self, *, opening: bool, continuous: bool, commit: bool) -> None:
         loop = self._loop
