@@ -66,6 +66,29 @@ def test_hold_and_release_fire_the_handler_hooks() -> None:
     handler.on_listen_close.assert_awaited_once_with(commit=True)
 
 
+def test_change_listener_sees_every_visible_change_once() -> None:
+    """The UI callback fires on mode, latch and hold changes, not on no-ops."""
+    seen: list[dict[str, object]] = []
+    gate = ListenGate(ALWAYS_ON)
+    gate.set_change_listener(seen.append)
+
+    gate.set_latched(False)  # already off, nothing to show
+    gate.set_mode(PUSH_TO_TALK)
+    gate.set_mode(PUSH_TO_TALK)
+    gate.set_latched(True)
+    gate.set_latched(True)
+    gate.set_held(True)  # already enabled through the latch
+    gate.set_held(False)
+    gate.toggle()
+
+    assert seen == [
+        {"mode": PUSH_TO_TALK, "enabled": False, "latched": False},
+        {"mode": PUSH_TO_TALK, "enabled": True, "latched": True},
+        {"mode": PUSH_TO_TALK, "enabled": False, "latched": False},
+    ]
+    assert gate.snapshot() == seen[-1]
+
+
 def test_unbound_gate_tracks_state_without_hooks() -> None:
     """Before bind() the gate still computes enabled."""
     gate = ListenGate(PUSH_TO_TALK)
