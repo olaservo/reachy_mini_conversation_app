@@ -42,7 +42,7 @@ from reachy_mini_conversation_app.config import (
 from reachy_mini_conversation_app.prompts import get_session_voice, get_session_language, get_session_instructions
 from reachy_mini_conversation_app.ptt_input import start_keyboard_listener
 from reachy_mini_conversation_app.streaming import AdditionalOutputs, audio_to_float32
-from reachy_mini_conversation_app.listen_gate import PUSH_TO_TALK, ListenGate, normalize_mode
+from reachy_mini_conversation_app.listen_gate import ALWAYS_ON, PUSH_TO_TALK, ListenGate, normalize_mode
 from reachy_mini_conversation_app.memory_routes import register_memory_methods
 from reachy_mini_conversation_app.profile_store import canonical_profile_name
 from reachy_mini_conversation_app.vision_routes import register_vision_methods
@@ -174,6 +174,7 @@ class LocalStream:
         # reaches the handler. In always_on mode (default) it stays open, so
         # behavior is unchanged. record_loop reads gate.enabled below.
         self._listen_gate = ListenGate(config.LISTEN_MODE)
+        self._listen_gate.set_change_listener(self._dispatch_listen)
         self._ptt_keyboard = None  # pynput listener handle, started in push_to_talk mode
         self._install_handler(handler)
 
@@ -201,6 +202,11 @@ class LocalStream:
         if self._rpc is not None:
             self._rpc.broadcast_threadsafe("conversation.vad", dict(status))
 
+    def _dispatch_listen(self, snapshot: dict[str, object]) -> None:
+        # The talk view mirrors the gate: an antenna hold or another tab's latch shows on the orb.
+        if self._rpc is not None:
+            self._rpc.broadcast_threadsafe("conversation.listen", snapshot)
+
     def _start_ptt_keyboard_if_needed(self) -> None:
         """Start the pynput push-to-talk key listener when in push_to_talk mode."""
         if self._ptt_keyboard is not None:
@@ -226,29 +232,31 @@ class LocalStream:
                 pass
             self._ptt_keyboard = None
 
-    def _set_listen_mode(self, mode: str) -> None:
-        """Switch always_on <-> push_to_talk at runtime.
+    def _set_listen_mode(self, mode: str) -> str:
+        """Switch always_on <-> push_to_talk at runtime; returns the message for the UI.
 
-        Updates the gate, (re)starts or stops the key listener, and restarts the
-        backend so its server-VAD config matches the new mode: through the
-        startup loop's rebuild when a handler factory exists (the same path as
-        backend.config), else by asking the handler to reconnect itself.
+        Updates the gate, persists the choice, (re)starts or stops the key
+        listener, and restarts the backend so its server-VAD config matches the
+        new mode: through the startup loop's rebuild when a handler factory
+        exists (the same path as backend.config), else by asking the handler to
+        reconnect itself.
         """
         new_mode = normalize_mode(mode)
         if new_mode == self._listen_gate.mode:
-            return
+            return ""
         self._listen_gate.set_mode(new_mode)
-        config.LISTEN_MODE = new_mode
+        self._save_settings(AppSettings(listen_mode=new_mode))
         if new_mode == PUSH_TO_TALK:
             self._start_ptt_keyboard_if_needed()
         else:
             self._stop_ptt_keyboard()
         if self._can_rebuild_handler():
             self._mark_restart_requested("listen_mode_changed")
-            return
+            return "Saved. Reconnecting the conversation to apply it."
         loop = self._asyncio_loop
         if loop is not None:
             asyncio.run_coroutine_threadsafe(self.handler.on_listen_mode_changed(new_mode), loop)
+        return "Saved."
 
     def _antenna_deflection(self) -> list[float]:
         """Return the antennas' measured minus commanded positions (rad), one per antenna.
@@ -704,6 +712,7 @@ class LocalStream:
                 "memory_enabled": config.MEMORY_ENABLED,
                 "local_vad_enabled": config.LOCAL_VAD_ENABLED,
                 "local_barge_in_enabled": config.LOCAL_BARGE_IN_ENABLED,
+                "listen_mode": self._listen_gate.mode,
                 "vision_enabled": bool(self._tool_deps and self._tool_deps.camera_enabled),
                 **backend_connection,
             }
@@ -764,15 +773,14 @@ class LocalStream:
         def _rpc_listen(params: dict[str, object]) -> dict[str, object]:
             # ``mode`` switches always_on <-> push_to_talk; ``enabled`` drives the
             # push-to-talk latch (ignored in always_on, where the gate is always open).
+            message = ""
             if "mode" in params:
-                self._set_listen_mode(str(params["mode"]))
+                if params["mode"] not in (ALWAYS_ON, PUSH_TO_TALK):
+                    raise JsonRpcError("invalid listen mode", reason="invalid_listen_mode", code=-32602)
+                message = self._set_listen_mode(str(params["mode"]))
             if "enabled" in params:
                 self._listen_gate.set_latched(bool(params["enabled"]))
-            return {
-                "mode": self._listen_gate.mode,
-                "enabled": self._listen_gate.enabled,
-                "latched": self._listen_gate.latched,
-            }
+            return {**self._listen_gate.snapshot(), "message": message}
 
         @rpc.method("backend.config")  # type: ignore[untyped-decorator]
         def _rpc_backend_config(params: dict[str, object]) -> dict[str, object]:

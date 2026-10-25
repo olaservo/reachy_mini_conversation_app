@@ -141,6 +141,12 @@ export const getConversationHistory = () => rpcCall("conversation.history");
 export const getMicState = () => rpcCall("conversation.mic", {});
 export const setMicMuted = (muted) => rpcCall("conversation.mic", { muted });
 
+export const LISTEN_MODES = Object.freeze({ ALWAYS_ON: "always_on", PUSH_TO_TALK: "push_to_talk" });
+export const getListenState = () => rpcCall("conversation.listen", {});
+export const setListenMode = (mode) => rpcCall("conversation.listen", { mode });
+/** Push-to-talk latch: true opens the mic until the next call with false. */
+export const setListenLatched = (enabled) => rpcCall("conversation.listen", { enabled });
+
 export const listVoices = () => rpcCall("voices.list");
 export const getCurrentVoice = () => rpcCall("voices.current");
 export const applyVoice = (voice) => rpcCall("voices.apply", { voice });

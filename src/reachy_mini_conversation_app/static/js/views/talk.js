@@ -2,9 +2,19 @@
  * Talk view: conversation orb driven by the RPC activity stream.
  * Audio I/O runs entirely in Python; the orb doubles as the mic toggle.
  * Robot stays live, tapping the orb only mutes or unmutes the user's mic.
+ * In push-to-talk mode the tap is the latch instead: open the mic, tap again to send.
  */
 
-import { applyPersonality, getMicState, listPersonalities, setMicMuted, subscribe } from "../api.js";
+import {
+  LISTEN_MODES,
+  applyPersonality,
+  getListenState,
+  getMicState,
+  listPersonalities,
+  setListenLatched,
+  setMicMuted,
+  subscribe,
+} from "../api.js";
 import { createConversationPanel } from "../components/conversation-panel.js";
 import { createLanguagePicker } from "../components/language-picker.js";
 import { ORB_STATES } from "../constants.js";
@@ -23,13 +33,24 @@ const CAPTION_BY_STATE = Object.freeze({
   [ORB_STATES.ERROR]: "Connection error",
 });
 
+const PTT_CAPTIONS = Object.freeze({
+  closed: "Tap, or hold an antenna, to talk",
+  latched: "Listening. Tap to send",
+  held: "Listening. Let go of the antenna to send",
+});
+
 export async function mountTalkView({ outlet, signal }) {
   const pending = consumePendingApply();
   const micStatePromise = getMicState().catch((error) => {
     console.warn("Failed to load microphone state", error);
     return null;
   });
+  const listenStatePromise = getListenState().catch((error) => {
+    console.warn("Failed to load listen state", error);
+    return null;
+  });
   let muted = false;
+  let listen = { mode: LISTEN_MODES.ALWAYS_ON, enabled: true, latched: false };
   let micReady = false;
   let togglePending = false;
   let activePersonality = null;
@@ -58,7 +79,12 @@ export async function mountTalkView({ outlet, signal }) {
   const orb = createOrb({
     initialState: ORB_STATES.CONNECTING,
     onStateChange: (state) => {
-      caption.textContent = CAPTION_BY_STATE[state] || "";
+      // The orb's own idle fallback lands on IDLE; a closed gate or a mute rests elsewhere.
+      if (state === ORB_STATES.IDLE && restingState() !== ORB_STATES.IDLE) {
+        orb.setState(restingState());
+        return;
+      }
+      caption.textContent = captionFor(state);
     },
   });
   orb.root.disabled = true;
@@ -98,8 +124,9 @@ export async function mountTalkView({ outlet, signal }) {
     void refreshPersonalityState();
   }
 
-  const micState = await micStatePromise;
+  const [micState, listenState] = await Promise.all([micStatePromise, listenStatePromise]);
   if (micState) muted = Boolean(micState.muted);
+  if (listenState) listen = listenState;
   if (signal.aborted) return;
   micReady = true;
   orb.root.disabled = false;
@@ -110,14 +137,16 @@ export async function mountTalkView({ outlet, signal }) {
     onReady: async () => {
       if (!togglePending) {
         try {
-          muted = Boolean((await getMicState())?.muted);
+          const [mic, gate] = await Promise.all([getMicState(), getListenState()]);
+          muted = Boolean(mic?.muted);
+          if (gate) listen = gate;
         } catch {
-          // keep the last known mute state
+          // keep the last known state
         }
       }
       if (signal.aborted) return;
       orb.setState(restingState());
-      caption.textContent = CAPTION_BY_STATE[restingState()];
+      caption.textContent = captionFor(restingState());
       syncMicAria();
     },
     onActivity: (reason) => {
@@ -125,6 +154,14 @@ export async function mountTalkView({ outlet, signal }) {
       const next = mapActivityToState(reason);
       if (next == null) return;
       orb.setState(next);
+    },
+    // The gate moves under us: an antenna hold, a key, or another tab's latch.
+    onListen: (gate) => {
+      listen = gate;
+      if (signal.aborted) return;
+      orb.setState(restingState());
+      caption.textContent = captionFor(restingState());
+      syncMicAria();
     },
   });
 
@@ -138,16 +175,34 @@ export async function mountTalkView({ outlet, signal }) {
     }
   }
 
+  function pushToTalk() {
+    return listen.mode === LISTEN_MODES.PUSH_TO_TALK;
+  }
+
   function restingState() {
-    return muted ? ORB_STATES.MUTED : ORB_STATES.IDLE;
+    if (muted) return ORB_STATES.MUTED;
+    if (pushToTalk() && !listen.enabled) return ORB_STATES.MUTED;
+    return ORB_STATES.IDLE;
+  }
+
+  function captionFor(state) {
+    if (pushToTalk() && !muted) {
+      if (state === ORB_STATES.MUTED) return PTT_CAPTIONS.closed;
+      if (state === ORB_STATES.IDLE) return listen.latched ? PTT_CAPTIONS.latched : PTT_CAPTIONS.held;
+    }
+    return CAPTION_BY_STATE[state] || "";
   }
 
   async function onMicTap() {
     if (!micReady || togglePending) return;
     togglePending = true;
     try {
-      const data = await setMicMuted(!muted);
-      muted = Boolean(data?.muted);
+      if (pushToTalk()) {
+        listen = await setListenLatched(!listen.latched);
+      } else {
+        const data = await setMicMuted(!muted);
+        muted = Boolean(data?.muted);
+      }
     } catch (error) {
       if (!signal.aborted) {
         caption.textContent = `Failed to toggle the microphone: ${error?.message || error}`;
@@ -159,7 +214,7 @@ export async function mountTalkView({ outlet, signal }) {
     if (signal.aborted) return;
     orb.setState(restingState());
     // setState skips unchanged states, so set the caption explicitly
-    caption.textContent = CAPTION_BY_STATE[restingState()];
+    caption.textContent = captionFor(restingState());
     syncMicAria();
   }
 
@@ -200,6 +255,11 @@ export async function mountTalkView({ outlet, signal }) {
       orb.root.setAttribute("aria-label", "Loading microphone state");
       return;
     }
+    if (pushToTalk() && !muted) {
+      orb.root.setAttribute("aria-pressed", String(listen.latched));
+      orb.root.setAttribute("aria-label", listen.latched ? "Send and stop listening" : "Start listening");
+      return;
+    }
     orb.root.setAttribute("aria-pressed", String(!muted));
     orb.root.setAttribute("aria-label", muted ? "Unmute microphone" : "Mute microphone");
   }
@@ -220,7 +280,7 @@ async function fetchPersonalityState() {
   }
 }
 
-function subscribeConversationEvents({ onActivity, onReady } = {}) {
+function subscribeConversationEvents({ onActivity, onReady, onListen } = {}) {
   if (typeof onActivity !== "function") {
     throw new TypeError("subscribeConversationEvents: onActivity is required");
   }
@@ -231,6 +291,12 @@ function subscribeConversationEvents({ onActivity, onReady } = {}) {
     const reason = (params?.reason || "").trim();
     if (reason) onActivity(reason);
   });
+  const unsubscribeListen =
+    typeof onListen === "function"
+      ? subscribe("conversation.listen", (params) => {
+          if (params?.mode) onListen(params);
+        })
+      : () => {};
 
   // The socket connects lazily, so schedule the initial mic and orb sync.
   if (typeof onReady === "function") Promise.resolve().then(onReady);
@@ -238,6 +304,7 @@ function subscribeConversationEvents({ onActivity, onReady } = {}) {
   return {
     close() {
       unsubscribe();
+      unsubscribeListen();
     },
   };
 }

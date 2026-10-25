@@ -32,6 +32,16 @@ def test_update_merges_and_round_trips(tmp_path: Path) -> None:
     assert payload["memory_enabled"] is False
 
 
+def test_listen_mode_round_trips_and_applies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The listening mode chosen in the UI comes back on the next start."""
+    monkeypatch.setattr(config, "LISTEN_MODE", "always_on")
+    update_settings(tmp_path, AppSettings(listen_mode="push_to_talk"))
+
+    assert read_settings(tmp_path).listen_mode == "push_to_talk"
+    load_settings_into_runtime(tmp_path)
+    assert config.LISTEN_MODE == "push_to_talk"
+
+
 def test_booleans_survive_as_booleans(tmp_path: Path) -> None:
     """The reason for leaving .env: a switch round-trips as a real boolean."""
     update_settings(tmp_path, AppSettings(camera_enabled=False))

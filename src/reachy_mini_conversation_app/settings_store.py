@@ -21,6 +21,7 @@ from reachy_mini_conversation_app.config import (
     normalize_hf_connection_mode,
     normalize_transcription_language,
 )
+from reachy_mini_conversation_app.listen_gate import normalize_mode as normalize_listen_mode
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class AppSettings:
     camera_enabled: bool | None = None
     local_vad_enabled: bool | None = None
     local_barge_in_enabled: bool | None = None
+    listen_mode: str | None = None
 
 
 def _settings_path(instance_path: str | Path | None) -> Path | None:
@@ -103,6 +105,7 @@ def _read_unlocked(path: Path | None) -> AppSettings:
         camera_enabled=_flag(payload, "camera_enabled"),
         local_vad_enabled=_flag(payload, "local_vad_enabled"),
         local_barge_in_enabled=_flag(payload, "local_barge_in_enabled"),
+        listen_mode=_text(payload, "listen_mode"),
     )
 
 
@@ -151,6 +154,8 @@ def apply_settings_to_runtime(settings: AppSettings) -> None:
         config.LOCAL_VAD_ENABLED = settings.local_vad_enabled
     if settings.local_barge_in_enabled is not None:
         config.LOCAL_BARGE_IN_ENABLED = settings.local_barge_in_enabled
+    if settings.listen_mode is not None:
+        config.LISTEN_MODE = normalize_listen_mode(settings.listen_mode)
 
 
 def load_settings_into_runtime(instance_path: str | Path | None) -> AppSettings:
