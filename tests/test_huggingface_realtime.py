@@ -141,6 +141,25 @@ async def test_receive_sends_audio_before_local_vad() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stuck_audio_send_drops_the_dead_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A send that cannot drain aborts the socket instead of hanging the mic loop."""
+    monkeypatch.setattr(hf_mod, "AUDIO_SEND_TIMEOUT_S", 0.01)
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+
+    async def never_drains(**_kwargs: Any) -> None:
+        await asyncio.Event().wait()
+
+    connection = MagicMock()
+    connection.input_audio_buffer.append = never_drains
+    handler.connection = connection
+
+    # Bounded here too, so a regression fails instead of hanging the suite.
+    await asyncio.wait_for(handler.receive((16000, np.zeros(512, dtype=np.int16))), timeout=2.0)
+
+    connection._connection.transport.abort.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_unavailable_local_vad_does_not_prevent_startup(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1346,3 +1365,41 @@ async def test_debug_vad_reports_probability_and_barge_in_without_extra_inferenc
     handler._set_listening(server=False)
     assert len(statuses) == previous_reports
     handler._reset_listening()
+
+
+@pytest.mark.asyncio
+async def test_push_to_talk_close_commits_only_a_hold_with_speech() -> None:
+    """Release commits the buffer and asks for a reply only when the hold carried speech."""
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler.connection = MagicMock()
+    handler.connection.input_audio_buffer.commit = AsyncMock()
+    handler._safe_response_create = AsyncMock()  # type: ignore[method-assign]
+    handler._local_vad = MagicMock()
+
+    # A brush of the antenna: too few frames for the server to accept a commit.
+    await handler.on_listen_open(continuous=True)
+    handler._ptt_frames_since_open = 2
+    await handler.on_listen_close(commit=True)
+    handler.connection.input_audio_buffer.commit.assert_not_awaited()
+
+    # A long hold in silence: frames flowed, but the local VAD heard nothing.
+    await handler.on_listen_open(continuous=True)
+    handler._ptt_frames_since_open = 40
+    await handler.on_listen_close(commit=True)
+    handler.connection.input_audio_buffer.commit.assert_not_awaited()
+    handler._safe_response_create.assert_not_awaited()
+
+    # A hold with speech is committed and answered.
+    await handler.on_listen_open(continuous=True)
+    handler._ptt_frames_since_open = 40
+    handler._ptt_speech_since_open = True
+    await handler.on_listen_close(commit=True)
+    handler.connection.input_audio_buffer.commit.assert_awaited_once()
+    handler._safe_response_create.assert_awaited_once()
+
+    # Without a local VAD the frame count is the only guard.
+    handler._local_vad = None
+    await handler.on_listen_open(continuous=True)
+    handler._ptt_frames_since_open = 40
+    await handler.on_listen_close(commit=True)
+    assert handler.connection.input_audio_buffer.commit.await_count == 2
