@@ -269,6 +269,12 @@ class MovementManager:
 
         return self._now() - last_activity >= self.idle_inactivity_delay
 
+    def commanded_antennas(self) -> Tuple[float, float]:
+        """Return the antenna positions last sent to the robot (rad). Thread-safe."""
+        with self._status_lock:
+            antennas = self._last_commanded_pose[1]
+        return (float(antennas[0]), float(antennas[1]))
+
     def set_listening(self, listening: bool) -> None:
         """Enable or disable listening mode without touching shared state directly.
 
