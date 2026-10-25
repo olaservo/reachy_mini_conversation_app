@@ -141,6 +141,25 @@ async def test_receive_sends_audio_before_local_vad() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stuck_audio_send_drops_the_dead_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A send that cannot drain aborts the socket instead of hanging the mic loop."""
+    monkeypatch.setattr(hf_mod, "AUDIO_SEND_TIMEOUT_S", 0.01)
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+
+    async def never_drains(**_kwargs: Any) -> None:
+        await asyncio.Event().wait()
+
+    connection = MagicMock()
+    connection.input_audio_buffer.append = never_drains
+    handler.connection = connection
+
+    # Bounded here too, so a regression fails instead of hanging the suite.
+    await asyncio.wait_for(handler.receive((16000, np.zeros(512, dtype=np.int16))), timeout=2.0)
+
+    connection._connection.transport.abort.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_unavailable_local_vad_does_not_prevent_startup(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
