@@ -1403,3 +1403,26 @@ async def test_push_to_talk_close_commits_only_a_hold_with_speech() -> None:
     handler._ptt_frames_since_open = 40
     await handler.on_listen_close(commit=True)
     assert handler.connection.input_audio_buffer.commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_push_to_talk_close_skips_commit_when_the_server_ended_the_turn() -> None:
+    """A hold the server's own VAD already answered is not committed a second time."""
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler.connection = MagicMock()
+    handler.connection.input_audio_buffer.commit = AsyncMock()
+    handler._safe_response_create = AsyncMock()  # type: ignore[method-assign]
+    handler._local_vad = None
+
+    await handler.on_listen_open(continuous=True)
+    handler._ptt_frames_since_open = 40
+    handler._ptt_server_turn_since_open = True  # set by speech_stopped / response.created
+    await handler.on_listen_close(commit=True)
+    handler.connection.input_audio_buffer.commit.assert_not_awaited()
+    handler._safe_response_create.assert_not_awaited()
+
+    # The flag is per hold: the next release commits as usual.
+    await handler.on_listen_open(continuous=True)
+    handler._ptt_frames_since_open = 40
+    await handler.on_listen_close(commit=True)
+    handler.connection.input_audio_buffer.commit.assert_awaited_once()

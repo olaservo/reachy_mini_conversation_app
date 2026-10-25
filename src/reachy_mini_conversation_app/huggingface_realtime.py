@@ -225,6 +225,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         self._playback_interrupted = False
         self._ptt_frames_since_open = 0  # mic frames received during the current push-to-talk hold
         self._ptt_speech_since_open = False  # local VAD heard speech during the current hold
+        self._ptt_server_turn_since_open = False  # the server's own VAD ended a turn during the current hold
 
     def _set_listening(self, *, local: bool | None = None, server: bool | None = None) -> None:
         if local is not None:
@@ -414,6 +415,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         """
         self._ptt_frames_since_open = 0
         self._ptt_speech_since_open = False
+        self._ptt_server_turn_since_open = False
         if not self.connection:
             return
         try:
@@ -428,10 +430,19 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         committed (measured 2026-10-24: a silent one-second hold otherwise gets
         an "OK!" back). Without a local VAD the server's 100 ms minimum is the
         only guard, so a brush of the antenna is still dropped.
+
+        The Hugging Face server kept its own VAD running with
+        ``turn_detection=None`` (observed 2026-10-25: the reply started before
+        the antenna was released). When it has already ended the turn, a second
+        commit would answer the same words twice, so the release sends nothing.
         """
         frames, self._ptt_frames_since_open = self._ptt_frames_since_open, 0
         speech, self._ptt_speech_since_open = self._ptt_speech_since_open, False
+        server_turn, self._ptt_server_turn_since_open = self._ptt_server_turn_since_open, False
         if not commit or not self.connection:
+            return
+        if server_turn:
+            logger.info("PTT close: the server already ended the turn, nothing to commit")
             return
         if frames < PTT_MIN_FRAMES_TO_COMMIT:
             logger.info("PTT close: hold captured %d frame(s), nothing to commit", frames)
@@ -974,6 +985,13 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
                 async for event in self.connection:
                     logger.debug("Realtime event: %s", event.type)
+                    if event.type == "session.updated" and config.LISTEN_MODE == "push_to_talk":
+                        audio_input = getattr(getattr(event.session, "audio", None), "input", None)
+                        logger.info(
+                            "Push-to-talk session: server reports turn_detection=%s",
+                            getattr(audio_input, "turn_detection", None),
+                        )
+
                     if event.type == "input_audio_buffer.speech_started":
                         self._mark_activity("user_speech_started")
                         self._turn_user_done_at = None
@@ -984,6 +1002,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         logger.debug("User speech started")
 
                     if event.type == "input_audio_buffer.speech_stopped":
+                        self._ptt_server_turn_since_open = True
                         self._mark_activity("user_speech_stopped")
                         self._set_listening(server=False)
                         logger.debug("User speech stopped - server will auto-commit with VAD")
@@ -1001,6 +1020,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         logger.debug("response text done: %s", event.text)
 
                     if event.type == "response.created":
+                        self._ptt_server_turn_since_open = True
                         self._active_response_id = event.response.id
                         self._playback_interrupted = False
                         self._mark_activity("response_created")
