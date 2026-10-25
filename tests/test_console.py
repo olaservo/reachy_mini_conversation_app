@@ -1501,3 +1501,43 @@ def test_invalid_speech_switch_saves_nothing(
     assert read_settings(tmp_path).local_vad_enabled is None
     assert read_settings(tmp_path).local_barge_in_enabled is None
     assert not stream._restart_requested.is_set()
+
+
+def test_listen_reports_and_switches_mode_over_rpc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """conversation.listen exposes the gate; push_to_talk closes it until latched or held."""
+    monkeypatch.setattr(config, "PTT_KEYBOARD_ENABLED", False)
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app)
+    stream._init_settings_ui_if_needed()
+
+    assert _rpc_call(app, "conversation.listen")["result"] == {"mode": "always_on", "enabled": True, "latched": False}
+    result = _rpc_call(app, "conversation.listen", {"mode": "push_to_talk"})["result"]
+    assert result == {"mode": "push_to_talk", "enabled": False, "latched": False}
+    assert stream._listen_gate.enabled is False
+
+    result = _rpc_call(app, "conversation.listen", {"enabled": True})["result"]
+    assert result == {"mode": "push_to_talk", "enabled": True, "latched": True}
+
+    stream._listen_gate.set_held(True)
+    result = _rpc_call(app, "conversation.listen", {"enabled": False})["result"]
+    assert result == {"mode": "push_to_talk", "enabled": True, "latched": False}  # still held
+
+    result = _rpc_call(app, "conversation.listen", {"mode": "always_on"})["result"]
+    assert result == {"mode": "always_on", "enabled": True, "latched": False}
+    assert config.LISTEN_MODE == "always_on"
+
+
+def test_antenna_deflection_is_measured_minus_commanded() -> None:
+    """The MovementManager's last target is subtracted so the robot's own moves read as zero."""
+    robot = SimpleNamespace(
+        media=SimpleNamespace(audio=None, backend=None),
+        get_present_antenna_joint_positions=lambda: [0.30, -0.10],
+    )
+    handler = MagicMock()
+    handler.deps = SimpleNamespace(movement_manager=SimpleNamespace(commanded_antennas=lambda: (0.25, -0.10)))
+    stream = LocalStream(handler, robot)
+    assert stream._antenna_deflection() == pytest.approx([0.05, 0.0])
+
+    handler.deps = None
+    assert stream._antenna_deflection() == [0.30, -0.10]

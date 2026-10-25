@@ -206,3 +206,24 @@ def test_handle_command_queue_and_clear() -> None:
     manager._handle_command("clear_queue", None, now)
     assert len(manager.move_queue) == 0
     assert manager.state.current_move is None
+
+
+def test_move_active_reports_primary_moves_but_not_breathing() -> None:
+    """move_active() follows the published state: emotions count, breathing and idle do not."""
+    robot = MagicMock()
+    manager = MovementManager(robot)
+    assert manager.move_active() is False
+
+    manager.state.current_move = _FakeMove(create_head_pose(0, 0, 0, 0, 0, 0, degrees=True))
+    manager._breathing_active = False
+    manager._publish_shared_state()
+    assert manager.move_active() is True
+
+    manager._breathing_active = True
+    manager._publish_shared_state()
+    assert manager.move_active() is False
+
+    manager.state.current_move = None
+    manager._breathing_active = False
+    manager._publish_shared_state()
+    assert manager.move_active() is False
