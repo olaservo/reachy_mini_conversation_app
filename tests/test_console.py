@@ -1520,3 +1520,80 @@ def test_set_session_env_values_exposes_values_to_the_process_only(
     assert os.environ[token_env] == token
     assert not (tmp_path / ".env").exists()
     monkeypatch.delenv(token_env, raising=False)
+
+
+def test_listen_reports_and_switches_mode_over_rpc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """conversation.listen exposes the gate; push_to_talk closes it until latched or held."""
+    monkeypatch.setattr(config, "PTT_KEYBOARD_ENABLED", False)
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app)
+    stream._init_settings_ui_if_needed()
+
+    assert _rpc_call(app, "conversation.listen")["result"] == {
+        "mode": "always_on",
+        "enabled": True,
+        "latched": False,
+        "message": "",
+    }
+    assert _rpc_call(app, "conversation.status")["result"]["listen_mode"] == "always_on"
+
+    result = _rpc_call(app, "conversation.listen", {"mode": "push_to_talk"})["result"]
+    assert result == {"mode": "push_to_talk", "enabled": False, "latched": False, "message": "Saved."}
+    assert stream._listen_gate.enabled is False
+    assert config.LISTEN_MODE == "push_to_talk"
+    assert _rpc_call(app, "conversation.status")["result"]["listen_mode"] == "push_to_talk"
+
+    result = _rpc_call(app, "conversation.listen", {"enabled": True})["result"]
+    assert result == {"mode": "push_to_talk", "enabled": True, "latched": True, "message": ""}
+
+    stream._listen_gate.set_held(True)
+    result = _rpc_call(app, "conversation.listen", {"enabled": False})["result"]
+    assert result == {"mode": "push_to_talk", "enabled": True, "latched": False, "message": ""}  # still held
+
+    error = _rpc_call(app, "conversation.listen", {"mode": "sometimes"})["error"]
+    assert error["code"] == -32602
+    assert stream._listen_gate.mode == "push_to_talk"
+
+    result = _rpc_call(app, "conversation.listen", {"mode": "always_on"})["result"]
+    assert result == {"mode": "always_on", "enabled": True, "latched": False, "message": "Saved."}
+    assert config.LISTEN_MODE == "always_on"
+
+
+def test_listen_gate_changes_are_broadcast_and_persisted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The orb mirrors the gate over conversation.listen, and the chosen mode survives a restart."""
+    monkeypatch.setattr(config, "PTT_KEYBOARD_ENABLED", False)
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
+    stream._init_settings_ui_if_needed()
+    broadcast = MagicMock()
+    monkeypatch.setattr(stream._rpc, "broadcast_threadsafe", broadcast)
+
+    _rpc_call(app, "conversation.listen", {"mode": "push_to_talk"})
+    stream._listen_gate.set_held(True)
+    stream._listen_gate.set_held(True)  # no change, no broadcast
+    stream._listen_gate.set_held(False)
+
+    listen_events = [call.args[1] for call in broadcast.call_args_list if call.args[0] == "conversation.listen"]
+    assert listen_events == [
+        {"mode": "push_to_talk", "enabled": False, "latched": False},
+        {"mode": "push_to_talk", "enabled": True, "latched": False},
+        {"mode": "push_to_talk", "enabled": False, "latched": False},
+    ]
+    assert read_settings(tmp_path).listen_mode == "push_to_talk"
+
+
+def test_antenna_deflection_is_measured_minus_commanded() -> None:
+    """The MovementManager's last target is subtracted so the robot's own moves read as zero."""
+    robot = SimpleNamespace(
+        media=SimpleNamespace(audio=None, backend=None),
+        get_present_antenna_joint_positions=lambda: [0.30, -0.10],
+    )
+    handler = MagicMock()
+    handler.deps = SimpleNamespace(movement_manager=SimpleNamespace(commanded_antennas=lambda: (0.25, -0.10)))
+    stream = LocalStream(handler, robot)
+    assert stream._antenna_deflection() == pytest.approx([0.05, 0.0])
+
+    handler.deps = None
+    assert stream._antenna_deflection() == [0.30, -0.10]

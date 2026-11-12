@@ -70,6 +70,7 @@ _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 _RESPONSE_REJECTION_RETRY_DELAY: Final[float] = 0.5
 # A microphone frame that cannot be sent for this long means a dead link.
 AUDIO_SEND_TIMEOUT_S: Final[float] = 5.0
+PTT_MIN_FRAMES_TO_COMMIT: Final[int] = 4  # ~100 ms of mic audio, the server's minimum for a commit
 # Server-measured stage timings the speech-to-speech backend attaches to response.done.
 _TURN_LATENCY_METADATA_KEY: Final[str] = "speech_to_speech.turn_latency"
 
@@ -222,6 +223,9 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         self._audio_response_id: str | None = None
         self._discarded_response_ids: deque[str] = deque(maxlen=32)
         self._playback_interrupted = False
+        self._ptt_frames_since_open = 0  # mic frames received during the current push-to-talk hold
+        self._ptt_speech_since_open = False  # local VAD heard speech during the current hold
+        self._ptt_server_turn_since_open = False  # the server's own VAD ended a turn during the current hold
 
     def _set_listening(self, *, local: bool | None = None, server: bool | None = None) -> None:
         if local is not None:
@@ -382,7 +386,11 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         model="gpt-4o-transcribe",
                         language=get_session_language(),
                     ),
-                    turn_detection=ServerVad(type="server_vad", interrupt_response=True),
+                    # Push-to-talk commits turns manually on key release, so disable
+                    # the server's own VAD in that mode; always_on keeps server VAD.
+                    turn_detection=None
+                    if config.LISTEN_MODE == "push_to_talk"
+                    else ServerVad(type="server_vad", interrupt_response=True),
                 ),
                 output=RealtimeAudioConfigOutputParam(
                     format=_native_rate_audio_pcm(),  # type: ignore[typeddict-item]
@@ -396,6 +404,62 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
     def _is_connected(self) -> bool:
         """Return whether the realtime connection is open."""
         return self.connection is not None
+
+    async def on_listen_open(self, *, continuous: bool) -> None:
+        """PTT gate opened: barge in.
+
+        With server VAD disabled in push_to_talk mode the model won't react to
+        audio on its own; the turn is finalised in ``on_listen_close``. The
+        input buffer is not cleared: nothing reaches it while the gate is shut,
+        and the Hugging Face server rejects ``input_audio_buffer.clear``.
+        """
+        self._ptt_frames_since_open = 0
+        self._ptt_speech_since_open = False
+        self._ptt_server_turn_since_open = False
+        if not self.connection:
+            return
+        try:
+            await self.interrupt()
+        except Exception as e:
+            logger.debug("PTT open: interrupt ignored (%s)", e)
+
+    async def on_listen_close(self, *, commit: bool) -> None:
+        """PTT gate closed: commit the captured audio and request a reply.
+
+        A hold in which the local VAD heard no speech is dropped rather than
+        committed (measured 2026-10-24: a silent one-second hold otherwise gets
+        an "OK!" back). Without a local VAD the server's 100 ms minimum is the
+        only guard, so a brush of the antenna is still dropped.
+
+        The Hugging Face server kept its own VAD running with
+        ``turn_detection=None`` (observed 2026-10-25: the reply started before
+        the antenna was released). When it has already ended the turn, a second
+        commit would answer the same words twice, so the release sends nothing.
+        """
+        frames, self._ptt_frames_since_open = self._ptt_frames_since_open, 0
+        speech, self._ptt_speech_since_open = self._ptt_speech_since_open, False
+        server_turn, self._ptt_server_turn_since_open = self._ptt_server_turn_since_open, False
+        if not commit or not self.connection:
+            return
+        if server_turn:
+            logger.info("PTT close: the server already ended the turn, nothing to commit")
+            return
+        if frames < PTT_MIN_FRAMES_TO_COMMIT:
+            logger.info("PTT close: hold captured %d frame(s), nothing to commit", frames)
+            return
+        if self._local_vad is not None and not speech:
+            logger.info("PTT close: no speech heard during the hold, nothing to commit")
+            return
+        try:
+            await self.connection.input_audio_buffer.commit()
+            await self._safe_response_create()
+        except Exception as e:
+            logger.debug("PTT close: commit/response ignored (%s)", e)
+
+    async def on_listen_mode_changed(self, mode: str) -> None:
+        """Rebuild the session so server-VAD matches the new mode (fixed at connect)."""
+        logger.info("Listen mode -> %s: restarting realtime session to apply VAD config.", mode)
+        await self._restart_session()
 
     def _idle_behavior_ready(self) -> bool:
         """Hold idle behavior while a model response is still active."""
@@ -921,6 +985,13 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
                 async for event in self.connection:
                     logger.debug("Realtime event: %s", event.type)
+                    if event.type == "session.updated" and config.LISTEN_MODE == "push_to_talk":
+                        audio_input = getattr(getattr(event.session, "audio", None), "input", None)
+                        logger.info(
+                            "Push-to-talk session: server reports turn_detection=%s",
+                            getattr(audio_input, "turn_detection", None),
+                        )
+
                     if event.type == "input_audio_buffer.speech_started":
                         self._mark_activity("user_speech_started")
                         self._turn_user_done_at = None
@@ -931,6 +1002,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         logger.debug("User speech started")
 
                     if event.type == "input_audio_buffer.speech_stopped":
+                        self._ptt_server_turn_since_open = True
                         self._mark_activity("user_speech_stopped")
                         self._set_listening(server=False)
                         logger.debug("User speech stopped - server will auto-commit with VAD")
@@ -948,6 +1020,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         logger.debug("response text done: %s", event.text)
 
                     if event.type == "response.created":
+                        self._ptt_server_turn_since_open = True
                         self._active_response_id = event.response.id
                         self._playback_interrupted = False
                         self._mark_activity("response_created")
@@ -1159,6 +1232,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         sample_rate, audio_frame = frame
         if audio_frame.size == 0:
             return
+        self._ptt_frames_since_open += 1
 
         # Reshape if needed
         if audio_frame.ndim == 2:
@@ -1210,6 +1284,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                 self.paced_playback = False
                 local_speech = False
             self._set_listening(local=local_speech)
+            self._ptt_speech_since_open = self._ptt_speech_since_open or local_speech
             if self.paced_playback and self._local_vad is not None and not self._playback_interrupted:
                 # Only duck: stopping waits for server VAD, so loud background speech cannot drop the turn.
                 self.playback_gain = 0.25 if detect_barge_in and self._local_vad.barge_in_candidate else 1.0
