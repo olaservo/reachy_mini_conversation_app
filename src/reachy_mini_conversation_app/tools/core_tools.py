@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from reachy_mini import ReachyMini
 from reachy_mini_conversation_app.config import config, list_tool_module_names
 from reachy_mini_conversation_app.mcp_client import McpToolTimeoutError, McpToolInvocationError
+from reachy_mini_conversation_app.mcp_servers import read_mcp_servers, build_generic_remote_client
 from reachy_mini_conversation_app.tool_spaces import build_remote_client, read_installed_tool_spaces
 from reachy_mini_conversation_app.profile_store import DEFAULT_PROFILE_NAME
 from reachy_mini_conversation_app.profile_toolsets import read_profile_tool_names
@@ -100,10 +101,10 @@ _TOOLS_LOCK = threading.RLock()
 _EXTERNAL_TOOL_MODULE_NAMESPACE = "reachy_mini_conversation_app._external_tools"
 
 
-# A remote tool's origin. Installed Spaces (id = slug) are the only kind today.
-RemoteToolSourceKind = Literal["space"]
-# Result-payload key naming the source, per kind.
-_SOURCE_PAYLOAD_KEYS: Dict[str, str] = {"space": "tool_space_slug"}
+# A remote tool's origin: an installed Space (id = slug) or a generic MCP server (id = alias).
+RemoteToolSourceKind = Literal["space", "mcp"]
+# Result-payload key naming the source, per kind ("tool_space_slug" predates generic servers).
+_SOURCE_PAYLOAD_KEYS: Dict[str, str] = {"space": "tool_space_slug", "mcp": "mcp_server_alias"}
 
 
 class RemoteMcpTool(Tool):
@@ -424,6 +425,48 @@ def _resolve_remote_tools(tool_names: list[str], instance_path: str | Path | Non
     return remote_tools
 
 
+def _resolve_generic_mcp_tools(
+    tool_names: list[str],
+    instance_path: str | Path | None,
+    claimed_names: set[str],
+) -> list[RemoteMcpTool]:
+    """Build enabled custom MCP server tools from the cached manifest, without network calls.
+
+    A tool whose name an installed Space already provides is skipped. The add
+    commands refuse such an alias, so this only happens with a hand-edited manifest.
+    """
+    try:
+        manifest = read_mcp_servers(instance_path)
+    except (RuntimeError, ValueError) as exc:
+        # A corrupt manifest must not take down the whole tool registry at boot.
+        logger.error("Skipping custom MCP servers: %s", exc)
+        return []
+
+    remote_tools: list[RemoteMcpTool] = []
+    for server in manifest.servers:
+        remote_tools.extend(
+            _resolve_cached_manifest_tools(
+                tool_names,
+                alias=server.alias,
+                source_kind="mcp",
+                source_id=server.alias,
+                source_label=f"MCP server '{server.alias}'",
+                refresh_command=f"mcp-servers add {server.alias} {server.url}",
+                cached_tools=server.tools,
+                make_client=partial(build_generic_remote_client, server),
+            )
+        )
+
+    duplicate_names = sorted({tool.name for tool in remote_tools} & claimed_names)
+    if duplicate_names:
+        logger.warning(
+            "Skipping custom MCP server tools whose names an installed Space already provides: %s",
+            ", ".join(duplicate_names),
+        )
+        remote_tools = [tool for tool in remote_tools if tool.name not in claimed_names]
+    return remote_tools
+
+
 def _load_enabled_tools(tool_names: list[str], remote_tool_names: set[str]) -> List[type[Tool]]:
     """Load shared and external tools while skipping resolved remote tool IDs."""
     loaded_tool_classes: List[type[Tool]] = []
@@ -482,6 +525,9 @@ def initialize_tools(instance_path: str | Path | None = None, *, force: bool = F
 
         tool_names = _read_profile_tool_names(effective_instance_path)
         remote_tools = _resolve_remote_tools(tool_names, effective_instance_path)
+        remote_tools.extend(
+            _resolve_generic_mcp_tools(tool_names, effective_instance_path, {tool.name for tool in remote_tools})
+        )
         remote_tool_names = {tool.name for tool in remote_tools}
         loaded_tool_classes = _load_enabled_tools(tool_names, remote_tool_names)
         tools = _build_tool_registry(
