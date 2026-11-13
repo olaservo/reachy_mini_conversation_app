@@ -19,10 +19,9 @@ from reachy_mini_conversation_app.mcp_servers import (
     read_mcp_servers,
     write_mcp_servers,
 )
-from reachy_mini_conversation_app.personality import available_tool_catalog
 from reachy_mini_conversation_app.tool_spaces import InstalledToolSpacesManifest, write_installed_tool_spaces
 from reachy_mini_conversation_app.profile_store import write_profile
-from reachy_mini_conversation_app.profile_toolsets import read_profile_tool_names
+from reachy_mini_conversation_app.profile_toolsets import enable_profile_tools, read_profile_tool_names
 from reachy_mini_conversation_app.mcp_server_routes import register_mcp_server_methods
 from reachy_mini_conversation_app.remote_tool_sources import CachedRemoteTool
 
@@ -91,22 +90,6 @@ def _mount_rpc(
     return TestClient(app)
 
 
-def test_configured_server_tools_appear_in_the_tool_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tool access lists a configured server's tools."""
-    instance_path = _configure(tmp_path, monkeypatch)
-    monkeypatch.setattr(config, "INSTANCE_PATH", instance_path)
-    write_mcp_servers(instance_path, InstalledMcpServersManifest(servers=[_resolved_server()]))
-
-    catalog = {tool["id"]: tool for tool in available_tool_catalog()}
-
-    assert catalog[TOOL_NAME] == {
-        "id": TOOL_NAME,
-        "kind": "mcp_server",
-        "source": SERVER_ALIAS,
-        "description": "Ping the server",
-    }
-
-
 def test_add_list_remove_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Adding publishes the server to the inventory without enabling its tools."""
     instance_path = _configure(tmp_path, monkeypatch)
@@ -131,6 +114,31 @@ def test_add_list_remove_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert read_mcp_servers(instance_path).servers == []
 
 
+def test_refresh_and_remove_rebuild_the_registry_when_the_active_profile_uses_the_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refreshing or removing a server the active personality uses reloads the tools."""
+    instance_path = _configure(tmp_path, monkeypatch)
+    initialize_tools = MagicMock()
+    monkeypatch.setattr("reachy_mini_conversation_app.tool_settings.initialize_tools", initialize_tools)
+    client = _mount_rpc(instance_path)
+
+    _rpc_call(client, "mcp_servers.add", {"alias": SERVER_ALIAS, "url": SERVER_URL})
+    initialize_tools.assert_not_called()
+
+    enable_profile_tools("default", [TOOL_NAME], instance_path)
+    refreshed = _rpc_call(client, "mcp_servers.add", {"alias": SERVER_ALIAS, "url": SERVER_URL})["result"]
+    assert refreshed["message"].startswith(f"Refreshed {SERVER_ALIAS}")
+    initialize_tools.assert_called_once_with(instance_path=instance_path, force=True)
+
+    initialize_tools.reset_mock()
+    removed = _rpc_call(client, "mcp_servers.remove", {"alias": SERVER_ALIAS})["result"]
+    assert "Disabled 1 tool" in removed["message"]
+    assert TOOL_NAME not in read_profile_tool_names("default", instance_path)
+    initialize_tools.assert_called_once_with(instance_path=instance_path, force=True)
+
+
 def test_add_reports_token_requirement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A server with a token variable reports whether it is set."""
     instance_path = _configure(tmp_path, monkeypatch)
@@ -149,7 +157,7 @@ def test_add_reports_token_requirement(tmp_path: Path, monkeypatch: pytest.Monke
     assert _rpc_call(client, "mcp_servers.list")["result"]["servers"][0]["token_set"] is True
 
 
-def test_save_token_persists_and_rebuilds_the_registry(
+def test_save_token_applies_it_and_rebuilds_the_registry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

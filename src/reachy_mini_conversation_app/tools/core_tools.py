@@ -425,8 +425,16 @@ def _resolve_remote_tools(tool_names: list[str], instance_path: str | Path | Non
     return remote_tools
 
 
-def _resolve_generic_mcp_tools(tool_names: list[str], instance_path: str | Path | None) -> list[RemoteMcpTool]:
-    """Build enabled custom MCP server tools from the cached manifest, without network calls."""
+def _resolve_generic_mcp_tools(
+    tool_names: list[str],
+    instance_path: str | Path | None,
+    claimed_names: set[str],
+) -> list[RemoteMcpTool]:
+    """Build enabled custom MCP server tools from the cached manifest, without network calls.
+
+    A tool whose name an installed Space already provides is skipped. The add
+    commands refuse such an alias, so this only happens with a hand-edited manifest.
+    """
     try:
         manifest = read_mcp_servers(instance_path)
     except (RuntimeError, ValueError) as exc:
@@ -449,6 +457,13 @@ def _resolve_generic_mcp_tools(tool_names: list[str], instance_path: str | Path 
             )
         )
 
+    duplicate_names = sorted({tool.name for tool in remote_tools} & claimed_names)
+    if duplicate_names:
+        logger.warning(
+            "Skipping custom MCP server tools whose names an installed Space already provides: %s",
+            ", ".join(duplicate_names),
+        )
+        remote_tools = [tool for tool in remote_tools if tool.name not in claimed_names]
     return remote_tools
 
 
@@ -509,10 +524,10 @@ def initialize_tools(instance_path: str | Path | None = None, *, force: bool = F
             logger.info("Reloading tool registry for active profile/configuration change.")
 
         tool_names = _read_profile_tool_names(effective_instance_path)
-        remote_tools = [
-            *_resolve_remote_tools(tool_names, effective_instance_path),
-            *_resolve_generic_mcp_tools(tool_names, effective_instance_path),
-        ]
+        remote_tools = _resolve_remote_tools(tool_names, effective_instance_path)
+        remote_tools.extend(
+            _resolve_generic_mcp_tools(tool_names, effective_instance_path, {tool.name for tool in remote_tools})
+        )
         remote_tool_names = {tool.name for tool in remote_tools}
         loaded_tool_classes = _load_enabled_tools(tool_names, remote_tool_names)
         tools = _build_tool_registry(

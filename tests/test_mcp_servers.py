@@ -23,10 +23,11 @@ from reachy_mini_conversation_app.mcp_servers import (
 from reachy_mini_conversation_app.tool_spaces import (
     InstalledToolSpace,
     InstalledToolSpacesManifest,
+    read_installed_tool_spaces,
     write_installed_tool_spaces,
 )
 from reachy_mini_conversation_app.profile_store import write_profile
-from reachy_mini_conversation_app.profile_toolsets import read_profile_tool_names
+from reachy_mini_conversation_app.profile_toolsets import read_profile_tool_names, get_profile_toolsets_path
 from reachy_mini_conversation_app.remote_tool_sources import CachedRemoteTool
 
 
@@ -126,8 +127,9 @@ def test_mcp_servers_add_list_remove_round_trip(
 def test_mcp_servers_list_reads_from_cache_without_network(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Listing does not reconnect to the servers."""
+    """Listing prints the cached tools and does not reconnect to the servers."""
     monkeypatch.chdir(tmp_path)
 
     async def _fail_discovery(self: object) -> list[RemoteToolSpec]:
@@ -159,6 +161,10 @@ def test_mcp_servers_list_reads_from_cache_without_network(
     )
 
     assert _run_cli(monkeypatch, ["app", "mcp-servers", "list"]) == 0
+    # The CLI logs to stderr through its own handler.
+    listing = capsys.readouterr().err
+    assert SERVER_URL in listing
+    assert TOOL_ID in listing
 
 
 def test_mcp_servers_add_never_persists_token_value(
@@ -375,6 +381,32 @@ def test_tool_spaces_add_rejects_configured_server_alias(
     assert _run_cli(monkeypatch, ["app", "tool-spaces", "add", SPACE_SLUG, "--install-only"]) == 1
 
 
+def test_tool_spaces_add_fails_closed_when_servers_manifest_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreadable MCP servers manifest blocks a Space install, since the alias cannot be checked."""
+    monkeypatch.chdir(tmp_path)
+    _mock_discovery(monkeypatch)
+    (tmp_path / "external_content").mkdir()
+    (tmp_path / "external_content" / "mcp_servers.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(
+        "reachy_mini_conversation_app.tool_spaces.HfApi.space_info",
+        lambda self, slug, **kwargs: SimpleNamespace(
+            id=slug,
+            private=False,
+            disabled=False,
+            sdk="gradio",
+            host=None,
+            subdomain=slug.replace("/", "-"),
+            tags=[],
+        ),
+    )
+
+    assert _run_cli(monkeypatch, ["app", "tool-spaces", "add", SPACE_SLUG, "--install-only"]) == 1
+    assert SPACE_SLUG not in [space.slug for space in read_installed_tool_spaces(None).spaces]
+
+
 def test_read_mcp_servers_skips_duplicate_alias(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """A duplicate alias keeps the first entry and skips the later one."""
     payload = {
@@ -410,6 +442,55 @@ def test_mcp_servers_add_and_remove_wire_tools_into_profile(
     assert _run_cli(monkeypatch, ["app", "mcp-servers", "remove", SERVER_ALIAS]) == 0
     assert TOOL_ID not in read_profile_tool_names("default", None)
     assert read_mcp_servers(None).servers == []
+
+
+def _fail_manifest_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fail(instance_path: object, manifest: object) -> Path:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("reachy_mini_conversation_app.mcp_servers.write_mcp_servers", _fail)
+
+
+def _profile_for(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    profiles_dir = tmp_path / "profiles"
+    write_profile("default", profiles_dir / "default", "hello", [])
+    monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", profiles_dir)
+    monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", None)
+
+
+def test_add_restores_profile_tools_when_the_manifest_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed manifest write leaves no tools enabled for a server that was not saved."""
+    _mock_discovery(monkeypatch)
+    _profile_for(tmp_path, monkeypatch)
+    _fail_manifest_write(monkeypatch)
+
+    args = Namespace(mcp_servers_command="add", alias=SERVER_ALIAS, url=SERVER_URL)
+    assert handle_mcp_servers_command(args, instance_path=tmp_path) == 1
+
+    assert TOOL_ID not in read_profile_tool_names("default", tmp_path)
+    assert not get_profile_toolsets_path(tmp_path).exists()
+    assert read_mcp_servers(tmp_path).servers == []
+
+
+def test_remove_restores_profile_tools_when_the_manifest_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed manifest write leaves the server configured and its tools still enabled."""
+    _mock_discovery(monkeypatch)
+    _profile_for(tmp_path, monkeypatch)
+    args = Namespace(mcp_servers_command="add", alias=SERVER_ALIAS, url=SERVER_URL)
+    assert handle_mcp_servers_command(args, instance_path=tmp_path) == 0
+    _fail_manifest_write(monkeypatch)
+
+    args = Namespace(mcp_servers_command="remove", alias=SERVER_ALIAS)
+    assert handle_mcp_servers_command(args, instance_path=tmp_path) == 1
+
+    assert TOOL_ID in read_profile_tool_names("default", tmp_path)
+    assert [server.alias for server in read_mcp_servers(tmp_path).servers] == [SERVER_ALIAS]
 
 
 def test_list_token_requirements_reflects_environment(

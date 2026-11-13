@@ -220,11 +220,12 @@ def test_initialize_tools_skips_spaces_on_corrupt_manifest_but_keeps_generic_ser
     assert any("installed_tool_spaces.json" in record.getMessage() for record in caplog.records)
 
 
-def test_initialize_tools_fails_on_name_collision_between_space_and_server(
+def test_initialize_tools_keeps_the_space_tool_on_a_name_collision_with_a_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A Space tool and a server tool with the same local name fail registration.
+    """A server tool named like an installed Space tool is skipped; the registry still loads.
 
     The add-time guards prevent this; hand-edited manifests can still collide.
     """
@@ -263,5 +264,26 @@ def test_initialize_tools_fails_on_name_collision_between_space_and_server(
     )
 
     core_tools_mod = _reload_core_tools()
-    with pytest.raises(RuntimeError, match="Duplicate Tool.name"):
+    with caplog.at_level("WARNING"):
         core_tools_mod.initialize_tools()
+
+    assert core_tools_mod.ALL_TOOLS[colliding_tool_id]._registry_source.startswith("space:owner/example:")
+    assert any(colliding_tool_id in record.getMessage() for record in caplog.records)
+
+
+def test_configured_server_tools_appear_in_the_tool_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tool access lists a configured server's tools."""
+    from reachy_mini_conversation_app.personality import available_tool_catalog
+
+    monkeypatch.setattr(config_mod.config, "INSTANCE_PATH", tmp_path)
+    write_installed_tool_spaces(tmp_path, InstalledToolSpacesManifest(spaces=[]))
+    write_mcp_servers(tmp_path, InstalledMcpServersManifest(servers=[_installed_server()]))
+
+    catalog = {tool["id"]: tool for tool in available_tool_catalog()}
+
+    assert catalog[TOOL_ID] == {
+        "id": TOOL_ID,
+        "kind": "mcp_server",
+        "source": SERVER_ALIAS,
+        "description": "Remote tool do_thing",
+    }
