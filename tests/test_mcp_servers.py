@@ -16,6 +16,8 @@ from reachy_mini_conversation_app.mcp_servers import (
     read_mcp_servers,
     write_mcp_servers,
     _resolve_auth_headers,
+    find_server_token_env,
+    list_token_requirements,
     handle_mcp_servers_command,
 )
 from reachy_mini_conversation_app.tool_spaces import (
@@ -489,6 +491,37 @@ def test_remove_restores_profile_tools_when_the_manifest_write_fails(
 
     assert TOOL_ID in read_profile_tool_names("default", tmp_path)
     assert [server.alias for server in read_mcp_servers(tmp_path).servers] == [SERVER_ALIAS]
+
+
+def test_list_token_requirements_reflects_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """token_set tracks whether the variable currently holds a value."""
+    write_mcp_servers(
+        tmp_path,
+        InstalledMcpServersManifest(
+            servers=[
+                InstalledMcpServer(
+                    alias=SERVER_ALIAS,
+                    url=SERVER_URL,
+                    auth=McpServerAuth(type="bearer", token_env=TOKEN_ENV),
+                ),
+                InstalledMcpServer(alias="no_auth", url=OTHER_SERVER_URL),
+            ]
+        ),
+    )
+
+    monkeypatch.delenv(TOKEN_ENV, raising=False)
+    requirements = list_token_requirements(tmp_path)
+    assert [(req.alias, req.token_env, req.token_set) for req in requirements] == [(SERVER_ALIAS, TOKEN_ENV, False)]
+
+    monkeypatch.setenv(TOKEN_ENV, "some-token")
+    assert list_token_requirements(tmp_path)[0].token_set is True
+
+    assert find_server_token_env(tmp_path, SERVER_ALIAS) == TOKEN_ENV
+    assert find_server_token_env(tmp_path, "no_auth") is None
+    assert find_server_token_env(tmp_path, "missing") is None
 
 
 def test_resolve_auth_headers_plain_http_bearer_policy(

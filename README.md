@@ -411,7 +411,7 @@ Tags are advisory; installation still requires successful MCP validation.
 <details>
 <summary>Custom MCP server tools</summary>
 
-Any HTTP(S) MCP server can be a tool source, not just Hugging Face Spaces. The `mcp-servers` command adds one by alias and endpoint URL; its tools then appear under Tools → Tool access for per-profile selection, exactly like Space tools.
+Any HTTP(S) MCP server can be a tool source, not just Hugging Face Spaces. Tools → MCP servers adds one by alias and endpoint URL; its tools then appear under Tools → Tool access for per-profile selection, exactly like Space tools.
 
 The alias namespaces the server's tools, so a server added as `weather` contributes `weather__get_forecast`. It must be a valid identifier that does not contain `__` or end in `_`, since that would blur the namespace separator. An alias cannot be shared with an installed Space.
 
@@ -433,7 +433,7 @@ reachy-mini-conversation-app mcp-servers remove <alias>
 
 Re-running `add` for a configured alias refreshes its cached tools and keeps stored options that are not repeated.
 
-**Tokens are never written to the manifest.** `--token-env` records the *name* of an environment variable, read when a client is built. Set it in the instance `.env` or in the environment. A server whose token is missing has its tools skipped with a warning rather than registered as guaranteed-to-fail.
+**Tokens are never written to the manifest.** `--token-env` records the *name* of an environment variable, read when a client is built. Set it in the instance `.env` or in the environment. The UI's token field, on add or later for a configured server, applies the value to the running app only: the app reads the `.env` but never writes it, so add the variable there to keep it across restarts. A server whose token is missing has its tools skipped with a warning rather than registered as guaranteed-to-fail.
 
 Endpoints must be HTTPS, except on the local network — loopback, private, and link-local addresses plus `*.local` names may use plain HTTP. Sending a bearer token over plain HTTP to anything but loopback additionally requires `--allow-insecure-http`, because the token is then visible to everyone on the network.
 

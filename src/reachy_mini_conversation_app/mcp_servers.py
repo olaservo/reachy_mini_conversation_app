@@ -301,6 +301,32 @@ def build_generic_remote_client(server: InstalledMcpServer) -> RemoteMcpToolClie
     return build_cached_tools_client(build_server_config(server), server.tools)
 
 
+@dataclass(frozen=True)
+class McpTokenRequirement:
+    """One configured MCP server's auth-token requirement, for the settings UI."""
+
+    alias: str
+    token_env: str
+    token_set: bool
+
+
+def list_token_requirements(instance_path: str | Path | None) -> list[McpTokenRequirement]:
+    """Return the configured servers' auth-token requirements for the settings UI."""
+    requirements: list[McpTokenRequirement] = []
+    for server in read_mcp_servers(instance_path).servers:
+        if server.auth is not None and server.auth.type == BEARER_AUTH_TYPE:
+            token_set = bool((os.environ.get(server.auth.token_env) or "").strip())
+            requirements.append(
+                McpTokenRequirement(alias=server.alias, token_env=server.auth.token_env, token_set=token_set)
+            )
+    return requirements
+
+
+def find_server_token_env(instance_path: str | Path | None, alias: str) -> str | None:
+    """Return the token env-var name for a configured MCP server alias, or None."""
+    return next((req.token_env for req in list_token_requirements(instance_path) if req.alias == alias), None)
+
+
 def _build_generic_server_tools(remote_specs: Sequence[RemoteToolSpec]) -> list[CachedRemoteTool]:
     """Map discovered remote specs to app-facing tools without HF-specific name cleaning."""
     return [
